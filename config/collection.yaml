@@ -1,0 +1,52 @@
+data_dir: data
+
+subreddits:
+  - Philippines
+  - CasualPH
+  - OffMyChestPH
+
+collection:
+  listing: new
+  limit_per_subreddit: 100
+  sort: null
+  time_filter: all
+
+comments:
+  enabled: true
+  max_comments_per_submission: 100
+  max_depth: null          # null = no limit; set e.g. 5 to cap depth
+  include_deleted: false
+  sort: confidence
+  replace_more_limit: 32  # number of MoreComments objects PRAW expands per submission
+                           # null = expand all (many API calls, slow for large threads)
+                           # 0   = remove MoreComments without expanding (loses nested replies)
+
+search:
+  enabled: false
+  query: null
+  sort: relevance
+  time_filter: all
+
+oversampling:
+  enabled: false
+  keywords: []
+  # Example oversampling keywords for Taglish sarcasm candidates:
+  # keywords:
+  #   - "edi wow"
+  #   - "sana all"
+  #   - "wow ha"
+  #   - "galing"
+  #   - "ayos"
+  #   - "nice"
+  #   - "talino"
+  #   - "salamat ah"
+  #   - "buti naman"
+  # Records collected via oversampling keywords are tagged:
+  #   sampling_strategy: "keyword_oversampled"
+  #   matched_query_or_keyword: "<the keyword>"
+  # This tag is CRITICAL for thesis methodology — do not mix oversampled
+  # records with natural samples without accounting for this in your analysis.
+
+retry:
+  max_attempts: 5
+  max_delay_seconds: 60

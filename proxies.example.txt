@@ -1,0 +1,22 @@
+# Proxy list for Uyam collector.
+# proxies.txt is gitignored. Copy this file to proxies.txt and populate it.
+#
+# IMPORTANT: Proxies are for ordinary network routing only.
+# They must NOT be used to evade Reddit rate limits, multiply throughput,
+# conceal the application's OAuth identity, or circumvent access restrictions.
+#
+# Supported formats (both are auto-detected):
+#
+#   URL style (spec format):
+#     http://host:port
+#     http://username:password@host:port
+#
+#   Colon-separated style (common proxy service format):
+#     host:port:username:password
+#
+# Lines beginning with # and blank lines are ignored.
+
+# Examples (replace with your actual proxies):
+# http://proxy1.example.com:8080
+# http://user:pass@proxy2.example.com:3128
+# proxy3.example.com:10800:myuser:mypassword

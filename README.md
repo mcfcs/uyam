@@ -1,0 +1,397 @@
+# Uyám — Reddit Data Collection Pipeline
+
+**Uyám** is the data-collection subsystem for an undergraduate Computer Science thesis on **context-aware sarcasm detection in Tagalog-English (Taglish) code-switched social-media discourse**.
+
+This collector gathers Reddit submissions and comments from Filipino discourse communities, normalizes them into a reproducible schema, pseudonymizes author identifiers, and stores them as structured JSONL + SQLite for downstream annotation and modeling.
+
+---
+
+## Architecture Overview
+
+```
+Reddit API (PRAW)          Fixture JSON
+      ↓                         ↓
+ PrawRedditSource      FixtureRedditSource
+           ↘                 ↙
+          CollectionRequest / RedditSource (Protocol)
+                     ↓
+              Normalization
+              Pseudonymization (HMAC-SHA256)
+                     ↓
+          Deduplication (SQLite)
+                     ↓
+          JSONL Storage + Manifest
+```
+
+**Source-adapter pattern:** downstream code depends only on the `RedditSource` protocol. Switching from fixtures to live Reddit requires only changing the `--source` flag — no processing code changes.
+
+---
+
+## Installation
+
+```bash
+# Clone and set up a virtual environment
+git clone https://github.com/mcfcs/uyam.git
+cd uyam
+python -m venv .venv
+.venv\Scripts\activate      # Windows
+# or: source .venv/bin/activate  # Linux/macOS
+
+pip install -e ".[dev]"
+```
+
+**Requires Python 3.11+.**
+
+---
+
+## Configuration
+
+### Environment Variables (`.env`)
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+```ini
+REDDIT_CLIENT_ID=your_client_id
+REDDIT_CLIENT_SECRET=your_client_secret
+REDDIT_USER_AGENT=python:uyam-collector:v0.1.0 (by /u/your_reddit_username)
+AUTHOR_HMAC_KEY=your_hmac_key  # generate: python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+- `.env` is gitignored and must never be committed.
+- `AUTHOR_HMAC_KEY` must remain constant across all collection runs. Changing it makes previously stored author hashes irreconcilable.
+
+### Collection Config (`config/collection.yaml`)
+
+Controls which subreddits to collect from, listing type, comment settings, and oversampling:
+
+```yaml
+subreddits:
+  - Philippines
+  - CasualPH
+  - OffMyChestPH
+
+collection:
+  listing: new
+  limit_per_subreddit: 100
+
+comments:
+  enabled: true
+  max_comments_per_submission: 100
+  replace_more_limit: 32   # PRAW MoreComments expansion limit
+```
+
+---
+
+## Fixture Workflow (No Credentials Required)
+
+The fixture source runs the entire pipeline — normalization, pseudonymization, deduplication, JSONL writing — without Reddit credentials.
+
+```bash
+# Validate fixture data (strict mode by default)
+uyam validate-fixtures
+
+# Collect from fixtures
+uyam collect --source fixture
+
+# Check status
+uyam status
+uyam runs
+```
+
+See [`fixtures/README.md`](fixtures/README.md) for instructions on replacing placeholder entries with real Reddit posts permitted under your research protocol.
+
+---
+
+## Live Reddit Workflow
+
+Requires `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT`, and `AUTHOR_HMAC_KEY` in `.env`.
+
+```bash
+# Collect new posts from r/Philippines
+uyam collect --source reddit --subreddit Philippines --listing new --limit 100
+
+# Search for a keyword
+uyam collect --source reddit --subreddit Philippines --search "sana all" --limit 100
+
+# Use a proxy file
+uyam collect --source reddit --subreddit Philippines --limit 100 --proxies proxies.txt
+```
+
+---
+
+## Dataset Folder Layout
+
+```
+data/
+  raw/
+    Philippines/
+      2026-08-15.jsonl      ← one normalized record per line, appended
+    CasualPH/
+      2026-08-15.jsonl
+    OffMyChestPH/
+      2026-08-15.jsonl
+  manifests/
+    <uuid>.json             ← one per collection run
+  db/
+    collection.sqlite3      ← deduplication + run tracking
+```
+
+Raw JSONL files are never overwritten; new records are appended. The date in the filename is the collection date (UTC).
+
+---
+
+## Schema Documentation
+
+### SubmissionRecord (in JSONL)
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | string | Schema version (e.g., `"1.0"`) |
+| `record_type` | string | `"submission"` |
+| `collection_run_id` | string | UUID of the collection run |
+| `reddit_id` | string | Reddit post ID without prefix |
+| `reddit_fullname` | string | `t3_{reddit_id}` |
+| `subreddit` | string | Subreddit name |
+| `title` | string | Post title |
+| `selftext` | string | Body text |
+| `created_utc` | datetime | Submission creation time (UTC ISO 8601) |
+| `score` | int | Net upvotes |
+| `upvote_ratio` | float | Upvote ratio 0.0–1.0 |
+| `num_comments` | int | Total comments |
+| `permalink` | string | Reddit permalink |
+| `url` | string | Full URL |
+| `is_self` | bool | True if text post |
+| `over_18` | bool | NSFW flag |
+| `spoiler` | bool | Spoiler flag |
+| `stickied` | bool | Stickied by moderator |
+| `locked` | bool | Locked from new comments |
+| `archived` | bool | Archived (>6 months old) |
+| `distinguished` | string? | `"moderator"`, `"admin"`, or null |
+| `link_flair_text` | string? | Flair label |
+| `is_original_content` | bool | OC flag |
+| `num_crossposts` | int | Crosspost count |
+| `author_hash` | string? | HMAC-SHA256 pseudonymized author identifier |
+| `author_status` | string | `"pseudonymized"`, `"deleted"`, or `"unavailable"` |
+| `retrieved_at_utc` | datetime | Time of collection (UTC ISO 8601) |
+| `sampling_strategy` | string | `"natural"` or `"keyword_oversampled"` |
+| `matched_query_or_keyword` | string? | Oversampling keyword, if applicable |
+
+### CommentRecord (in JSONL)
+
+| Field | Type | Description |
+|---|---|---|
+| `record_type` | string | `"comment"` |
+| `reddit_id` | string | Comment ID without prefix |
+| `reddit_fullname` | string | `t1_{reddit_id}` |
+| `submission_id` | string | Parent submission ID (bare, no prefix) |
+| `parent_id` | string | `t3_{id}` if top-level; `t1_{id}` if reply |
+| `parent_record_type` | string | `"submission"` or `"comment"` |
+| `subreddit` | string | Subreddit name |
+| `body` | string | Comment text |
+| `created_utc` | datetime | UTC ISO 8601 |
+| `score` | int | Net score |
+| `depth` | int | Nesting depth (0 = top-level) |
+| `is_submitter` | bool | Author is the OP |
+| `distinguished` | string? | Moderator/admin distinction |
+| `stickied` | bool | Pinned comment |
+| `controversiality` | int | Reddit controversiality score |
+| `permalink` | string | Direct link to comment |
+| `author_hash` | string? | Pseudonymized author identifier |
+| `author_status` | string | `"pseudonymized"`, `"deleted"`, `"unavailable"` |
+| `retrieved_at_utc` | datetime | UTC ISO 8601 |
+
+---
+
+## Pseudonymization Methodology
+
+Raw Reddit usernames are **never** written to JSONL, SQLite, logs, or any output file. All author identifiers are pseudonymized using **HMAC-SHA256**:
+
+```
+author_hash = HMAC-SHA256(AUTHOR_HMAC_KEY, normalize(username))
+```
+
+where `normalize` lowercases and strips the username.
+
+**Important:** The resulting identifiers are *pseudonymized*, not anonymous. The persistent HMAC digest can still link a user's contributions within this dataset. This linkage is intentional — it enables duplicate detection and research auditing — but must be accurately described in the thesis methodology.
+
+The HMAC key is stored only in `.env` and never committed to the repository.
+
+---
+
+## Deduplication Behavior
+
+Deduplication uses SQLite with a `UNIQUE` constraint on `reddit_fullname`. The system remains correct if:
+
+- The collector crashes midway
+- The collector is run twice with the same parameters
+- The same submission appears in a keyword search and a `new` listing
+- The same comment is encountered through multiple collection runs
+
+**Failure model:** JSONL is written first, then SQLite is updated. If the process crashes between these two steps, the record exists in JSONL but SQLite allows re-collection on the next run, potentially creating a JSONL duplicate. This failure window is narrow. Since every JSONL line contains `reddit_fullname`, post-hoc deduplication during dataset construction can detect and remove these duplicates by fullname.
+
+---
+
+## Collection Provenance
+
+Each collection run produces:
+
+- A `CollectionContext` with UUID run ID, timestamps, source, subreddit, listing configuration, limits, sampling strategy, counts, and Git commit hash.
+- A manifest JSON file at `data/manifests/<run_id>.json`.
+- SQLite run records accessible via `uyam runs` and `uyam inspect-run <run_id>`.
+
+The manifest supports the thesis methodology chapter by providing a machine-readable record of exactly how each dataset was collected.
+
+---
+
+## Comment and Context Relationships
+
+The collector preserves all relational information needed for later context reconstruction:
+
+```
+SUBMISSION TITLE / BODY
+↓
+PARENT COMMENT (via parent_id)
+↓
+TARGET COMMENT
+↓
+REPLIES (via parent_id references)
+```
+
+These relationships are stored as IDs — comments are never concatenated during collection. The dataset-building stage decides what constitutes "context" for a given sarcasm sample.
+
+Key fields for reconstruction:
+
+| Field | Purpose |
+|---|---|
+| `submission_id` | Links comment to its submission |
+| `parent_id` | Links comment to its direct parent |
+| `parent_record_type` | Whether parent is submission or comment |
+| `depth` | Nesting level in the comment tree |
+| `reddit_fullname` | Stable identifier for graph traversal |
+
+---
+
+## Proxy Behavior
+
+`proxies.txt` is supported for the live Reddit source only. **Proxies are for ordinary network routing. They must NOT be used to:**
+
+- evade Reddit rate limits
+- multiply permitted throughput
+- conceal the application's OAuth identity
+- circumvent access restrictions
+
+Supported formats in `proxies.txt`:
+
+```
+http://host:port
+http://username:password@host:port
+host:port:username:password
+```
+
+Comments (`#`) and blank lines are ignored. If the file is missing or empty, the collector uses a direct connection. Proxy credentials are never logged — only `hostname:port` appears in log output.
+
+See [`proxies.example.txt`](proxies.example.txt) for format examples.
+
+---
+
+## Rate Limiting
+
+PRAW automatically respects Reddit's `X-Ratelimit-*` headers. The collector additionally implements bounded exponential backoff with jitter for network-level failures (connection errors, timeouts, transient 5xx):
+
+- Max 5 retry attempts
+- Delay: `min(60s, 2^attempt + jitter)`
+- Not retried: authentication failures (401/403), not-found (404), malformed requests (400)
+
+---
+
+## Current Limitations
+
+1. **Reddit API credentials pending** — fixture mode is fully operational; live collection requires approved credentials.
+2. **No recurring sync** — the collector does not automatically reconcile edited or deleted content. A future reconciliation workflow may be needed depending on Reddit's terms and thesis protocol requirements.
+3. **Comment tree size** — `replace_more_limit=32` (default) expands up to 32 MoreComments objects per submission. For full trees, set `replace_more_limit: null` in `collection.yaml` (much slower; 1 API call per expansion, capped by Reddit at ~1 req/2s).
+4. **Single-process** — no distributed crawling. SQLite + JSONL is intentionally sufficient for a thesis-scale dataset.
+
+---
+
+## Ethical and Research-Use Considerations
+
+> Possession of Reddit API credentials does not itself determine whether collected content may be used for a particular research or machine-learning purpose. The researcher remains responsible for following Reddit's applicable terms, institutional ethics requirements, and the approved research protocol.
+
+Key points:
+
+- Reddit content may be edited or deleted after collection. The researcher is responsible for any reconciliation or deletion workflow required by Reddit's terms or institutional ethics approval.
+- Author identifiers in this dataset are pseudonymized, not anonymous. The thesis must accurately describe this distinction.
+- Collected data should be stored securely, shared only as permitted by the research protocol, and not used for commercial purposes without a separate Reddit Data API agreement.
+
+---
+
+## Reproducing a Collection Run
+
+Each manifest (`data/manifests/<run_id>.json`) contains the complete configuration of a collection run including:
+
+- Subreddit, listing type, search query
+- Limits and comment settings
+- Sampling strategy and oversampling keywords
+- Collector version and Git commit hash
+- Collection timestamps
+
+To reproduce a run configuration, read the manifest and pass the same parameters to `uyam collect`.
+
+---
+
+## Pipeline Stages
+
+This collector implements the first two stages:
+
+```
+Reddit API
+      ↓
+collection          ← this system
+      ↓
+normalized raw records   ← JSONL in data/raw/
+      ↓
+candidate selection      ← future work
+      ↓
+context reconstruction   ← future work (using stored IDs)
+      ↓
+annotation dataset
+      ↓
+sarcasm labels
+      ↓
+train/validation/test split
+      ↓
+modeling
+```
+
+The raw records contain all relational information (submission IDs, parent IDs, depths) needed to assemble context windows in later stages. No sarcasm classification occurs during collection.
+
+---
+
+## Running Tests
+
+```bash
+pytest --tb=short -v
+```
+
+All tests run without Reddit credentials. Test coverage includes fixture validation, end-to-end pipeline, deduplication, privacy guarantees, comment tree relationships, proxy parsing, and storage recovery.
+
+```bash
+# Lint
+ruff check src/ tests/
+
+# Type checking
+mypy src/uyam/
+```
+
+---
+
+## Utilities
+
+```bash
+# Convert a Manila local time to UTC Unix seconds
+python tools/to_unix.py "2026-08-15 14:30 Asia/Manila"
+```
