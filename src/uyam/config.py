@@ -54,6 +54,14 @@ class RetryConfig:
 
 
 @dataclass
+class PublicConfig:
+    """Settings for the credential-free public-JSON source."""
+
+    min_interval_seconds: float = 6.0
+    timeout_seconds: float = 30.0
+
+
+@dataclass
 class CollectionConfig:
     listing: str = "new"
     limit_per_subreddit: int | None = 100
@@ -70,6 +78,7 @@ class AppConfig:
     search: SearchConfig
     oversampling: OversamplingConfig
     retry: RetryConfig
+    public: PublicConfig
 
 
 def _get(d: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -123,6 +132,12 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         max_delay_seconds=float(retry_raw.get("max_delay_seconds", 60.0)),
     )
 
+    pub_raw: dict[str, Any] = raw.get("public", {})
+    public = PublicConfig(
+        min_interval_seconds=float(pub_raw.get("min_interval_seconds", 6.0)),
+        timeout_seconds=float(pub_raw.get("timeout_seconds", 30.0)),
+    )
+
     return AppConfig(
         data_dir=data_dir,
         subreddits=subreddits,
@@ -131,4 +146,5 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         search=search,
         oversampling=oversampling,
         retry=retry,
+        public=public,
     )

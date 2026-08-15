@@ -14,6 +14,8 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +41,54 @@ def reset_hmac_key_cache() -> None:
     """Reset the cached HMAC key. Used in tests to swap key between cases."""
     global _HMAC_KEY
     _HMAC_KEY = None
+
+
+def ensure_hmac_key(env_path: Path | None = None) -> None:
+    """Guarantee AUTHOR_HMAC_KEY exists; auto-generate and persist if missing.
+
+    If the key is already present in the environment, this is a no-op. Otherwise
+    a fresh key is generated, appended to the given .env file (created if
+    absent), exported to the process environment, and the cache is reset.
+
+    The key VALUE is never logged. The key must remain stable across all
+    collection runs: changing or losing it makes previously stored author
+    hashes irreconcilable.
+    """
+    if os.environ.get("AUTHOR_HMAC_KEY"):
+        return
+
+    if env_path is None:
+        env_path = Path(__file__).parent.parent.parent / ".env"
+
+    key = secrets.token_hex(32)
+    os.environ["AUTHOR_HMAC_KEY"] = key
+    reset_hmac_key_cache()
+
+    try:
+        existing = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+        prefix = "" if existing == "" or existing.endswith("\n") else "\n"
+        with env_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{prefix}AUTHOR_HMAC_KEY={key}\n")
+        persisted = True
+    except OSError as exc:
+        persisted = False
+        logger.warning(
+            "hmac_key_persist_failed",
+            extra={"env_path": str(env_path), "error": type(exc).__name__},
+        )
+
+    logger.warning(
+        "hmac_key_generated",
+        extra={
+            "env_path": str(env_path),
+            "persisted": persisted,
+            "note": (
+                "A new AUTHOR_HMAC_KEY was generated for author pseudonymization. "
+                "Keep it stable across runs; losing it makes existing author "
+                "hashes irreconcilable. The key value is intentionally not logged."
+            ),
+        },
+    )
 
 
 def pseudonymize_author(username: str | None) -> tuple[str | None, str]:

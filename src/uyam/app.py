@@ -6,6 +6,7 @@ Launch with:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -77,10 +78,8 @@ def _load_jsonl_records() -> list[dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 records.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
     return records
 
 
@@ -124,12 +123,22 @@ with st.sidebar:
 
     source_type: str = st.radio(
         "Source",
-        ["fixture", "reddit"],
+        ["fixture", "public", "reddit"],
         horizontal=True,
-        help="'fixture' uses sample_posts.json and requires no credentials.",
+        help=(
+            "'fixture' = offline sample data. "
+            "'public' = live Reddit via public JSON, no credentials. "
+            "'reddit' = live Reddit via API app credentials."
+        ),
     )  # type: ignore[assignment]
 
-    if source_type == "reddit":
+    if source_type == "public":
+        st.info(
+            "No Reddit credentials needed. Uses Reddit's public JSON endpoints. "
+            "Polite rate limit (~10 req/min); a pseudonymization key is "
+            "auto-generated in `.env` on first run."
+        )
+    elif source_type == "reddit":
         st.info(
             "Requires `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, "
             "`REDDIT_USER_AGENT`, and `AUTHOR_HMAC_KEY` in `.env`."
@@ -209,8 +218,22 @@ with tab_collect:
 
             if source_type == "fixture":
                 reddit_source = FixtureRedditSource()
+            elif source_type == "public":
+                from uyam.privacy import ensure_hmac_key  # noqa: PLC0415
+                from uyam.sources.public_json import (  # noqa: PLC0415
+                    PublicJsonRedditSource,
+                )
+
+                ensure_hmac_key()
+                reddit_source = PublicJsonRedditSource(
+                    min_interval_seconds=cfg.public.min_interval_seconds,
+                    timeout_seconds=cfg.public.timeout_seconds,
+                )
             else:
+                from uyam.privacy import ensure_hmac_key  # noqa: PLC0415
                 from uyam.sources.praw_source import PrawRedditSource  # noqa: PLC0415
+
+                ensure_hmac_key()
                 reddit_source = PrawRedditSource()
 
             db = DedupDatabase(DB_PATH)

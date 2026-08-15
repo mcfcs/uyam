@@ -50,3 +50,10 @@ oversampling:
 retry:
   max_attempts: 5
   max_delay_seconds: 60
+
+public:
+  # Settings for the credential-free source (--source public), which reads
+  # Reddit's public JSON endpoints. Keep the interval polite: unauthenticated
+  # JSON is throttled to ~10 req/min and Reddit blocks aggressive callers.
+  min_interval_seconds: 6   # minimum seconds between requests (~10 req/min)
+  timeout_seconds: 30

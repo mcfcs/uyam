@@ -43,7 +43,7 @@ def _get_db(data_dir: Path) -> DedupDatabase:
 
 @app.command()
 def collect(
-    source: str = typer.Option("fixture", help="'fixture' or 'reddit'"),
+    source: str = typer.Option("fixture", help="'fixture', 'public', or 'reddit'"),
     subreddit: str | None = typer.Option(None, help="Subreddit name (overrides config)"),
     listing: str = typer.Option("new", help="Listing type: new|hot|top|search"),
     limit: int | None = typer.Option(None, help="Max submissions to collect"),
@@ -58,8 +58,11 @@ def collect(
     load_env()
     cfg = load_config(config_path)
 
-    if source not in ("fixture", "reddit"):
-        typer.echo(f"Error: --source must be 'fixture' or 'reddit', got {source!r}", err=True)
+    if source not in ("fixture", "public", "reddit"):
+        typer.echo(
+            f"Error: --source must be 'fixture', 'public', or 'reddit', got {source!r}",
+            err=True,
+        )
         raise typer.Exit(1)
 
     subreddits_to_collect = [subreddit] if subreddit else cfg.subreddits
@@ -76,10 +79,24 @@ def collect(
 
     if source == "fixture":
         reddit_source = FixtureRedditSource(lenient_validation=lenient)
+    elif source == "public":
+        from uyam.privacy import ensure_hmac_key
+        from uyam.sources.proxy_pool import ProxyPool
+        from uyam.sources.public_json import PublicJsonRedditSource
+
+        ensure_hmac_key()
+        pool = ProxyPool.from_file(proxies)
+        reddit_source = PublicJsonRedditSource(
+            proxy_url=pool.current(),
+            min_interval_seconds=cfg.public.min_interval_seconds,
+            timeout_seconds=cfg.public.timeout_seconds,
+        )
     else:
+        from uyam.privacy import ensure_hmac_key
         from uyam.sources.praw_source import PrawRedditSource
         from uyam.sources.proxy_pool import ProxyPool
 
+        ensure_hmac_key()
         pool = ProxyPool.from_file(proxies)
         proxy_url = pool.current()
         reddit_source = PrawRedditSource(proxy_url=proxy_url)
