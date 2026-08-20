@@ -52,8 +52,20 @@ retry:
   max_delay_seconds: 60
 
 public:
-  # Settings for the credential-free source (--source public), which reads
-  # Reddit's public JSON endpoints. Keep the interval polite: unauthenticated
-  # JSON is throttled to ~10 req/min and Reddit blocks aggressive callers.
-  min_interval_seconds: 6   # minimum seconds between requests (~10 req/min)
+  # Legacy JSON-endpoint settings (kept for the in-process PublicJsonRedditSource).
+  # Live CLI collection uses --source shreddit (or public as an alias) instead.
+  min_interval_seconds: 6
   timeout_seconds: 30
+
+shreddit:
+  # Headful Chrome scrape of www.reddit.com (Shreddit custom elements).
+  # Requires proxies.txt. Headful + system Chrome is the anti-bot baseline.
+  headless: false
+  timeout_seconds: 45
+  min_interval_seconds: 1.5   # pause between navigations
+  max_scrolls: 40             # listing infinite-scroll rounds
+  more_comments_clicks: 250   # "more comments" expansions per post (all-replies mode uses max(this, 400))
+  scroll_wait_ms: 1500
+  expand_wait_ms: 1200
+  use_system_chrome: true     # channel="chrome"; falls back to bundled Chromium
+  captcha_wait_seconds: 300   # pause so you can solve the Chrome captcha; 0 = don't wait

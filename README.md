@@ -9,9 +9,9 @@ This collector gathers Reddit submissions and comments from Filipino discourse c
 ## Architecture Overview
 
 ```
-Reddit API (PRAW)    Public JSON (no creds)    Fixture JSON
+Reddit API (PRAW)    Shreddit HTML (Chrome)    Fixture JSON
       ↓                      ↓                       ↓
- PrawRedditSource   PublicJsonRedditSource    FixtureRedditSource
+ PrawRedditSource   ShredditBrowserSource     FixtureRedditSource
            ↘                 ↓                 ↙
           CollectionRequest / RedditSource (Protocol)
                      ↓
@@ -23,15 +23,18 @@ Reddit API (PRAW)    Public JSON (no creds)    Fixture JSON
           JSONL Storage + Manifest
 ```
 
-**Source-adapter pattern:** downstream code depends only on the `RedditSource` protocol. Switching between fixtures, the credential-free public JSON source, and the live API source requires only changing the `--source` flag — no processing code changes.
+**Source-adapter pattern:** downstream code depends only on the `RedditSource` protocol. Switching sources is a `--source` flag change — no processing code changes.
 
-**Three sources, one pipeline:**
+**Sources:**
 
-| `--source` | Credentials | Rate | Use when |
+| `--source` | Credentials | How | Use when |
 |---|---|---|---|
-| `fixture` | none | n/a | Offline development and tests |
-| `public` | none | ~10 req/min | Collect real data now, no setup |
-| `reddit` | API app (instant, free) | ~100 req/min | ToS-clean production collection |
+| `fixture` | none | Local JSON | Offline development and tests |
+| `shreddit` | none (proxies.txt required) | Headful Chrome, Shreddit HTML | Live collection without a Reddit API app |
+| `public` | none (proxies.txt required) | Alias of `shreddit` | Same as shreddit |
+| `reddit` | API app | PRAW | Optional official API path |
+
+Reddit's unauthenticated `.json` endpoints are blocked. `shreddit` reads the same custom elements a logged-out browser sees (`<shreddit-post>`, `<shreddit-comment>`).
 
 ---
 
@@ -46,9 +49,12 @@ python -m venv .venv
 # or: source .venv/bin/activate  # Linux/macOS
 
 pip install -e ".[dev]"
+
+# Shreddit live scrape uses Patchright + your installed Chrome
+# (no extra browser download if Google Chrome is already installed)
 ```
 
-**Requires Python 3.11+.**
+**Requires Python 3.11+.** Chrome must be installed for `--source shreddit`.
 
 ---
 
@@ -114,25 +120,28 @@ See [`fixtures/README.md`](fixtures/README.md) for instructions on replacing pla
 
 ---
 
-## Credential-Free Public JSON Workflow
+## Live Shreddit scrape (no Reddit API app)
 
-The `public` source collects **real Reddit data with no credentials** by reading Reddit's public, unauthenticated `.json` endpoints — the same responses a web browser receives.
+`--source shreddit` (and `--source public`, an alias) drives a **headful Chrome window** through **proxies.txt**, then:
+
+1. Opens `/r/{sub}/{new|hot|top|search}/` and scrolls the feed until the submission limit.
+2. Visits each post's comments page.
+3. Reads `<shreddit-post>` / `<shreddit-comment>` attributes (id, title, body, score, upvote-ratio, author, created, permalink, flair, parent/depth, is-op, …).
+4. Clicks Shreddit's `more-comments` partials to expand truncated threads.
+5. Maps into the same `SubmissionRecord` / `CommentRecord` schema as every other source.
 
 ```bash
-# Collect 10 new posts (with their comments) from r/Philippines — no .env needed
-uyam collect --source public --subreddit Philippines --listing new --limit 10
+# proxies.txt is required and is used by default
+copy proxies.example.txt proxies.txt   # then add real proxies
+
+uyam collect --source shreddit --subreddit Philippines --listing new --limit 10
 ```
 
-On first run, if `AUTHOR_HMAC_KEY` is missing it is **auto-generated and saved to `.env`** (the value is never logged). Keep that key stable — changing or losing it makes previously stored author hashes irreconcilable.
+On first run, if `AUTHOR_HMAC_KEY` is missing it is **auto-generated and saved to `.env`**. Keep that key stable.
 
-**Honest caveats:**
+A Chrome window will open. That is intentional: headful Patchright + system Chrome is how the collector gets past Reddit's logged-out bot checks. Use `--headless` only if you know your proxies already pass.
 
-- **Rate:** unauthenticated JSON is throttled to roughly **10 requests/minute**. The collector paces itself (`public.min_interval_seconds`, default 6s) and backs off on HTTP 429. This *respects* Reddit's limits — it does not evade them.
-- **Reliability:** Reddit aggressively throttles/blocks unauthenticated and datacenter-IP traffic. Expect occasional failures; the app path is far more reliable.
-- **Comment completeness:** unexpanded `MoreComments` (`more`) nodes are skipped and counted (logged as `public_json_more_truncated`), not expanded. Deep/large threads are truncated.
-- **ToS:** automated access to these endpoints sits in a gray area under Reddit's 2023 Data API Terms. You remain responsible for ToS, institutional ethics, and your approved research protocol.
-
-For anything beyond quick, small-scale collection, prefer the API app path below.
+**Needs:** Google Chrome installed, and at least one working HTTP proxy in `proxies.txt`. Dead proxies are marked unhealthy and the browser is relaunched on the next one.
 
 ---
 
@@ -315,12 +324,7 @@ Key fields for reconstruction:
 
 ## Proxy Behavior
 
-`proxies.txt` is supported for the live Reddit source only. **Proxies are for ordinary network routing. They must NOT be used to:**
-
-- evade Reddit rate limits
-- multiply permitted throughput
-- conceal the application's OAuth identity
-- circumvent access restrictions
+Live sources (`shreddit` / `public` / `reddit`) **always** read `proxies.txt` unless `--proxies` points elsewhere. The shreddit source **refuses to start** if the file is missing or empty.
 
 Supported formats in `proxies.txt`:
 
@@ -348,7 +352,7 @@ PRAW automatically respects Reddit's `X-Ratelimit-*` headers. The collector addi
 
 ## Current Limitations
 
-1. **Two live paths** — `--source public` needs no credentials but is rate-limited (~10 req/min), less reliable, and truncates large comment trees. `--source reddit` needs a free self-service API app (instant, not "Reddit for Researchers") and is faster/more reliable. Fixture mode remains fully offline.
+1. **Live HTML scrape** — `--source shreddit` needs Chrome + `proxies.txt`. Large threads are expanded by clicking Shreddit "more comments" (capped by `shreddit.more_comments_clicks`). `--source reddit` remains an optional PRAW path. Fixture mode remains fully offline.
 2. **No recurring sync** — the collector does not automatically reconcile edited or deleted content. A future reconciliation workflow may be needed depending on Reddit's terms and thesis protocol requirements.
 3. **Comment tree size** — `replace_more_limit=32` (default) expands up to 32 MoreComments objects per submission. For full trees, set `replace_more_limit: null` in `collection.yaml` (much slower; 1 API call per expansion, capped by Reddit at ~1 req/2s).
 4. **Single-process** — no distributed crawling. SQLite + JSONL is intentionally sufficient for a thesis-scale dataset.
@@ -419,7 +423,7 @@ All tests run without Reddit credentials. Test coverage includes fixture validat
 
 ```bash
 # Lint
-ruff check src/ tests/
+ruff check src tests
 
 # Type checking
 mypy src/uyam/

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +166,28 @@ class ProxyPool:
     @property
     def healthy_count(self) -> int:
         return len(self._proxies) - len(self._unhealthy)
+
+    def current_playwright(self) -> dict[str, str] | None:
+        """Return a Playwright-style proxy dict for the current proxy, or None."""
+        url = self.current()
+        if url is None:
+            return None
+        return to_playwright_proxy(url)
+
+
+def to_playwright_proxy(proxy_url: str) -> dict[str, str]:
+    """Convert a URL-format proxy string into Playwright's proxy dict.
+
+    Playwright wants ``{"server": "http://host:port", "username": ..., "password": ...}``
+    rather than a single credentialed URL. Credentials are not logged here.
+    """
+    parsed = urlparse(proxy_url)
+    if not parsed.hostname or parsed.port is None:
+        raise ValueError("proxy URL is missing host or port")
+    scheme = parsed.scheme or "http"
+    result: dict[str, str] = {"server": f"{scheme}://{parsed.hostname}:{parsed.port}"}
+    if parsed.username:
+        result["username"] = unquote(parsed.username)
+    if parsed.password:
+        result["password"] = unquote(parsed.password)
+    return result

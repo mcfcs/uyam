@@ -9,7 +9,13 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
+import queue
+import re
 import sqlite3
+import subprocess
+import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -19,8 +25,10 @@ import streamlit as st
 from uyam.config import load_config, load_env
 from uyam.dedup import DedupDatabase
 from uyam.pipeline import make_collection_run_id, run_collection
+from uyam.scrape_status import SCREENSHOT_FILE, clear_status, read_status
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource
+from uyam.sources.proxy_pool import ProxyPool
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -35,8 +43,11 @@ st.set_page_config(
 load_env()
 cfg = load_config()
 
-DATA_DIR: Path = cfg.data_dir
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR: Path = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
 DB_PATH: Path = DATA_DIR / "db" / "collection.sqlite3"
+PROXIES_PATH: Path = _REPO_ROOT / "proxies.txt"
+CONFIG_PATH: Path = _REPO_ROOT / "config" / "collection.yaml"
 
 # ---------------------------------------------------------------------------
 # Session state
@@ -94,6 +105,150 @@ def _load_runs() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def _parse_cli_ok(output: str, subreddit: str) -> dict[str, Any]:
+    match = re.search(
+        r"OK\s+\S+:\s+(\d+) submissions,\s+(\d+) comments stored\s+\((\d+) duplicates skipped\)",
+        output,
+    )
+    if match:
+        return {
+            "subreddit": subreddit,
+            "submissions": int(match.group(1)),
+            "comments": int(match.group(2)),
+            "duplicates": int(match.group(3)),
+        }
+    return {"subreddit": subreddit, "submissions": 0, "comments": 0, "duplicates": 0}
+
+
+def _max_comments_arg(collect: bool, all_replies: bool, cap: int) -> int:
+    if not collect:
+        return 0
+    if all_replies:
+        return -1
+    return cap
+
+
+def _refresh_captcha_preview(warn_slot: Any, img_slot: Any) -> None:
+    status = read_status()
+    if status and status.get("state") == "captcha":
+        warn_slot.warning(
+            status.get("message")
+            or "Solve the captcha in the Chrome window. This preview is a snapshot."
+        )
+        if SCREENSHOT_FILE.exists():
+            img_slot.image(
+                SCREENSHOT_FILE.read_bytes(),
+                caption="Chrome preview — click/solve the challenge in the Chrome popup",
+            )
+    elif status and status.get("state") == "ok":
+        warn_slot.empty()
+
+
+def _run_cli_collect(
+    *,
+    source: str,
+    subreddit: str,
+    listing: str,
+    limit: int,
+    search: str | None,
+    max_comments: int,
+    headed: bool,
+    captcha_wait: float,
+    log_lines: list[str],
+) -> dict[str, Any]:
+    """Run `uyam collect` as a subprocess so Playwright is not trapped in Streamlit's loop."""
+    cmd: list[str] = [
+        sys.executable,
+        "-m",
+        "uyam.cli",
+        "collect",
+        "--source",
+        source,
+        "--subreddit",
+        subreddit,
+        "--listing",
+        listing,
+        "--limit",
+        str(limit),
+        "--max-comments",
+        str(max_comments),
+        "--config-path",
+        str(CONFIG_PATH),
+        "--log-level",
+        "INFO",
+    ]
+    if search:
+        cmd.extend(["--search", search])
+    if source in ("shreddit", "public"):
+        cmd.append("--headed" if headed else "--headless")
+        cmd.extend(["--proxies", str(PROXIES_PATH)])
+        cmd.extend(["--captcha-wait", str(int(captcha_wait))])
+
+    env = os.environ.copy()
+    src_path = str(_REPO_ROOT / "src")
+    env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONUNBUFFERED"] = "1"
+
+    clear_status()
+    warn_slot = st.empty()
+    img_slot = st.empty()
+    log_slot = st.empty()
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(_REPO_ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert proc.stdout is not None
+    line_q: queue.Queue[str | None] = queue.Queue()
+
+    def _reader() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line_q.put(line.rstrip())
+        line_q.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    reader_done = False
+    while True:
+        try:
+            item = line_q.get(timeout=0.4)
+            if item is None:
+                reader_done = True
+            else:
+                log_lines.append(item)
+                log_slot.code("\n".join(log_lines[-40:]), language=None)
+        except queue.Empty:
+            pass
+        _refresh_captcha_preview(warn_slot, img_slot)
+        if reader_done and proc.poll() is not None:
+            break
+        if proc.poll() is not None and line_q.empty():
+            break
+
+    while True:
+        try:
+            item = line_q.get_nowait()
+        except queue.Empty:
+            break
+        if item is None:
+            break
+        log_lines.append(item)
+
+    log_slot.code("\n".join(log_lines[-40:]), language=None)
+    _refresh_captcha_preview(warn_slot, img_slot)
+    code = proc.wait()
+    if code != 0:
+        tail = "\n".join(log_lines[-40:]) or "no output"
+        raise RuntimeError(f"collect exited {code}: {tail[-1500:]}")
+    return {"subreddit": subreddit, "returncode": code}
+
+
 def _load_stats() -> list[dict[str, Any]]:
     if not DB_PATH.exists():
         return []
@@ -123,26 +278,59 @@ with st.sidebar:
 
     source_type: str = st.radio(
         "Source",
-        ["fixture", "public", "reddit"],
+        ["fixture", "shreddit", "reddit"],
         horizontal=True,
         help=(
             "'fixture' = offline sample data. "
-            "'public' = live Reddit via public JSON, no credentials. "
+            "'shreddit' = live www.reddit.com via headful Chrome + proxies.txt. "
             "'reddit' = live Reddit via API app credentials."
         ),
     )  # type: ignore[assignment]
 
-    if source_type == "public":
+    if source_type == "shreddit":
         st.info(
-            "No Reddit credentials needed. Uses Reddit's public JSON endpoints. "
-            "Polite rate limit (~10 req/min); a pseudonymization key is "
+            "No Reddit API credentials. Starts a real Chrome scrape through "
+            "`proxies.txt` (Shreddit HTML). A pseudonymization key is "
             "auto-generated in `.env` on first run."
+        )
+        proxy_pool = ProxyPool.from_file(PROXIES_PATH)
+        if proxy_pool.is_empty():
+            st.error(f"No proxies loaded from `{PROXIES_PATH.name}`. Scrape will not start.")
+        else:
+            st.caption(f"Proxies loaded: {proxy_pool.healthy_count} from `{PROXIES_PATH.name}`")
+        headed: bool = st.checkbox(
+            "Headed Chrome (required for captcha)",
+            value=True,
+            help="A real Chrome window must stay open so you can solve Reddit's challenge.",
+        )
+        wait_for_captcha: bool = st.checkbox(
+            "Pause when captcha appears so I can solve it",
+            value=True,
+            help="The scraper waits and shows a live screenshot here. Solve it in Chrome.",
+        )
+        captcha_wait_val: int = st.number_input(
+            "Captcha wait (seconds)",
+            min_value=30,
+            max_value=900,
+            value=int(cfg.shreddit.captcha_wait_seconds or 300),
+            disabled=not wait_for_captcha,
+        )  # type: ignore[assignment]
+        st.caption(
+            "Auto-solving captchas is not supported. When Reddit pops the challenge, "
+            "Chrome stays open — complete it there. This page shows a snapshot of that window."
         )
     elif source_type == "reddit":
         st.info(
             "Requires `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, "
             "`REDDIT_USER_AGENT`, and `AUTHOR_HMAC_KEY` in `.env`."
         )
+        headed = True
+        wait_for_captcha = False
+        captcha_wait_val = 0
+    else:
+        headed = True
+        wait_for_captcha = False
+        captcha_wait_val = 0
 
     st.markdown("**Subreddits**")
     available: list[str] = cfg.subreddits or ["Philippines", "CasualPH", "OffMyChestPH"]
@@ -175,13 +363,33 @@ with st.sidebar:
         value=int(cfg.collection.limit_per_subreddit or 100),
     )  # type: ignore[assignment]
 
+    collect_comments: bool = st.checkbox(
+        "Collect replies",
+        value=bool(cfg.comments.enabled),
+        help="Visit each post and store its comment tree.",
+    )
+    all_replies: bool = st.checkbox(
+        "All replies (no comment cap)",
+        value=True,
+        disabled=not collect_comments,
+        help="Expand Shreddit 'more comments' until the thread is exhausted.",
+    )
+    max_comments_val: int = st.number_input(
+        "Max comments per post",
+        min_value=1,
+        max_value=5000,
+        value=int(cfg.comments.max_comments_per_submission or 100),
+        disabled=(not collect_comments) or all_replies,
+    )  # type: ignore[assignment]
+
     st.divider()
 
+    shreddit_blocked = source_type == "shreddit" and ProxyPool.from_file(PROXIES_PATH).is_empty()
     run_btn = st.button(
         "Start Collection",
         type="primary",
         use_container_width=True,
-        disabled=not bool(selected_subs),
+        disabled=(not bool(selected_subs)) or shreddit_blocked,
     )
 
     if st.button("Refresh data", use_container_width=True):
@@ -207,7 +415,7 @@ with tab_collect:
         handler.setLevel(logging.INFO)
         handler.setFormatter(logging.Formatter("%(levelname)-5s %(name)s — %(message)s"))
         # Suppress noisy third-party loggers
-        for noisy in ("urllib3", "prawcore", "praw"):
+        for noisy in ("urllib3", "prawcore", "praw", "playwright", "patchright"):
             logging.getLogger(noisy).setLevel(logging.WARNING)
         root_logger = logging.getLogger()
         root_logger.addHandler(handler)
@@ -215,76 +423,87 @@ with tab_collect:
 
         try:
             listing_type = "search" if search_q else listing_opt
+            max_comments_arg = _max_comments_arg(
+                collect_comments, all_replies, int(max_comments_val)
+            )
 
-            if source_type == "fixture":
-                reddit_source = FixtureRedditSource()
-            elif source_type == "public":
-                from uyam.privacy import ensure_hmac_key  # noqa: PLC0415
-                from uyam.sources.public_json import (  # noqa: PLC0415
-                    PublicJsonRedditSource,
-                )
-
-                ensure_hmac_key()
-                reddit_source = PublicJsonRedditSource(
-                    min_interval_seconds=cfg.public.min_interval_seconds,
-                    timeout_seconds=cfg.public.timeout_seconds,
-                )
-            else:
-                from uyam.privacy import ensure_hmac_key  # noqa: PLC0415
-                from uyam.sources.praw_source import PrawRedditSource  # noqa: PLC0415
-
-                ensure_hmac_key()
-                reddit_source = PrawRedditSource()
-
-            db = DedupDatabase(DB_PATH)
-            try:
-                with st.status("Collecting…", expanded=True) as status_widget:
+            with st.status("Collecting…", expanded=True) as status_widget:
+                if source_type == "fixture":
+                    reddit_source: Any = FixtureRedditSource()
+                    db = DedupDatabase(DB_PATH)
+                    try:
+                        for sub in selected_subs:
+                            st.write(f"r/{sub} — fetching…")
+                            run_id = make_collection_run_id()
+                            request = CollectionRequest(
+                                subreddit=sub,
+                                listing_type=listing_type,
+                                collection_run_id=run_id,
+                                limit=int(limit_val),
+                                sort=cfg.collection.sort,
+                                time_filter=cfg.collection.time_filter,
+                                search_query=search_q,
+                                max_comments_per_submission=(
+                                    None if max_comments_arg < 0 else max_comments_arg
+                                ),
+                                max_depth=cfg.comments.max_depth,
+                                include_deleted=cfg.comments.include_deleted,
+                                comment_sort=cfg.comments.sort,
+                                replace_more_limit=cfg.comments.replace_more_limit,
+                                sampling_strategy="natural",
+                            )
+                            ctx = run_collection(
+                                reddit_source,
+                                request,
+                                data_dir=DATA_DIR,
+                                db=db,
+                                source_type=source_type,
+                            )
+                            results.append(
+                                {
+                                    "subreddit": sub,
+                                    "submissions": ctx.actual_submissions_stored,
+                                    "comments": ctx.comments_stored,
+                                    "duplicates": ctx.duplicates_skipped,
+                                }
+                            )
+                            st.write(
+                                f"r/{sub} — "
+                                f"{ctx.actual_submissions_stored} submissions, "
+                                f"{ctx.comments_stored} comments stored "
+                                f"({ctx.duplicates_skipped} duplicates skipped)"
+                            )
+                    finally:
+                        db.close()
+                else:
                     for sub in selected_subs:
-                        st.write(f"r/{sub} — fetching…")
-                        run_id = make_collection_run_id()
-                        request = CollectionRequest(
+                        st.write(f"r/{sub} — launching live scrape…")
+                        before = len(logs)
+                        _run_cli_collect(
+                            source=source_type,
                             subreddit=sub,
-                            listing_type=listing_type,
-                            collection_run_id=run_id,
+                            listing=listing_type,
                             limit=int(limit_val),
-                            sort=cfg.collection.sort,
-                            time_filter=cfg.collection.time_filter,
-                            search_query=search_q,
-                            max_comments_per_submission=(
-                                cfg.comments.max_comments_per_submission
-                                if cfg.comments.enabled
-                                else 0
+                            search=search_q,
+                            max_comments=max_comments_arg,
+                            headed=headed,
+                            captcha_wait=(
+                                float(captcha_wait_val)
+                                if wait_for_captcha and headed
+                                else 0.0
                             ),
-                            max_depth=cfg.comments.max_depth,
-                            include_deleted=cfg.comments.include_deleted,
-                            comment_sort=cfg.comments.sort,
-                            replace_more_limit=cfg.comments.replace_more_limit,
-                            sampling_strategy="natural",
+                            log_lines=logs,
                         )
-                        ctx = run_collection(
-                            reddit_source,
-                            request,
-                            data_dir=DATA_DIR,
-                            db=db,
-                            source_type=source_type,
-                        )
-                        results.append(
-                            {
-                                "subreddit": sub,
-                                "submissions": ctx.actual_submissions_stored,
-                                "comments": ctx.comments_stored,
-                                "duplicates": ctx.duplicates_skipped,
-                            }
-                        )
+                        chunk = "\n".join(logs[before:])
+                        parsed = _parse_cli_ok(chunk, sub)
+                        results.append(parsed)
                         st.write(
                             f"r/{sub} — "
-                            f"{ctx.actual_submissions_stored} submissions, "
-                            f"{ctx.comments_stored} comments stored "
-                            f"({ctx.duplicates_skipped} duplicates skipped)"
+                            f"{parsed['submissions']} submissions, "
+                            f"{parsed['comments']} comments stored "
+                            f"({parsed['duplicates']} duplicates skipped)"
                         )
-                    status_widget.update(label="Collection complete", state="complete")
-            finally:
-                db.close()
+                status_widget.update(label="Collection complete", state="complete")
 
         except Exception as exc:
             st.error(f"Collection failed: {exc}")

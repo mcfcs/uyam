@@ -6,6 +6,10 @@ proxies.txt
 data/raw/
 data/db/
 data/manifests/
+data/.browser-profile/
+data/.browser-profiles/
+data/.scrape-status/
+.probe-profile/
 
 # Python
 __pycache__/
@@ -47,3 +51,4 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+/context

@@ -17,13 +17,16 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from uyam.config import load_config, load_env
+from uyam.config import AppConfig, load_config, load_env
 from uyam.dedup import DedupDatabase
 from uyam.logging_config import configure_logging
 from uyam.models import SCHEMA_VERSION
 from uyam.pipeline import make_collection_run_id, run_collection
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource, validate_fixture
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_PROXIES = _REPO_ROOT / "proxies.txt"
 
 app = typer.Typer(
     name="uyam",
@@ -37,18 +40,75 @@ def _get_db(data_dir: Path) -> DedupDatabase:
     return DedupDatabase(data_dir / "db" / "collection.sqlite3")
 
 
+def _resolve_proxies_path(proxies: Path | None) -> Path:
+    """Live sources always read proxies.txt unless an explicit path is given."""
+    return proxies if proxies is not None else _DEFAULT_PROXIES
+
+
+def _build_shreddit_source(
+    cfg: AppConfig,
+    proxies_path: Path,
+    *,
+    headless: bool | None,
+    captcha_wait: float | None = None,
+) -> object:
+    from uyam.privacy import ensure_hmac_key
+    from uyam.sources.proxy_pool import ProxyPool
+    from uyam.sources.shreddit import ShredditBrowserSource
+
+    ensure_hmac_key()
+    pool = ProxyPool.from_file(proxies_path)
+    if pool.is_empty():
+        raise typer.BadParameter(
+            f"shreddit requires proxies in {proxies_path}. "
+            "Copy proxies.example.txt to proxies.txt and add at least one proxy."
+        )
+    return ShredditBrowserSource(
+        proxy_pool=pool,
+        headless=cfg.shreddit.headless if headless is None else headless,
+        timeout_seconds=cfg.shreddit.timeout_seconds,
+        min_interval_seconds=cfg.shreddit.min_interval_seconds,
+        max_scrolls=cfg.shreddit.max_scrolls,
+        more_comments_clicks=cfg.shreddit.more_comments_clicks,
+        scroll_wait_ms=cfg.shreddit.scroll_wait_ms,
+        expand_wait_ms=cfg.shreddit.expand_wait_ms,
+        use_system_chrome=cfg.shreddit.use_system_chrome,
+        captcha_wait_seconds=(
+            cfg.shreddit.captcha_wait_seconds if captcha_wait is None else captcha_wait
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # collect
 # ---------------------------------------------------------------------------
 
 @app.command()
 def collect(
-    source: str = typer.Option("fixture", help="'fixture', 'public', or 'reddit'"),
+    source: str = typer.Option(
+        "fixture",
+        help="'fixture', 'shreddit' (live HTML), 'public' (alias of shreddit), or 'reddit'",
+    ),
     subreddit: str | None = typer.Option(None, help="Subreddit name (overrides config)"),
     listing: str = typer.Option("new", help="Listing type: new|hot|top|search"),
     limit: int | None = typer.Option(None, help="Max submissions to collect"),
     search: str | None = typer.Option(None, help="Search query (sets listing to 'search')"),
-    proxies: Path | None = typer.Option(None, help="Path to proxies.txt"),
+    proxies: Path | None = typer.Option(
+        None, help="Path to proxies.txt (defaults to ./proxies.txt for live sources)"
+    ),
+    headless: bool | None = typer.Option(
+        None,
+        "--headless/--headed",
+        help="Shreddit browser mode. Default: headed (see collection.yaml shreddit.headless).",
+    ),
+    max_comments: int | None = typer.Option(
+        None,
+        help="Max comments per submission. -1 = all replies. 0 = skip comments.",
+    ),
+    captcha_wait: float | None = typer.Option(
+        None,
+        help="Seconds to wait for you to solve a Chrome captcha (default: collection.yaml).",
+    ),
     config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
     lenient: bool = typer.Option(False, help="Use lenient fixture validation"),
     log_level: str = typer.Option("INFO", help="Logging level"),
@@ -58,9 +118,10 @@ def collect(
     load_env()
     cfg = load_config(config_path)
 
-    if source not in ("fixture", "public", "reddit"):
+    if source not in ("fixture", "public", "shreddit", "reddit"):
         typer.echo(
-            f"Error: --source must be 'fixture', 'public', or 'reddit', got {source!r}",
+            "Error: --source must be 'fixture', 'shreddit', 'public', or 'reddit', "
+            f"got {source!r}",
             err=True,
         )
         raise typer.Exit(1)
@@ -76,32 +137,42 @@ def collect(
 
     listing_type = "search" if search else listing
     effective_limit = limit if limit is not None else cfg.collection.limit_per_subreddit
+    proxies_path = _resolve_proxies_path(proxies)
+    source_type = "shreddit" if source in ("public", "shreddit") else source
+    if max_comments is None:
+        effective_max_comments = (
+            cfg.comments.max_comments_per_submission if cfg.comments.enabled else 0
+        )
+    elif max_comments < 0:
+        effective_max_comments = None
+    else:
+        effective_max_comments = max_comments
 
+    reddit_source: object
     if source == "fixture":
         reddit_source = FixtureRedditSource(lenient_validation=lenient)
-    elif source == "public":
-        from uyam.privacy import ensure_hmac_key
-        from uyam.sources.proxy_pool import ProxyPool
-        from uyam.sources.public_json import PublicJsonRedditSource
-
-        ensure_hmac_key()
-        pool = ProxyPool.from_file(proxies)
-        reddit_source = PublicJsonRedditSource(
-            proxy_url=pool.current(),
-            min_interval_seconds=cfg.public.min_interval_seconds,
-            timeout_seconds=cfg.public.timeout_seconds,
-        )
+    elif source in ("public", "shreddit"):
+        try:
+            reddit_source = _build_shreddit_source(
+                cfg,
+                proxies_path,
+                headless=headless,
+                captcha_wait=captcha_wait,
+            )
+        except typer.BadParameter as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
     else:
         from uyam.privacy import ensure_hmac_key
         from uyam.sources.praw_source import PrawRedditSource
         from uyam.sources.proxy_pool import ProxyPool
 
         ensure_hmac_key()
-        pool = ProxyPool.from_file(proxies)
+        pool = ProxyPool.from_file(proxies_path)
         proxy_url = pool.current()
         reddit_source = PrawRedditSource(proxy_url=proxy_url)
 
-    data_dir = cfg.data_dir
+    data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
     db = _get_db(data_dir)
 
     try:
@@ -115,10 +186,7 @@ def collect(
                 sort=cfg.collection.sort,
                 time_filter=cfg.collection.time_filter,
                 search_query=search,
-                max_comments_per_submission=(
-                    cfg.comments.max_comments_per_submission
-                    if cfg.comments.enabled else 0
-                ),
+                max_comments_per_submission=effective_max_comments,
                 max_depth=cfg.comments.max_depth,
                 include_deleted=cfg.comments.include_deleted,
                 comment_sort=cfg.comments.sort,
@@ -127,11 +195,11 @@ def collect(
             )
 
             ctx = run_collection(
-                reddit_source,
+                reddit_source,  # type: ignore[arg-type]
                 request,
                 data_dir=data_dir,
                 db=db,
-                source_type=source,
+                source_type=source_type,
             )
 
             console.print(
@@ -141,8 +209,8 @@ def collect(
                 f"({ctx.duplicates_skipped} duplicates skipped)"
             )
 
-        # Oversampling pass
-        if cfg.oversampling.enabled and cfg.oversampling.keywords and source == "reddit":
+        # Oversampling pass (live sources only)
+        if cfg.oversampling.enabled and cfg.oversampling.keywords and source != "fixture":
             for keyword in cfg.oversampling.keywords:
                 for sub_name in subreddits_to_collect:
                     run_id = make_collection_run_id()
@@ -152,10 +220,7 @@ def collect(
                         collection_run_id=run_id,
                         limit=effective_limit,
                         search_query=keyword,
-                        max_comments_per_submission=(
-                            cfg.comments.max_comments_per_submission
-                            if cfg.comments.enabled else 0
-                        ),
+                        max_comments_per_submission=effective_max_comments,
                         max_depth=cfg.comments.max_depth,
                         include_deleted=cfg.comments.include_deleted,
                         comment_sort=cfg.comments.sort,
@@ -164,17 +229,20 @@ def collect(
                         matched_query_or_keyword=keyword,
                     )
                     ctx = run_collection(
-                        reddit_source,
+                        reddit_source,  # type: ignore[arg-type]
                         request,
                         data_dir=data_dir,
                         db=db,
-                        source_type=source,
+                        source_type=source_type,
                     )
                     console.print(
                         f"[yellow]+[/yellow] {sub_name} [{keyword!r}]: "
                         f"{ctx.actual_submissions_stored} submissions stored"
                     )
     finally:
+        close = getattr(reddit_source, "close", None)
+        if callable(close):
+            close()
         db.close()
 
 

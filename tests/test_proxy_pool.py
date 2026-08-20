@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from uyam.sources.proxy_pool import ProxyPool, _parse_proxy_line, load_proxies
+from uyam.sources.proxy_pool import (
+    ProxyPool,
+    _parse_proxy_line,
+    load_proxies,
+    to_playwright_proxy,
+)
 
 
 class TestParseProxyLine:
@@ -134,6 +139,31 @@ class TestProxyPool:
         assert pool.healthy_count == 3
         pool.mark_current_unhealthy()
         assert pool.healthy_count == 2
+
+
+class TestToPlaywrightProxy:
+    def test_splits_credentials(self) -> None:
+        result = to_playwright_proxy("http://user:pass@proxy.example.com:3128")
+        assert result == {
+            "server": "http://proxy.example.com:3128",
+            "username": "user",
+            "password": "pass",
+        }
+
+    def test_without_credentials(self) -> None:
+        result = to_playwright_proxy("http://proxy.example.com:8080")
+        assert result == {"server": "http://proxy.example.com:8080"}
+
+    def test_pool_current_playwright(self) -> None:
+        pool = ProxyPool(["http://u:p@proxy.example.com:1080"])
+        assert pool.current_playwright() == {
+            "server": "http://proxy.example.com:1080",
+            "username": "u",
+            "password": "p",
+        }
+
+    def test_empty_pool_current_playwright(self) -> None:
+        assert ProxyPool([]).current_playwright() is None
 
 
 class TestCredentialsNeverInLogs:

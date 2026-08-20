@@ -62,3 +62,5 @@ def configure_logging(
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("prawcore").setLevel(logging.WARNING)
     logging.getLogger("praw").setLevel(logging.WARNING)
+    logging.getLogger("playwright").setLevel(logging.WARNING)
+    logging.getLogger("patchright").setLevel(logging.WARNING)

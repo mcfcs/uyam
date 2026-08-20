@@ -17,6 +17,7 @@ dependencies = [
     "requests>=2.31",
     "streamlit>=1.28",
     "pandas>=2.0",
+    "patchright>=1.52",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,10 @@ dev = [
     "mypy>=1.10",
     "types-PyYAML",
     "types-requests",
+]
+
+browser = [
+    "patchright>=1.52",
 ]
 
 [project.scripts]

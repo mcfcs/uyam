@@ -62,6 +62,21 @@ class PublicConfig:
 
 
 @dataclass
+class ShredditConfig:
+    """Settings for the headful Shreddit (www.reddit.com) browser source."""
+
+    headless: bool = False
+    timeout_seconds: float = 45.0
+    min_interval_seconds: float = 1.5
+    max_scrolls: int = 40
+    more_comments_clicks: int = 40
+    scroll_wait_ms: int = 1500
+    expand_wait_ms: int = 1200
+    use_system_chrome: bool = True
+    captcha_wait_seconds: float = 300.0
+
+
+@dataclass
 class CollectionConfig:
     listing: str = "new"
     limit_per_subreddit: int | None = 100
@@ -79,6 +94,7 @@ class AppConfig:
     oversampling: OversamplingConfig
     retry: RetryConfig
     public: PublicConfig
+    shreddit: ShredditConfig
 
 
 def _get(d: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -138,6 +154,19 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         timeout_seconds=float(pub_raw.get("timeout_seconds", 30.0)),
     )
 
+    sh_raw: dict[str, Any] = raw.get("shreddit", {})
+    shreddit = ShredditConfig(
+        headless=bool(sh_raw.get("headless", False)),
+        timeout_seconds=float(sh_raw.get("timeout_seconds", 45.0)),
+        min_interval_seconds=float(sh_raw.get("min_interval_seconds", 1.5)),
+        max_scrolls=int(sh_raw.get("max_scrolls", 40)),
+        more_comments_clicks=int(sh_raw.get("more_comments_clicks", 40)),
+        scroll_wait_ms=int(sh_raw.get("scroll_wait_ms", 1500)),
+        expand_wait_ms=int(sh_raw.get("expand_wait_ms", 1200)),
+        use_system_chrome=bool(sh_raw.get("use_system_chrome", True)),
+        captcha_wait_seconds=float(sh_raw.get("captcha_wait_seconds", 300.0)),
+    )
+
     return AppConfig(
         data_dir=data_dir,
         subreddits=subreddits,
@@ -147,4 +176,5 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         oversampling=oversampling,
         retry=retry,
         public=public,
+        shreddit=shreddit,
     )
