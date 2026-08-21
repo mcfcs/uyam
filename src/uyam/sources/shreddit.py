@@ -34,7 +34,13 @@ from typing import Any
 from urllib.parse import urlencode, urlparse
 
 from uyam.models import CommentRecord, SubmissionRecord
-from uyam.scrape_status import SCREENSHOT_FILE, clear_status, write_status
+from uyam.scrape_status import (
+    SCREENSHOT_FILE,
+    ScrapeStopRequested,
+    check_control,
+    clear_status,
+    write_status,
+)
 from uyam.sources.base import CollectionRequest
 from uyam.sources.mapping import map_comment_dict, map_submission_dict
 from uyam.sources.proxy_pool import ProxyPool, to_playwright_proxy
@@ -442,6 +448,7 @@ class ShredditBrowserSource:
         assert self._page is not None
         hydrate_until = time.monotonic() + _HYDRATE_WAIT_S
         while time.monotonic() < hydrate_until:
+            check_control()
             if self._has_feed():
                 write_status("ok", "Feed ready")
                 return True
@@ -476,6 +483,7 @@ class ShredditBrowserSource:
         deadline = time.monotonic() + self._captcha_wait_s
         last_shot = 0.0
         while time.monotonic() < deadline:
+            check_control()
             if self._has_feed():
                 write_status("ok", "Captcha passed")
                 logger.info("shreddit_captcha_passed")
@@ -538,6 +546,7 @@ class ShredditBrowserSource:
         last_exc: Exception | None = None
         attempts = min(_MAX_PROXY_TRIES, max(1, self._pool.healthy_count))
         for _ in range(attempts):
+            check_control()
             self._ensure_browser()
             self._throttle()
             assert self._page is not None
@@ -749,6 +758,7 @@ class ShredditBrowserSource:
         idle = 0
 
         for _scroll in range(self._max_scrolls):
+            check_control()
             assert self._page is not None
             cards = self._read_listing_cards()
             added = 0
@@ -941,6 +951,7 @@ class ShredditBrowserSource:
         clicks = 0
         idle = 0
         while clicks < cap:
+            check_control()
             if request.max_comments_per_submission is not None:
                 n = self._page.locator(_COMMENT_SELECTOR).count()
                 if n >= request.max_comments_per_submission:
@@ -1037,8 +1048,11 @@ class ShredditBrowserSource:
     ) -> Iterable[SubmissionRecord]:
         permalinks = self._collect_listing_permalinks(request)
         for permalink in permalinks:
+            check_control()
             try:
                 record = self._harvest_post(permalink, request)
+            except ScrapeStopRequested:
+                raise
             except Exception as exc:
                 logger.warning(
                     "shreddit_post_harvest_failed",

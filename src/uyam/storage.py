@@ -62,3 +62,44 @@ def write_manifest(data_dir: Path, ctx: CollectionContext) -> Path:
         },
     )
     return path
+
+
+def clear_collected_data(data_dir: Path) -> dict[str, int]:
+    """Delete collected JSONL, manifests, and the SQLite index.
+
+    Does not touch the Chrome profile or scrape-status control files.
+    """
+    deleted_jsonl = 0
+    raw_dir = data_dir / "raw"
+    if raw_dir.exists():
+        for path in raw_dir.glob("**/*.jsonl"):
+            path.unlink()
+            deleted_jsonl += 1
+
+    deleted_manifests = 0
+    manifests_dir = data_dir / "manifests"
+    if manifests_dir.exists():
+        for path in manifests_dir.glob("*.json"):
+            path.unlink()
+            deleted_manifests += 1
+
+    deleted_db = 0
+    db_dir = data_dir / "db"
+    if db_dir.exists():
+        for path in db_dir.glob("collection.sqlite3*"):
+            path.unlink()
+            deleted_db += 1
+
+    logger.warning(
+        "collected_data_cleared",
+        extra={
+            "jsonl_files": deleted_jsonl,
+            "manifests": deleted_manifests,
+            "db_files": deleted_db,
+        },
+    )
+    return {
+        "jsonl_files": deleted_jsonl,
+        "manifests": deleted_manifests,
+        "db_files": deleted_db,
+    }

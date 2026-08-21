@@ -10,12 +10,9 @@ import contextlib
 import json
 import logging
 import os
-import queue
-import re
 import sqlite3
 import subprocess
 import sys
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -25,10 +22,20 @@ import streamlit as st
 from uyam.config import load_config, load_env
 from uyam.dedup import DedupDatabase
 from uyam.pipeline import make_collection_run_id, run_collection
-from uyam.scrape_status import SCREENSHOT_FILE, clear_status, read_status
+from uyam.scrape_status import (
+    LOG_FILE,
+    SCREENSHOT_FILE,
+    get_control,
+    read_status,
+    request_stop_and_kill,
+    scrape_is_running,
+    set_control,
+    write_run_meta,
+)
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource
 from uyam.sources.proxy_pool import ProxyPool
+from uyam.storage import clear_collected_data
 
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
@@ -74,6 +81,108 @@ class _ListHandler(logging.Handler):
 # Data helpers (no cache — always read fresh after a collection run)
 # ---------------------------------------------------------------------------
 
+_SUBMISSION_BROWSER_COLS = [
+    "record_type",
+    "id",
+    "subreddit",
+    "title",
+    "selftext",
+    "author",
+    "created_utc",
+    "score",
+    "upvote_ratio",
+    "num_comments",
+    "permalink",
+    "url",
+    "is_self",
+    "over_18",
+    "spoiler",
+    "stickied",
+    "locked",
+    "archived",
+    "distinguished",
+    "link_flair_text",
+    "gilded",
+    "num_crossposts",
+    "is_original_content",
+    "author_status",
+    "sampling_strategy",
+    "collection_run_id",
+]
+
+_COMMENT_BROWSER_COLS = [
+    "record_type",
+    "id",
+    "subreddit",
+    "link_id",
+    "parent_id",
+    "author",
+    "body",
+    "created_utc",
+    "score",
+    "depth",
+    "is_submitter",
+    "distinguished",
+    "stickied",
+    "gilded",
+    "controversiality",
+    "permalink",
+    "author_status",
+    "collection_run_id",
+]
+
+_ALL_BROWSER_COLS = [
+    "record_type",
+    "id",
+    "subreddit",
+    "author",
+    "title",
+    "selftext",
+    "body",
+    "created_utc",
+    "score",
+    "upvote_ratio",
+    "num_comments",
+    "depth",
+    "link_id",
+    "parent_id",
+    "permalink",
+    "url",
+    "is_self",
+    "over_18",
+    "spoiler",
+    "stickied",
+    "locked",
+    "archived",
+    "distinguished",
+    "link_flair_text",
+    "gilded",
+    "num_crossposts",
+    "is_original_content",
+    "is_submitter",
+    "controversiality",
+    "author_status",
+    "sampling_strategy",
+    "collection_run_id",
+]
+
+_TEXT_TRUNCATE = frozenset({"title", "selftext", "body"})
+
+
+def _browser_row(rec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for col in columns:
+        val = rec.get(col)
+        if col == "id" and not val:
+            val = rec.get("reddit_id")
+        if col in _TEXT_TRUNCATE and isinstance(val, str) and len(val) > 160:
+            val = val[:160] + "…"
+        if col in {"created_utc", "collection_run_id"} and val is not None:
+            val = str(val)
+        row[col] = val
+    return row
+
+
 def _load_jsonl_records() -> list[dict[str, Any]]:
     """Read every JSONL line from data/raw/**/*.jsonl."""
     records: list[dict[str, Any]] = []
@@ -105,21 +214,6 @@ def _load_runs() -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
-def _parse_cli_ok(output: str, subreddit: str) -> dict[str, Any]:
-    match = re.search(
-        r"OK\s+\S+:\s+(\d+) submissions,\s+(\d+) comments stored\s+\((\d+) duplicates skipped\)",
-        output,
-    )
-    if match:
-        return {
-            "subreddit": subreddit,
-            "submissions": int(match.group(1)),
-            "comments": int(match.group(2)),
-            "duplicates": int(match.group(3)),
-        }
-    return {"subreddit": subreddit, "submissions": 0, "comments": 0, "duplicates": 0}
-
-
 def _max_comments_arg(collect: bool, all_replies: bool, cap: int) -> int:
     if not collect:
         return 0
@@ -144,19 +238,18 @@ def _refresh_captcha_preview(warn_slot: Any, img_slot: Any) -> None:
         warn_slot.empty()
 
 
-def _run_cli_collect(
+def _start_background_collect(
     *,
     source: str,
-    subreddit: str,
+    subreddits: list[str],
     listing: str,
     limit: int,
     search: str | None,
     max_comments: int,
     headed: bool,
     captcha_wait: float,
-    log_lines: list[str],
-) -> dict[str, Any]:
-    """Run `uyam collect` as a subprocess so Playwright is not trapped in Streamlit's loop."""
+) -> int:
+    """Start `uyam collect` in the background so Pause/Stop stay clickable."""
     cmd: list[str] = [
         sys.executable,
         "-m",
@@ -164,8 +257,8 @@ def _run_cli_collect(
         "collect",
         "--source",
         source,
-        "--subreddit",
-        subreddit,
+        "--subreddits",
+        ",".join(subreddits),
         "--listing",
         listing,
         "--limit",
@@ -189,64 +282,18 @@ def _run_cli_collect(
     env["PYTHONPATH"] = src_path + os.pathsep + env.get("PYTHONPATH", "")
     env["PYTHONUNBUFFERED"] = "1"
 
-    clear_status()
-    warn_slot = st.empty()
-    img_slot = st.empty()
-    log_slot = st.empty()
-
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_handle = LOG_FILE.open("w", encoding="utf-8")
+    set_control("run")
     proc = subprocess.Popen(
         cmd,
         cwd=str(_REPO_ROOT),
         env=env,
-        stdout=subprocess.PIPE,
+        stdout=log_handle,
         stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
     )
-    assert proc.stdout is not None
-    line_q: queue.Queue[str | None] = queue.Queue()
-
-    def _reader() -> None:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            line_q.put(line.rstrip())
-        line_q.put(None)
-
-    threading.Thread(target=_reader, daemon=True).start()
-
-    reader_done = False
-    while True:
-        try:
-            item = line_q.get(timeout=0.4)
-            if item is None:
-                reader_done = True
-            else:
-                log_lines.append(item)
-                log_slot.code("\n".join(log_lines[-40:]), language=None)
-        except queue.Empty:
-            pass
-        _refresh_captcha_preview(warn_slot, img_slot)
-        if reader_done and proc.poll() is not None:
-            break
-        if proc.poll() is not None and line_q.empty():
-            break
-
-    while True:
-        try:
-            item = line_q.get_nowait()
-        except queue.Empty:
-            break
-        if item is None:
-            break
-        log_lines.append(item)
-
-    log_slot.code("\n".join(log_lines[-40:]), language=None)
-    _refresh_captcha_preview(warn_slot, img_slot)
-    code = proc.wait()
-    if code != 0:
-        tail = "\n".join(log_lines[-40:]) or "no output"
-        raise RuntimeError(f"collect exited {code}: {tail[-1500:]}")
-    return {"subreddit": subreddit, "returncode": code}
+    write_run_meta(pid=proc.pid, argv=cmd)
+    return proc.pid
 
 
 def _load_stats() -> list[dict[str, Any]]:
@@ -385,11 +432,12 @@ with st.sidebar:
     st.divider()
 
     shreddit_blocked = source_type == "shreddit" and ProxyPool.from_file(PROXIES_PATH).is_empty()
+    already_running = scrape_is_running()
     run_btn = st.button(
         "Start Collection",
         type="primary",
         use_container_width=True,
-        disabled=(not bool(selected_subs)) or shreddit_blocked,
+        disabled=(not bool(selected_subs)) or shreddit_blocked or already_running,
     )
 
     if st.button("Refresh data", use_container_width=True):
@@ -476,33 +524,29 @@ with tab_collect:
                     finally:
                         db.close()
                 else:
-                    for sub in selected_subs:
-                        st.write(f"r/{sub} — launching live scrape…")
-                        before = len(logs)
-                        _run_cli_collect(
-                            source=source_type,
-                            subreddit=sub,
-                            listing=listing_type,
-                            limit=int(limit_val),
-                            search=search_q,
-                            max_comments=max_comments_arg,
-                            headed=headed,
-                            captcha_wait=(
-                                float(captcha_wait_val)
-                                if wait_for_captcha and headed
-                                else 0.0
-                            ),
-                            log_lines=logs,
-                        )
-                        chunk = "\n".join(logs[before:])
-                        parsed = _parse_cli_ok(chunk, sub)
-                        results.append(parsed)
-                        st.write(
-                            f"r/{sub} — "
-                            f"{parsed['submissions']} submissions, "
-                            f"{parsed['comments']} comments stored "
-                            f"({parsed['duplicates']} duplicates skipped)"
-                        )
+                    pid = _start_background_collect(
+                        source=source_type,
+                        subreddits=selected_subs,
+                        listing=listing_type,
+                        limit=int(limit_val),
+                        search=search_q,
+                        max_comments=max_comments_arg,
+                        headed=headed,
+                        captcha_wait=(
+                            float(captcha_wait_val)
+                            if wait_for_captcha and headed
+                            else 0.0
+                        ),
+                    )
+                    st.write(
+                        f"Live scrape started (pid {pid}) for "
+                        + ", ".join(f"r/{s}" for s in selected_subs)
+                        + ". Use Pause / Stop below."
+                    )
+                    status_widget.update(label="Scrape running in background", state="running")
+                    st.session_state["logs"] = logs
+                    st.session_state["last_results"] = results
+                    st.rerun()
                 status_widget.update(label="Collection complete", state="complete")
 
         except Exception as exc:
@@ -513,6 +557,33 @@ with tab_collect:
 
         st.session_state["logs"] = logs
         st.session_state["last_results"] = results
+
+    @st.fragment(run_every=1.5)
+    def _live_scrape_panel() -> None:
+        running = scrape_is_running()
+        ctrl = get_control()
+        st.subheader("Live scrape")
+        if running:
+            state = "paused" if ctrl == "pause" else "running"
+            st.info(f"Scraper is **{state}**. Pause waits between posts; Stop ends the run.")
+            b1, b2, b3 = st.columns(3)
+            if b1.button("Pause", disabled=ctrl == "pause", key="scrape_pause"):
+                set_control("pause")
+            if b2.button("Resume", disabled=ctrl == "run", key="scrape_resume"):
+                set_control("run")
+            if b3.button("Stop", type="primary", key="scrape_stop"):
+                request_stop_and_kill()
+            warn_slot = st.empty()
+            img_slot = st.empty()
+            _refresh_captcha_preview(warn_slot, img_slot)
+            if LOG_FILE.exists():
+                lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+                with st.expander(f"Live log ({len(lines)} lines)", expanded=True):
+                    st.code("\n".join(lines[-50:]), language=None)
+        else:
+            st.caption("No live scrape running. Start one from the sidebar.")
+
+    _live_scrape_panel()
 
     # ---- Results summary ----
     prev_results: list[dict[str, Any]] = st.session_state["last_results"]
@@ -546,6 +617,33 @@ with tab_collect:
 with tab_data:
     records = _load_jsonl_records()
 
+    with st.expander("Clear previous scrapes", expanded=False):
+        st.caption(
+            "Deletes all JSONL, manifests, and the SQLite index. "
+            "Does not delete the Chrome profile."
+        )
+        if scrape_is_running():
+            st.warning("Stop the live scrape before clearing.")
+        else:
+            confirm_clear = st.text_input(
+                "Type CLEAR to enable delete",
+                key="clear_confirm",
+            )
+            if st.button(
+                "Clear previous scrapes",
+                type="primary",
+                disabled=confirm_clear.strip() != "CLEAR",
+            ):
+                stats = clear_collected_data(DATA_DIR)
+                st.session_state["last_results"] = []
+                st.session_state["logs"] = []
+                st.success(
+                    f"Deleted {stats['jsonl_files']} JSONL files, "
+                    f"{stats['manifests']} manifests, "
+                    f"{stats['db_files']} DB files."
+                )
+                st.rerun()
+
     if not records:
         st.info("No records yet. Run a collection first.")
     else:
@@ -565,33 +663,29 @@ with tab_data:
             and (filter_type == "all" or r.get("record_type") == filter_type)
         ]
 
-        rows: list[dict[str, Any]] = []
-        for rec in filtered:
-            rows.append(
-                {
-                    "type": rec.get("record_type", ""),
-                    "subreddit": rec.get("subreddit", ""),
-                    "reddit_id": rec.get("reddit_id", ""),
-                    "text": (rec.get("title") or rec.get("body", ""))[:160],
-                    "score": rec.get("score"),
-                    "created_utc": str(rec.get("created_utc", ""))[:19],
-                    "depth": rec.get("depth"),
-                    "author_status": rec.get("author_status", ""),
-                    "sampling": rec.get("sampling_strategy", ""),
-                    "run_id": str(rec.get("collection_run_id", ""))[:8],
-                }
-            )
+        if filter_type == "submission":
+            columns = _SUBMISSION_BROWSER_COLS
+        elif filter_type == "comment":
+            columns = _COMMENT_BROWSER_COLS
+        else:
+            columns = _ALL_BROWSER_COLS
 
-        df = pd.DataFrame(rows)
-        st.caption(f"{len(df)} records shown")
+        rows = [_browser_row(rec, columns) for rec in filtered]
+        df = pd.DataFrame(rows, columns=columns)
+        st.caption(
+            f"{len(df)} records shown — columns match the collection schema "
+            "(id, author, title/selftext or body, scores, flags, permalinks, …)."
+        )
         st.dataframe(
             df,
             width="stretch",
-            height=520,
+            height=560,
             column_config={
-                "text": st.column_config.TextColumn("title / body", width="large"),
-                "score": st.column_config.NumberColumn("score", width="small"),
-                "depth": st.column_config.NumberColumn("depth", width="small"),
+                "title": st.column_config.TextColumn("title", width="medium"),
+                "selftext": st.column_config.TextColumn("selftext", width="medium"),
+                "body": st.column_config.TextColumn("body", width="medium"),
+                "permalink": st.column_config.TextColumn("permalink", width="medium"),
+                "url": st.column_config.TextColumn("url", width="medium"),
             },
         )
 

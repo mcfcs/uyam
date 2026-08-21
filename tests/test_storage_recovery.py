@@ -24,7 +24,7 @@ from uyam.pipeline import make_collection_run_id, run_collection
 from uyam.privacy import reset_hmac_key_cache
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource
-from uyam.storage import append_record
+from uyam.storage import append_record, clear_collected_data
 
 FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "sample_posts.json"
 TEST_KEY = "test-hmac-key-storage-recovery"
@@ -129,3 +129,25 @@ class TestJSONLFullnameProvidesDeduplication:
         assert len(unique_submissions) == subs_first
 
         db.close()
+
+
+def test_clear_collected_data(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    raw = data_dir / "raw" / "Philippines"
+    raw.mkdir(parents=True)
+    (raw / "2026-08-20.jsonl").write_text("{}\n", encoding="utf-8")
+    manifests = data_dir / "manifests"
+    manifests.mkdir()
+    (manifests / "abc.json").write_text("{}", encoding="utf-8")
+    db_dir = data_dir / "db"
+    db_dir.mkdir()
+    (db_dir / "collection.sqlite3").write_bytes(b"x")
+    (db_dir / "collection.sqlite3-wal").write_bytes(b"x")
+
+    stats = clear_collected_data(data_dir)
+    assert stats["jsonl_files"] == 1
+    assert stats["manifests"] == 1
+    assert stats["db_files"] == 2
+    assert not (raw / "2026-08-20.jsonl").exists()
+    assert not (manifests / "abc.json").exists()
+    assert not (db_dir / "collection.sqlite3").exists()

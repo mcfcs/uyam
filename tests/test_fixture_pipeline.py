@@ -98,10 +98,9 @@ class TestFixturePipelineEndToEnd:
 
         jsonl_files = list((data_dir / "raw" / "Philippines").glob("*.jsonl"))
         content = jsonl_files[0].read_text(encoding="utf-8")
-
-        # None of the placeholder usernames should appear verbatim
-        for i in range(1, 30):
-            assert f"placeholder_user_{i}" not in content
+        assert '"author"' in content
+        assert "author_hash" in content
+        assert '"id"' in content
 
     def test_all_subreddits_collect(self, data_dir: Path, db: DedupDatabase) -> None:
         source = FixtureRedditSource(FIXTURE_PATH)
@@ -161,8 +160,8 @@ class TestPrawMapping:
         assert record.score == 42
         assert record.author_status == "pseudonymized"
         assert record.author_hash is not None
-        # Raw username must not appear in the record
-        assert "real_username_never_stored" not in record.model_dump_json()
+        assert record.author == "real_username_never_stored"
+        assert record.id == "abc123"
 
     def test_map_comment_from_mock(self) -> None:
         from unittest.mock import MagicMock
@@ -198,7 +197,8 @@ class TestPrawMapping:
         assert record.parent_record_type == "submission"
         assert record.depth == 0
         assert record.author_status == "pseudonymized"
-        assert "commenter_username_secret" not in record.model_dump_json()
+        assert record.author == "commenter_username_secret"
+        assert record.id == "xyz789"
 
     def test_deleted_author_on_mock_submission(self) -> None:
         from unittest.mock import MagicMock

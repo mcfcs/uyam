@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 SCHEMA_VERSION = "1.0"
 
@@ -58,6 +58,7 @@ class SubmissionRecord(BaseModel):
     num_crossposts: int
     gilded: int = 0
 
+    author: str | None = None
     author_hash: str | None = None
     author_status: AuthorStatus
 
@@ -75,6 +76,8 @@ class SubmissionRecord(BaseModel):
             if v.tzinfo is None:
                 return v.replace(tzinfo=UTC)
             return v
+        if isinstance(v, str):
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
         raise ValueError(f"Cannot convert {v!r} to datetime")
 
     @field_validator("reddit_fullname")
@@ -83,6 +86,12 @@ class SubmissionRecord(BaseModel):
         if not v.startswith("t3_"):
             raise ValueError(f"Submission fullname must start with 't3_', got {v!r}")
         return v
+
+    @computed_field
+    @property
+    def id(self) -> str:
+        """Reddit submission id (same value as reddit_id)."""
+        return self.reddit_id
 
     model_config = {"frozen": True}
 
@@ -118,6 +127,7 @@ class CommentRecord(BaseModel):
 
     permalink: str
 
+    author: str | None = None
     author_hash: str | None = None
     author_status: AuthorStatus
 
@@ -132,6 +142,8 @@ class CommentRecord(BaseModel):
             if v.tzinfo is None:
                 return v.replace(tzinfo=UTC)
             return v
+        if isinstance(v, str):
+            return datetime.fromisoformat(v.replace("Z", "+00:00"))
         raise ValueError(f"Cannot convert {v!r} to datetime")
 
     @field_validator("reddit_fullname")
@@ -154,6 +166,12 @@ class CommentRecord(BaseModel):
         if not (v.startswith("t1_") or v.startswith("t3_")):
             raise ValueError(f"parent_id must start with 't1_' or 't3_', got {v!r}")
         return v
+
+    @computed_field
+    @property
+    def id(self) -> str:
+        """Reddit comment id (same value as reddit_id)."""
+        return self.reddit_id
 
     model_config = {"frozen": True}
 

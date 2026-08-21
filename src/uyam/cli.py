@@ -11,6 +11,7 @@ Commands:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import typer
@@ -22,6 +23,7 @@ from uyam.dedup import DedupDatabase
 from uyam.logging_config import configure_logging
 from uyam.models import SCHEMA_VERSION
 from uyam.pipeline import make_collection_run_id, run_collection
+from uyam.scrape_status import LOG_FILE, set_control, write_run_meta, write_status
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource, validate_fixture
 
@@ -90,6 +92,9 @@ def collect(
         help="'fixture', 'shreddit' (live HTML), 'public' (alias of shreddit), or 'reddit'",
     ),
     subreddit: str | None = typer.Option(None, help="Subreddit name (overrides config)"),
+    subreddits: str | None = typer.Option(
+        None, help="Comma-separated subreddit list (overrides config and --subreddit)"
+    ),
     listing: str = typer.Option("new", help="Listing type: new|hot|top|search"),
     limit: int | None = typer.Option(None, help="Max submissions to collect"),
     search: str | None = typer.Option(None, help="Search query (sets listing to 'search')"),
@@ -114,9 +119,13 @@ def collect(
     log_level: str = typer.Option("INFO", help="Logging level"),
 ) -> None:
     """Collect Reddit submissions and comments."""
-    configure_logging(log_level)
+    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    configure_logging(log_level, log_file=str(LOG_FILE))
     load_env()
     cfg = load_config(config_path)
+    set_control("run")
+    write_run_meta(pid=os.getpid())
+    write_status("running", "Collection started")
 
     if source not in ("fixture", "public", "shreddit", "reddit"):
         typer.echo(
@@ -126,7 +135,12 @@ def collect(
         )
         raise typer.Exit(1)
 
-    subreddits_to_collect = [subreddit] if subreddit else cfg.subreddits
+    if subreddits:
+        subreddits_to_collect = [s.strip() for s in subreddits.split(",") if s.strip()]
+    elif subreddit:
+        subreddits_to_collect = [subreddit]
+    else:
+        subreddits_to_collect = cfg.subreddits
     if not subreddits_to_collect:
         typer.echo(
             "Error: no subreddits configured. "
@@ -175,6 +189,7 @@ def collect(
     data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
     db = _get_db(data_dir)
 
+    stopped = False
     try:
         for sub_name in subreddits_to_collect:
             run_id = make_collection_run_id()
@@ -202,6 +217,15 @@ def collect(
                 source_type=source_type,
             )
 
+            if "stopped_by_user" in ctx.errors:
+                stopped = True
+                console.print(
+                    f"[yellow]STOPPED[/yellow] {sub_name}: "
+                    f"{ctx.actual_submissions_stored} submissions, "
+                    f"{ctx.comments_stored} comments stored "
+                    f"({ctx.duplicates_skipped} duplicates skipped)"
+                )
+                break
             console.print(
                 f"[green]OK[/green] {sub_name}: "
                 f"{ctx.actual_submissions_stored} submissions, "
@@ -210,7 +234,12 @@ def collect(
             )
 
         # Oversampling pass (live sources only)
-        if cfg.oversampling.enabled and cfg.oversampling.keywords and source != "fixture":
+        if (
+            cfg.oversampling.enabled
+            and cfg.oversampling.keywords
+            and source != "fixture"
+            and not stopped
+        ):
             for keyword in cfg.oversampling.keywords:
                 for sub_name in subreddits_to_collect:
                     run_id = make_collection_run_id()
@@ -244,6 +273,45 @@ def collect(
         if callable(close):
             close()
         db.close()
+        write_status(
+            "idle",
+            "Collection stopped" if stopped else "Collection finished",
+        )
+
+
+# ---------------------------------------------------------------------------
+# clear-data
+# ---------------------------------------------------------------------------
+
+@app.command(name="clear-data")
+def clear_data_cmd(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+    config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
+) -> None:
+    """Delete collected JSONL, manifests, and the SQLite index."""
+    from uyam.scrape_status import scrape_is_running
+    from uyam.storage import clear_collected_data
+
+    if scrape_is_running():
+        typer.echo("Error: a scrape is running. Stop it first.", err=True)
+        raise typer.Exit(1)
+
+    cfg = load_config(config_path)
+    data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
+    if not yes:
+        confirm = typer.confirm(
+            f"Delete all collected JSONL, manifests, and SQLite under {data_dir}?"
+        )
+        if not confirm:
+            raise typer.Abort()
+
+    stats = clear_collected_data(data_dir)
+    console.print(
+        "[green]Cleared[/green] "
+        f"{stats['jsonl_files']} JSONL files, "
+        f"{stats['manifests']} manifests, "
+        f"{stats['db_files']} DB files"
+    )
 
 
 # ---------------------------------------------------------------------------

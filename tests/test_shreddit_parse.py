@@ -157,8 +157,8 @@ class TestParseHtmlFixture:
         assert sub.reddit_fullname == "t3_1vthze0"
         assert sub.author_status == "pseudonymized"
         assert sub.author_hash == pseudonymize_author("nayryanaryn")[0]
-        dumped = sub.model_dump_json()
-        assert "nayryanaryn" not in dumped
+        assert sub.author == "nayryanaryn"
+        assert sub.id == "1vthze0"
         assert sub.link_flair_text == "ViralPH"
 
         reply = next(c for c in comments if c["id"] == "p4twfc6")
@@ -166,7 +166,8 @@ class TestParseHtmlFixture:
         assert rec.parent_record_type == "comment"
         assert rec.is_submitter is True
         assert rec.submission_id == "1vthze0"
-        assert "nayryanaryn" not in rec.model_dump_json()
+        assert rec.author == "nayryanaryn"
+        assert rec.id == "p4twfc6"
 
         deleted = next(c for c in comments if c["id"] == "deleted1")
         drec = map_comment_dict(deleted, collection_run_id="run-shreddit")

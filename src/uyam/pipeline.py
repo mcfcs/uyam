@@ -15,6 +15,7 @@ from pathlib import Path
 from uyam import __version__
 from uyam.dedup import DedupDatabase
 from uyam.models import CollectionContext
+from uyam.scrape_status import ScrapeStopRequested, check_control
 from uyam.sources.base import CollectionRequest, RedditSource
 from uyam.storage import append_record, raw_jsonl_path, write_manifest
 
@@ -89,6 +90,7 @@ def run_collection(
 
     try:
         for submission in source.iter_submissions(request):
+            check_control()
             submissions_seen += 1
 
             if db.is_seen(submission.reddit_fullname):
@@ -129,6 +131,7 @@ def run_collection(
                 continue
 
             for comment in source.iter_comments(submission, request):
+                check_control()
                 comments_seen += 1
 
                 if db.is_seen(comment.reddit_fullname):
@@ -157,6 +160,12 @@ def run_collection(
                 else:
                     duplicates_skipped += 1
 
+    except ScrapeStopRequested:
+        ctx.errors.append("stopped_by_user")
+        logger.warning(
+            "collection_stopped",
+            extra={"collection_run_id": run_id},
+        )
     except Exception as exc:
         ctx.errors.append(str(exc))
         logger.error(

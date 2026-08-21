@@ -5,7 +5,8 @@ same field names, so a single normalization path serves both the fixture
 source and the public-JSON source. These functions are the single source of
 truth for turning a raw Reddit-shaped dict into a normalized domain record.
 
-All author identifiers are pseudonymized here; raw usernames never leave.
+Author is stored on the record (requested collection field) and also
+HMAC-pseudonymized into author_hash. Logs still never print usernames.
 """
 
 from __future__ import annotations
@@ -29,7 +30,13 @@ def map_submission_dict(
     matched_query_or_keyword: str | None = None,
 ) -> SubmissionRecord:
     """Normalize a raw Reddit-shaped submission dict into a SubmissionRecord."""
-    author_hash, author_status = pseudonymize_author(raw.get("author"))
+    raw_author = raw.get("author")
+    author_hash, author_status = pseudonymize_author(
+        raw_author if isinstance(raw_author, str) else None
+    )
+    author_value = raw_author if isinstance(raw_author, str) else None
+    if author_status != "pseudonymized":
+        author_value = None
     return SubmissionRecord(
         collection_run_id=collection_run_id,
         reddit_id=raw["id"],
@@ -54,6 +61,7 @@ def map_submission_dict(
         is_original_content=bool(raw.get("is_original_content", False)),
         num_crossposts=int(raw.get("num_crossposts", 0)),
         gilded=int(raw.get("gilded", 0)),
+        author=author_value,
         author_hash=author_hash,
         author_status=author_status,
         retrieved_at_utc=_utc_now(),
@@ -68,7 +76,13 @@ def map_comment_dict(
     collection_run_id: str,
 ) -> CommentRecord:
     """Normalize a raw Reddit-shaped comment dict into a CommentRecord."""
-    author_hash, author_status = pseudonymize_author(raw.get("author"))
+    raw_author = raw.get("author")
+    author_hash, author_status = pseudonymize_author(
+        raw_author if isinstance(raw_author, str) else None
+    )
+    author_value = raw_author if isinstance(raw_author, str) else None
+    if author_status != "pseudonymized":
+        author_value = None
     parent_id: str = raw["parent_id"]
     parent_record_type = "submission" if parent_id.startswith("t3_") else "comment"
     link_id: str = raw["link_id"]
@@ -93,6 +107,7 @@ def map_comment_dict(
         gilded=int(raw.get("gilded", 0)),
         controversiality=int(raw.get("controversiality", 0)),
         permalink=raw["permalink"],
+        author=author_value,
         author_hash=author_hash,
         author_status=author_status,
         retrieved_at_utc=_utc_now(),
