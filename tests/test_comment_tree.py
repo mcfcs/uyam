@@ -115,6 +115,25 @@ class TestCommentTreePreservation:
         assert com018["parent_id"] == "t1_FAKECOM017"
         assert com018["depth"] == 3
 
+    def test_post_and_parent_comment_links(self, tmp_path: Path) -> None:
+        records = self._collect_philippines(tmp_path)
+        by_fullname = {r["reddit_fullname"]: r for r in records}
+
+        top = by_fullname["t1_FAKECOM015"]
+        assert top["post_id"] == "FAKE010"
+        assert top["reply_to"] == "post"
+        assert top["parent_comment_id"] is None
+        assert top["post_url"].endswith("/comments/FAKE010/")
+        assert top["parent_url"] == top["post_url"]
+        assert "/FAKECOM015/" in top["comment_url"]
+
+        nested = by_fullname["t1_FAKECOM016"]
+        assert nested["reply_to"] == "comment"
+        assert nested["parent_comment_id"] == "FAKECOM015"
+        assert nested["parent_id"] == "t1_FAKECOM015"
+        assert nested["post_id"] == "FAKE010"
+        assert nested["parent_url"].endswith("/comment/FAKECOM015/")
+
     def test_is_submitter_preserved(self, tmp_path: Path) -> None:
         records = self._collect_philippines(tmp_path)
         # FAKE010/FAKECOM018 has is_submitter=True

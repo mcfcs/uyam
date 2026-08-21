@@ -93,6 +93,14 @@ class SubmissionRecord(BaseModel):
         """Reddit submission id (same value as reddit_id)."""
         return self.reddit_id
 
+    @computed_field
+    @property
+    def post_url(self) -> str:
+        """Absolute URL to this submission."""
+        if self.permalink.startswith("http"):
+            return self.permalink
+        return "https://www.reddit.com" + self.permalink
+
     model_config = {"frozen": True}
 
 
@@ -172,6 +180,51 @@ class CommentRecord(BaseModel):
     def id(self) -> str:
         """Reddit comment id (same value as reddit_id)."""
         return self.reddit_id
+
+    @computed_field
+    @property
+    def post_id(self) -> str:
+        """Bare id of the parent submission (same as submission_id)."""
+        return self.submission_id
+
+    @computed_field
+    @property
+    def parent_comment_id(self) -> str | None:
+        """Bare id of the parent comment, or None if this is a top-level reply to the post."""
+        if self.parent_id.startswith("t1_"):
+            return self.parent_id[3:]
+        return None
+
+    @computed_field
+    @property
+    def reply_to(self) -> str:
+        """'post' for a top-level comment, 'comment' for a reply-to-reply."""
+        return "post" if self.parent_record_type == "submission" else "comment"
+
+    @computed_field
+    @property
+    def post_url(self) -> str:
+        """Absolute URL of the parent submission."""
+        return f"https://www.reddit.com/r/{self.subreddit}/comments/{self.submission_id}/"
+
+    @computed_field
+    @property
+    def parent_url(self) -> str:
+        """Absolute URL of the immediate parent (post or comment)."""
+        if self.parent_record_type == "submission":
+            return self.post_url
+        return (
+            f"https://www.reddit.com/r/{self.subreddit}/comments/"
+            f"{self.submission_id}/comment/{self.parent_id[3:]}/"
+        )
+
+    @computed_field
+    @property
+    def comment_url(self) -> str:
+        """Absolute URL of this comment."""
+        if self.permalink.startswith("http"):
+            return self.permalink
+        return "https://www.reddit.com" + self.permalink
 
     model_config = {"frozen": True}
 

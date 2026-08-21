@@ -93,6 +93,7 @@ _SUBMISSION_BROWSER_COLS = [
     "upvote_ratio",
     "num_comments",
     "permalink",
+    "post_url",
     "url",
     "is_self",
     "over_18",
@@ -113,20 +114,27 @@ _SUBMISSION_BROWSER_COLS = [
 _COMMENT_BROWSER_COLS = [
     "record_type",
     "id",
-    "subreddit",
-    "link_id",
-    "parent_id",
     "author",
     "body",
+    "depth",
+    "reply_to",
+    "post_id",
+    "post_title",
+    "post_url",
+    "parent_comment_id",
+    "parent_id",
+    "parent_url",
+    "comment_url",
+    "link_id",
+    "submission_id",
+    "subreddit",
     "created_utc",
     "score",
-    "depth",
     "is_submitter",
     "distinguished",
     "stickied",
     "gilded",
     "controversiality",
-    "permalink",
     "author_status",
     "collection_run_id",
 ]
@@ -139,13 +147,19 @@ _ALL_BROWSER_COLS = [
     "title",
     "selftext",
     "body",
+    "depth",
+    "reply_to",
+    "post_id",
+    "post_title",
+    "post_url",
+    "parent_comment_id",
+    "parent_id",
+    "parent_url",
+    "comment_url",
     "created_utc",
     "score",
     "upvote_ratio",
     "num_comments",
-    "depth",
-    "link_id",
-    "parent_id",
     "permalink",
     "url",
     "is_self",
@@ -166,7 +180,65 @@ _ALL_BROWSER_COLS = [
     "collection_run_id",
 ]
 
-_TEXT_TRUNCATE = frozenset({"title", "selftext", "body"})
+_TEXT_TRUNCATE = frozenset({"title", "selftext", "body", "post_title"})
+
+
+def _reddit_url(path: str | None) -> str | None:
+    if not path:
+        return None
+    if str(path).startswith("http"):
+        return str(path)
+    return "https://www.reddit.com" + (path if str(path).startswith("/") else "/" + str(path))
+
+
+def _enrich_relationships(
+    rec: dict[str, Any], posts_by_id: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Add post/parent ids and clickable URLs so threads are reconstructable."""
+    out = dict(rec)
+    if rec.get("record_type") == "submission":
+        sid = rec.get("id") or rec.get("reddit_id")
+        out["id"] = sid
+        out["post_id"] = sid
+        out["post_url"] = rec.get("post_url") or _reddit_url(rec.get("permalink"))
+        return out
+
+    sub_id = rec.get("submission_id") or rec.get("post_id") or ""
+    link_id = rec.get("link_id") or ""
+    if not sub_id and link_id.startswith("t3_"):
+        sub_id = link_id[3:]
+    parent_id = rec.get("parent_id") or ""
+    post = posts_by_id.get(sub_id) or {}
+    post_url = (
+        rec.get("post_url")
+        or _reddit_url(post.get("permalink"))
+        or (
+            f"https://www.reddit.com/r/{rec.get('subreddit', '')}/comments/{sub_id}/"
+            if sub_id
+            else None
+        )
+    )
+    if parent_id.startswith("t1_"):
+        parent_comment_id = rec.get("parent_comment_id") or parent_id[3:]
+        reply_to = "comment"
+        parent_url = rec.get("parent_url") or (
+            f"https://www.reddit.com/r/{rec.get('subreddit', '')}/comments/"
+            f"{sub_id}/comment/{parent_comment_id}/"
+        )
+    else:
+        parent_comment_id = rec.get("parent_comment_id")
+        reply_to = "post"
+        parent_url = rec.get("parent_url") or post_url
+
+    out["id"] = rec.get("id") or rec.get("reddit_id")
+    out["post_id"] = sub_id
+    out["post_title"] = post.get("title")
+    out["post_url"] = post_url
+    out["reply_to"] = rec.get("reply_to") or reply_to
+    out["parent_comment_id"] = parent_comment_id
+    out["parent_url"] = parent_url
+    out["comment_url"] = rec.get("comment_url") or _reddit_url(rec.get("permalink"))
+    return out
 
 
 def _browser_row(rec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
@@ -181,6 +253,51 @@ def _browser_row(rec: dict[str, Any], columns: list[str]) -> dict[str, Any]:
             val = str(val)
         row[col] = val
     return row
+
+
+def _thread_lines(records: list[dict[str, Any]]) -> str:
+    """Indented text view: post → comments → replies-to-replies."""
+    posts = [r for r in records if r.get("record_type") == "submission"]
+    comments = [r for r in records if r.get("record_type") == "comment"]
+    by_parent: dict[str, list[dict[str, Any]]] = {}
+    for com in comments:
+        parent = com.get("parent_id") or ""
+        by_parent.setdefault(parent, []).append(com)
+    for kids in by_parent.values():
+        kids.sort(key=lambda c: (int(c.get("depth") or 0), str(c.get("created_utc") or "")))
+
+    lines: list[str] = []
+
+    def walk(parent_fullname: str, indent: int) -> None:
+        for com in by_parent.get(parent_fullname, []):
+            cid = com.get("id") or com.get("reddit_id")
+            author = com.get("author") or com.get("author_status") or "?"
+            body = (com.get("body") or "").replace("\n", " ")
+            if len(body) > 90:
+                body = body[:90] + "…"
+            prefix = "  " * indent + ("└ " if indent else "• ")
+            lines.append(f"{prefix}[comment {cid}] u/{author}  {body}")
+            walk(com.get("reddit_fullname") or f"t1_{cid}", indent + 1)
+
+    seen_posts: set[str] = set()
+    for post in posts:
+        fn = post.get("reddit_fullname") or f"t3_{post.get('id')}"
+        seen_posts.add(fn)
+        title = post.get("title") or ""
+        lines.append(f"POST [{post.get('id')}] {title}")
+        url = post.get("post_url") or _reddit_url(post.get("permalink"))
+        if url:
+            lines.append(f"  {url}")
+        walk(fn, 1)
+        lines.append("")
+
+    orphan_parents = [k for k in by_parent if k not in seen_posts and k.startswith("t3_")]
+    for fn in orphan_parents:
+        pid = fn[3:]
+        lines.append(f"POST [{pid}]")
+        walk(fn, 1)
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def _load_jsonl_records() -> list[dict[str, Any]]:
@@ -663,6 +780,23 @@ with tab_data:
             and (filter_type == "all" or r.get("record_type") == filter_type)
         ]
 
+        posts_by_id: dict[str, dict[str, Any]] = {}
+        for rec in records:
+            if rec.get("record_type") == "submission":
+                sid = rec.get("id") or rec.get("reddit_id")
+                if sid:
+                    posts_by_id[str(sid)] = rec
+        enriched = [_enrich_relationships(rec, posts_by_id) for rec in filtered]
+        enriched.sort(
+            key=lambda r: (
+                str(r.get("post_id") or r.get("id") or ""),
+                0 if r.get("record_type") == "submission" else 1,
+                int(r.get("depth") or 0),
+                str(r.get("parent_id") or ""),
+                str(r.get("created_utc") or ""),
+            )
+        )
+
         if filter_type == "submission":
             columns = _SUBMISSION_BROWSER_COLS
         elif filter_type == "comment":
@@ -670,11 +804,11 @@ with tab_data:
         else:
             columns = _ALL_BROWSER_COLS
 
-        rows = [_browser_row(rec, columns) for rec in filtered]
+        rows = [_browser_row(rec, columns) for rec in enriched]
         df = pd.DataFrame(rows, columns=columns)
         st.caption(
-            f"{len(df)} records shown — columns match the collection schema "
-            "(id, author, title/selftext or body, scores, flags, permalinks, …)."
+            f"{len(df)} records shown. Comments include post_id / post_url "
+            "(which post) and parent_comment_id / parent_url (reply-to-reply)."
         )
         st.dataframe(
             df,
@@ -684,10 +818,24 @@ with tab_data:
                 "title": st.column_config.TextColumn("title", width="medium"),
                 "selftext": st.column_config.TextColumn("selftext", width="medium"),
                 "body": st.column_config.TextColumn("body", width="medium"),
-                "permalink": st.column_config.TextColumn("permalink", width="medium"),
-                "url": st.column_config.TextColumn("url", width="medium"),
+                "post_title": st.column_config.TextColumn("post_title", width="medium"),
+                "permalink": st.column_config.LinkColumn("permalink"),
+                "url": st.column_config.LinkColumn("url"),
+                "post_url": st.column_config.LinkColumn("post_url"),
+                "parent_url": st.column_config.LinkColumn("parent_url"),
+                "comment_url": st.column_config.LinkColumn("comment_url"),
             },
         )
+
+        thread_src = enriched if filter_type == "all" else [
+            _enrich_relationships(rec, posts_by_id)
+            for rec in records
+            if rec.get("subreddit") in filter_subs
+        ]
+        thread_text = _thread_lines(thread_src)
+        if thread_text:
+            with st.expander("Thread tree (post → replies → replies-to-replies)", expanded=False):
+                st.text(thread_text)
 
         csv_bytes = df.to_csv(index=False).encode("utf-8")
         st.download_button(
