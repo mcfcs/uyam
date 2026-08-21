@@ -159,6 +159,14 @@ class ProxyPool:
             return None
         return {"http": url, "https": url}
 
+    def rotated(self, offset: int) -> ProxyPool:
+        """Return a pool that starts `offset` proxies later (round-robin workers)."""
+        n = len(self._proxies)
+        if n == 0 or offset == 0:
+            return ProxyPool(list(self._proxies))
+        k = offset % n
+        return ProxyPool(self._proxies[k:] + self._proxies[:k])
+
     @property
     def total(self) -> int:
         return len(self._proxies)

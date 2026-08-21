@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 from uyam import __version__
 from uyam.dedup import DedupDatabase
 from uyam.models import CollectionContext
-from uyam.scrape_status import ScrapeStopRequested, check_control
+from uyam.scrape_status import ScrapeStopRequested, check_control, write_status
 from uyam.sources.base import CollectionRequest, RedditSource
 from uyam.storage import append_record, raw_jsonl_path, write_manifest
 
@@ -80,6 +81,8 @@ def run_collection(
 
     db.register_run(run_id, source_type, request.subreddit)
     jsonl_path = raw_jsonl_path(data_dir, request.subreddit)
+    if request.is_seen is None:
+        request.is_seen = db.is_seen
 
     submissions_seen = 0
     submissions_stored = 0
@@ -87,15 +90,57 @@ def run_collection(
     comments_stored = 0
     duplicates_skipped = 0
     validation_failures = 0
+    started_mono = time.monotonic()
+    max_seconds = request.max_seconds
+
+    def _check_limits() -> None:
+        check_control()
+        if max_seconds is None or max_seconds <= 0:
+            return
+        elapsed = time.monotonic() - started_mono
+        if elapsed < max_seconds:
+            return
+        logger.warning(
+            "collection_time_limit",
+            extra={
+                "collection_run_id": run_id,
+                "max_seconds": max_seconds,
+                "elapsed": round(elapsed, 1),
+            },
+        )
+        write_status("stopped", f"Time limit reached ({max_seconds:.0f}s).")
+        raise ScrapeStopRequested("Time limit reached", reason="time_limit_reached")
 
     try:
         for submission in source.iter_submissions(request):
-            check_control()
+            _check_limits()
             submissions_seen += 1
 
             if db.is_seen(submission.reddit_fullname):
                 duplicates_skipped += 1
-                logger.debug(
+                logger.info(
+                    "duplicate_skipped",
+                    extra={
+                        "reddit_fullname": submission.reddit_fullname,
+                        "record_type": "submission",
+                        "collection_run_id": run_id,
+                    },
+                )
+                continue
+
+            # Reserve the id in SQLite before writing JSONL so a re-run
+            # (or a parallel worker) cannot append a second copy.
+            stored = db.mark_seen(
+                reddit_fullname=submission.reddit_fullname,
+                record_type="submission",
+                reddit_id=submission.reddit_id,
+                subreddit=submission.subreddit,
+                collection_run_id=run_id,
+                jsonl_path=str(jsonl_path),
+            )
+            if not stored:
+                duplicates_skipped += 1
+                logger.info(
                     "duplicate_skipped",
                     extra={
                         "reddit_fullname": submission.reddit_fullname,
@@ -106,39 +151,27 @@ def run_collection(
                 continue
 
             append_record(jsonl_path, submission)
-            stored = db.mark_seen(
-                reddit_fullname=submission.reddit_fullname,
-                record_type="submission",
-                reddit_id=submission.reddit_id,
-                subreddit=submission.subreddit,
-                collection_run_id=run_id,
-                jsonl_path=str(jsonl_path),
+            submissions_stored += 1
+            logger.info(
+                "submission_stored",
+                extra={
+                    "reddit_fullname": submission.reddit_fullname,
+                    "subreddit": submission.subreddit,
+                    "collection_run_id": run_id,
+                },
             )
-            if stored:
-                submissions_stored += 1
-                logger.info(
-                    "submission_stored",
-                    extra={
-                        "reddit_fullname": submission.reddit_fullname,
-                        "subreddit": submission.subreddit,
-                        "collection_run_id": run_id,
-                    },
-                )
-            else:
-                duplicates_skipped += 1
 
             if request.max_comments_per_submission == 0:
                 continue
 
             for comment in source.iter_comments(submission, request):
-                check_control()
+                _check_limits()
                 comments_seen += 1
 
                 if db.is_seen(comment.reddit_fullname):
                     duplicates_skipped += 1
                     continue
 
-                append_record(jsonl_path, comment)
                 stored_comment = db.mark_seen(
                     reddit_fullname=comment.reddit_fullname,
                     record_type="comment",
@@ -147,24 +180,27 @@ def run_collection(
                     collection_run_id=run_id,
                     jsonl_path=str(jsonl_path),
                 )
-                if stored_comment:
-                    comments_stored += 1
-                    logger.info(
-                        "comment_stored",
-                        extra={
-                            "reddit_fullname": comment.reddit_fullname,
-                            "submission_id": comment.submission_id,
-                            "collection_run_id": run_id,
-                        },
-                    )
-                else:
+                if not stored_comment:
                     duplicates_skipped += 1
+                    continue
 
-    except ScrapeStopRequested:
-        ctx.errors.append("stopped_by_user")
+                append_record(jsonl_path, comment)
+                comments_stored += 1
+                logger.info(
+                    "comment_stored",
+                    extra={
+                        "reddit_fullname": comment.reddit_fullname,
+                        "submission_id": comment.submission_id,
+                        "collection_run_id": run_id,
+                    },
+                )
+
+    except ScrapeStopRequested as exc:
+        reason = getattr(exc, "reason", None) or "stopped_by_user"
+        ctx.errors.append(reason)
         logger.warning(
             "collection_stopped",
-            extra={"collection_run_id": run_id},
+            extra={"collection_run_id": run_id, "reason": reason},
         )
     except Exception as exc:
         ctx.errors.append(str(exc))

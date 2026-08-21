@@ -11,7 +11,16 @@ Emits key=value structured log lines. Never logs:
 from __future__ import annotations
 
 import logging
+import os
 import sys
+
+
+class _FlushStreamHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """Flush after every record so Streamlit can tail collect.log live."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
 
 
 class StructuredFormatter(logging.Formatter):
@@ -22,9 +31,35 @@ class StructuredFormatter(logging.Formatter):
         base = f"{record.levelname} {ts} {record.getMessage()}"
 
         extras = []
-        skip = frozenset(logging.LogRecord.__dict__.keys()) | {
-            "message", "asctime", "exc_info", "exc_text", "stack_info",
-        }
+        skip = frozenset(
+            {
+                "name",
+                "msg",
+                "args",
+                "levelname",
+                "levelno",
+                "pathname",
+                "filename",
+                "module",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "lineno",
+                "funcName",
+                "created",
+                "msecs",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "processName",
+                "process",
+                "message",
+                "asctime",
+                "taskName",
+                "threadId",
+                "processId",
+            }
+        )
         for key, val in record.__dict__.items():
             if key.startswith("_") or key in skip:
                 continue
@@ -47,9 +82,14 @@ def configure_logging(
     for handler in root.handlers[:]:
         root.removeHandler(handler)
 
+    # Streamlit redirects the child stdout/stderr into collect.log; a second
+    # FileHandler on the same path would duplicate every line.
+    if os.environ.get("UYAM_LOG_TO_STDOUT_ONLY"):
+        log_file = None
+
     formatter = StructuredFormatter(datefmt="%Y-%m-%dT%H:%M:%S%z")
 
-    stdout_handler = logging.StreamHandler(sys.stderr)
+    stdout_handler = _FlushStreamHandler(sys.stderr)
     stdout_handler.setFormatter(formatter)
     root.addHandler(stdout_handler)
 

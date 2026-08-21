@@ -31,6 +31,57 @@ def raw_jsonl_path(data_dir: Path, subreddit: str) -> Path:
     return path
 
 
+def record_identity(record: dict[str, object]) -> str | None:
+    """Stable identity used to drop duplicate JSONL lines."""
+    fullname = record.get("reddit_fullname")
+    if isinstance(fullname, str) and fullname:
+        return fullname
+    reddit_id = record.get("reddit_id") or record.get("id")
+    record_type = record.get("record_type") or ""
+    if isinstance(reddit_id, str) and reddit_id:
+        prefix = "t3_" if record_type == "submission" else "t1_"
+        if reddit_id.startswith("t1_") or reddit_id.startswith("t3_"):
+            return reddit_id
+        return f"{prefix}{reddit_id}"
+    return None
+
+
+def load_jsonl_records(data_dir: Path, *, unique: bool = True) -> list[dict[str, object]]:
+    """Load every JSONL line under data/raw. Incomplete last lines are skipped.
+
+    When unique=True (default), keep the first occurrence of each reddit_fullname
+    so crash-window duplicates and re-runs do not show up twice in the UI.
+    """
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+    raw_dir = data_dir / "raw"
+    if not raw_dir.exists():
+        return records
+    for filepath in sorted(raw_dir.glob("**/*.jsonl")):
+        try:
+            text = filepath.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            if unique:
+                identity = record_identity(parsed)
+                if identity:
+                    if identity in seen:
+                        continue
+                    seen.add(identity)
+            records.append(parsed)
+    return records
+
+
 def append_record(path: Path, record: AnyRecord) -> None:
     """Append one normalized record as a JSON line."""
     line = record.model_dump_json() + "\n"

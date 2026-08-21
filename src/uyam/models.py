@@ -89,6 +89,12 @@ class SubmissionRecord(BaseModel):
 
     @computed_field
     @property
+    def collected_at(self) -> datetime:
+        """When this record was scraped (UTC). Alias of retrieved_at_utc."""
+        return self.retrieved_at_utc
+
+    @computed_field
+    @property
     def id(self) -> str:
         """Reddit submission id (same value as reddit_id)."""
         return self.reddit_id
@@ -174,6 +180,12 @@ class CommentRecord(BaseModel):
         if not (v.startswith("t1_") or v.startswith("t3_")):
             raise ValueError(f"parent_id must start with 't1_' or 't3_', got {v!r}")
         return v
+
+    @computed_field
+    @property
+    def collected_at(self) -> datetime:
+        """When this record was scraped (UTC). Alias of retrieved_at_utc."""
+        return self.retrieved_at_utc
 
     @computed_field
     @property

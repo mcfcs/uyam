@@ -24,7 +24,7 @@ from uyam.pipeline import make_collection_run_id, run_collection
 from uyam.privacy import reset_hmac_key_cache
 from uyam.sources.base import CollectionRequest
 from uyam.sources.fixture import FixtureRedditSource
-from uyam.storage import append_record, clear_collected_data
+from uyam.storage import clear_collected_data, load_jsonl_records
 
 FIXTURE_PATH = Path(__file__).parent.parent / "fixtures" / "sample_posts.json"
 TEST_KEY = "test-hmac-key-storage-recovery"
@@ -57,78 +57,76 @@ class TestSQLitePreventsDuplicates:
             return ctx.actual_submissions_stored, ctx.comments_stored
 
         subs1, com1 = _run()
+        jsonl_files = list((data_dir / "raw" / "Philippines").glob("*.jsonl"))
+        assert len(jsonl_files) == 1
+        lines_after_first = jsonl_files[0].read_text(encoding="utf-8")
+
         subs2, com2 = _run()
 
         assert subs1 > 0
         assert com1 > 0
         assert subs2 == 0  # all duplicates
         assert com2 == 0
+        assert jsonl_files[0].read_text(encoding="utf-8") == lines_after_first
 
         db.close()
 
 
 class TestJSONLFullnameProvidesDeduplication:
-    """Simulate the crash scenario: JSONL written but SQLite not updated.
+    """Website loader still drops duplicate fullnames if a file already has them."""
 
-    On re-run: SQLite allows re-collection → record appears twice in JSONL.
-    The reddit_fullname field allows post-hoc deduplication.
-    """
-
-    def test_duplicate_jsonl_lines_deduplicable_by_fullname(self, tmp_path: Path) -> None:
+    def test_second_pipeline_run_does_not_grow_jsonl(self, tmp_path: Path) -> None:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         db = DedupDatabase(tmp_path / "db" / "coll.sqlite3")
         source = FixtureRedditSource(FIXTURE_PATH)
 
-        # First run — normal
-        req1 = CollectionRequest(
-            subreddit="Philippines",
-            listing_type="new",
-            collection_run_id=make_collection_run_id(),
-        )
-        ctx1 = run_collection(source, req1, data_dir=data_dir, db=db, source_type="fixture")
-        subs_first = ctx1.actual_submissions_stored
-        assert subs_first > 0
+        def _run() -> int:
+            req = CollectionRequest(
+                subreddit="Philippines",
+                listing_type="new",
+                collection_run_id=make_collection_run_id(),
+            )
+            ctx = run_collection(source, req, data_dir=data_dir, db=db, source_type="fixture")
+            return ctx.actual_submissions_stored
 
-        # Simulate crash: manually write duplicate JSONL lines
-        # by collecting again WITHOUT registering in SQLite (simulate using a fresh DB)
-        db2 = DedupDatabase(tmp_path / "db2" / "coll.sqlite3")
-        req2 = CollectionRequest(
-            subreddit="Philippines",
-            listing_type="new",
-            collection_run_id=make_collection_run_id(),
-        )
-        # Use the same JSONL path as first run
-        # by directly reading submissions from fixture and appending
-        phantom_source = FixtureRedditSource(FIXTURE_PATH)
+        assert _run() > 0
         jsonl_file = list((data_dir / "raw" / "Philippines").glob("*.jsonl"))[0]
-        lines_before = len(jsonl_file.read_text(encoding="utf-8").strip().splitlines())
-
-        for sub in phantom_source.iter_submissions(req2):
-            # Write to JSONL without marking in the ORIGINAL db (simulates crash)
-            append_record(jsonl_file, sub)
-
-        lines_after = len(jsonl_file.read_text(encoding="utf-8").strip().splitlines())
-        db2.close()
-
-        # JSONL now has duplicates
-        assert lines_after > lines_before
-
-        # But deduplication by reddit_fullname removes them
-        seen: set[str] = set()
-        unique_records = []
-        for line in jsonl_file.read_text(encoding="utf-8").strip().splitlines():
-            record = json.loads(line)
-            fn = record["reddit_fullname"]
-            if fn not in seen:
-                seen.add(fn)
-                unique_records.append(record)
-
-        # Unique count matches original first-run count (submissions only for simplicity)
-        unique_submissions = [r for r in unique_records if r["record_type"] == "submission"]
-        assert len(unique_submissions) == subs_first
-
+        before = jsonl_file.read_text(encoding="utf-8")
+        assert _run() == 0
+        assert jsonl_file.read_text(encoding="utf-8") == before
         db.close()
+
+    def test_load_jsonl_records_drops_duplicate_fullnames(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        raw = data_dir / "raw" / "Philippines"
+        raw.mkdir(parents=True)
+        path = raw / "2026-08-21.jsonl"
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {"reddit_fullname": "t3_aaa", "record_type": "submission", "id": "aaa"}
+                    ),
+                    json.dumps(
+                        {"reddit_fullname": "t3_aaa", "record_type": "submission", "id": "aaa"}
+                    ),
+                    json.dumps(
+                        {"reddit_fullname": "t1_bbb", "record_type": "comment", "id": "bbb"}
+                    ),
+                    "{not json",
+                    json.dumps(
+                        {"reddit_fullname": "t1_bbb", "record_type": "comment", "id": "bbb"}
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        unique = load_jsonl_records(data_dir, unique=True)
+        assert [r["reddit_fullname"] for r in unique] == ["t3_aaa", "t1_bbb"]
+        all_rows = load_jsonl_records(data_dir, unique=False)
+        assert len(all_rows) == 4
 
 
 def test_clear_collected_data(tmp_path: Path) -> None:

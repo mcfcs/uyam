@@ -4,19 +4,19 @@ Uses a UNIQUE constraint on reddit_fullname as the authoritative guard.
 Tracks per-run statistics in a separate collection_runs table.
 
 Failure model:
-  Records are written to JSONL first, then registered in SQLite.
-  If the process crashes between JSONL write and SQLite registration,
-  the record exists in JSONL but SQLite allows re-collection on the next run,
-  producing a duplicate JSONL line. This window is narrow and documented.
-  The reddit_fullname field in every JSONL line allows post-hoc deduplication
-  during dataset construction. The SQLite UNIQUE constraint is the guard
-  against the common "run twice" case.
+  SQLite UNIQUE(reddit_fullname) is reserved first; JSONL is written only after
+  a successful insert. Clicking Start Collection again skips already-stored
+  posts and comments — no second JSONL line.
+  If the process crashes after SQLite insert but before the JSONL append, that
+  one record is marked seen and will not be re-fetched (a missing JSONL line,
+  not a duplicate). The website also drops duplicate fullnames when displaying.
 """
 
 from __future__ import annotations
 
 import logging
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -59,12 +59,28 @@ class DedupDatabase:
 
     def __init__(self, db_path: Path) -> None:
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path))
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(_SCHEMA)
-        self._conn.commit()
+        last_exc: sqlite3.OperationalError | None = None
+        for attempt in range(25):
+            conn: sqlite3.Connection | None = None
+            try:
+                conn = sqlite3.connect(str(db_path), timeout=30.0)
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+                conn.executescript(_SCHEMA)
+                conn.commit()
+                self._conn = conn
+                return
+            except sqlite3.OperationalError as exc:
+                last_exc = exc
+                if conn is not None:
+                    conn.close()
+                if "locked" not in str(exc).lower():
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+        raise last_exc or sqlite3.OperationalError("database is locked")
 
     def close(self) -> None:
         self._conn.close()

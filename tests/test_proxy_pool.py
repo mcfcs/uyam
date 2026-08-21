@@ -137,6 +137,14 @@ class TestProxyPool:
     def test_healthy_count(self) -> None:
         pool = ProxyPool(["http://p1:8080", "http://p2:8080", "http://p3:8080"])
         assert pool.healthy_count == 3
+
+    def test_rotated_starts_at_offset(self) -> None:
+        pool = ProxyPool(
+            ["http://p1:8080", "http://p2:8080", "http://p3:8080"]
+        )
+        rotated = pool.rotated(1)
+        assert rotated.current() == "http://p2:8080"
+        assert pool.current() == "http://p1:8080"
         pool.mark_current_unhealthy()
         assert pool.healthy_count == 2
 

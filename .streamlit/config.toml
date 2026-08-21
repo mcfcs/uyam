@@ -1,0 +1,24 @@
+# Keep the dashboard alive while the scraper writes JSONL, logs, and screenshots.
+# Watching `data/` (or __pycache__) restarts Streamlit and kills the live UI.
+
+[server]
+fileWatcherType = "none"
+folderWatchBlacklist = [
+    "data",
+    "data/raw",
+    "data/db",
+    "data/manifests",
+    "data/.scrape-status",
+    "data/.browser-profile",
+    "src/uyam/__pycache__",
+    "tests/__pycache__",
+    ".venv",
+    "context",
+    "__pycache__",
+]
+
+[browser]
+gatherUsageStats = false
+
+[runner]
+fastReruns = false

@@ -18,14 +18,19 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from uyam.config import AppConfig, load_config, load_env
+from uyam.config import load_config, load_env
 from uyam.dedup import DedupDatabase
 from uyam.logging_config import configure_logging
 from uyam.models import SCHEMA_VERSION
-from uyam.pipeline import make_collection_run_id, run_collection
-from uyam.scrape_status import LOG_FILE, set_control, write_run_meta, write_status
-from uyam.sources.base import CollectionRequest
-from uyam.sources.fixture import FixtureRedditSource, validate_fixture
+from uyam.pipeline import make_collection_run_id
+from uyam.scrape_status import (
+    LOG_FILE,
+    reset_worker_pids,
+    set_control,
+    write_run_meta,
+    write_status,
+)
+from uyam.sources.fixture import validate_fixture
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _DEFAULT_PROXIES = _REPO_ROOT / "proxies.txt"
@@ -45,40 +50,6 @@ def _get_db(data_dir: Path) -> DedupDatabase:
 def _resolve_proxies_path(proxies: Path | None) -> Path:
     """Live sources always read proxies.txt unless an explicit path is given."""
     return proxies if proxies is not None else _DEFAULT_PROXIES
-
-
-def _build_shreddit_source(
-    cfg: AppConfig,
-    proxies_path: Path,
-    *,
-    headless: bool | None,
-    captcha_wait: float | None = None,
-) -> object:
-    from uyam.privacy import ensure_hmac_key
-    from uyam.sources.proxy_pool import ProxyPool
-    from uyam.sources.shreddit import ShredditBrowserSource
-
-    ensure_hmac_key()
-    pool = ProxyPool.from_file(proxies_path)
-    if pool.is_empty():
-        raise typer.BadParameter(
-            f"shreddit requires proxies in {proxies_path}. "
-            "Copy proxies.example.txt to proxies.txt and add at least one proxy."
-        )
-    return ShredditBrowserSource(
-        proxy_pool=pool,
-        headless=cfg.shreddit.headless if headless is None else headless,
-        timeout_seconds=cfg.shreddit.timeout_seconds,
-        min_interval_seconds=cfg.shreddit.min_interval_seconds,
-        max_scrolls=cfg.shreddit.max_scrolls,
-        more_comments_clicks=cfg.shreddit.more_comments_clicks,
-        scroll_wait_ms=cfg.shreddit.scroll_wait_ms,
-        expand_wait_ms=cfg.shreddit.expand_wait_ms,
-        use_system_chrome=cfg.shreddit.use_system_chrome,
-        captcha_wait_seconds=(
-            cfg.shreddit.captcha_wait_seconds if captcha_wait is None else captcha_wait
-        ),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +85,26 @@ def collect(
         None,
         help="Seconds to wait for you to solve a Chrome captcha (default: collection.yaml).",
     ),
+    max_seconds: float | None = typer.Option(
+        None,
+        help="Stop collection after N seconds (wall clock). 0 or omit = no time limit.",
+    ),
+    workers: int | None = typer.Option(
+        None,
+        help="Parallel subreddit browsers. Default: min(3, subreddit count) for shreddit.",
+    ),
+    since: str | None = typer.Option(
+        None,
+        help="UTC start date YYYY-MM-DD. Walk /new back to this day (N posts/day).",
+    ),
+    until: str | None = typer.Option(
+        None,
+        help="UTC end date YYYY-MM-DD inclusive. Default: today. Requires --since.",
+    ),
+    per_day: int | None = typer.Option(
+        None,
+        help="Max new posts per UTC day (default 15 when --since is set).",
+    ),
     config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
     lenient: bool = typer.Option(False, help="Use lenient fixture validation"),
     log_level: str = typer.Option("INFO", help="Logging level"),
@@ -124,8 +115,15 @@ def collect(
     load_env()
     cfg = load_config(config_path)
     set_control("run")
-    write_run_meta(pid=os.getpid())
-    write_status("running", "Collection started")
+    reset_worker_pids()
+    effective_max_seconds = max_seconds if max_seconds and max_seconds > 0 else None
+    write_run_meta(pid=os.getpid(), max_seconds=effective_max_seconds)
+    write_status(
+        "running",
+        "Collection started"
+        if effective_max_seconds is None
+        else f"Collection started (time limit {effective_max_seconds:.0f}s)",
+    )
 
     if source not in ("fixture", "public", "shreddit", "reddit"):
         typer.echo(
@@ -151,6 +149,23 @@ def collect(
 
     listing_type = "search" if search else listing
     effective_limit = limit if limit is not None else cfg.collection.limit_per_subreddit
+    calendar_since = since.strip() if since else None
+    calendar_until = until.strip() if until else None
+    posts_per_day: int | None = None
+    if calendar_since:
+        from uyam.calendar_window import parse_iso_date
+
+        try:
+            parse_iso_date(calendar_since)
+            if calendar_until:
+                parse_iso_date(calendar_until)
+        except ValueError as exc:
+            typer.echo(f"Error: dates must be YYYY-MM-DD ({exc})", err=True)
+            raise typer.Exit(1) from exc
+        posts_per_day = per_day if per_day and per_day > 0 else 15
+    elif per_day or calendar_until:
+        typer.echo("Error: --per-day / --until require --since YYYY-MM-DD", err=True)
+        raise typer.Exit(1)
     proxies_path = _resolve_proxies_path(proxies)
     source_type = "shreddit" if source in ("public", "shreddit") else source
     if max_comments is None:
@@ -162,117 +177,117 @@ def collect(
     else:
         effective_max_comments = max_comments
 
-    reddit_source: object
-    if source == "fixture":
-        reddit_source = FixtureRedditSource(lenient_validation=lenient)
-    elif source in ("public", "shreddit"):
-        try:
-            reddit_source = _build_shreddit_source(
-                cfg,
-                proxies_path,
-                headless=headless,
-                captcha_wait=captcha_wait,
-            )
-        except typer.BadParameter as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(1) from exc
-    else:
-        from uyam.privacy import ensure_hmac_key
-        from uyam.sources.praw_source import PrawRedditSource
-        from uyam.sources.proxy_pool import ProxyPool
-
-        ensure_hmac_key()
-        pool = ProxyPool.from_file(proxies_path)
-        proxy_url = pool.current()
-        reddit_source = PrawRedditSource(proxy_url=proxy_url)
-
     data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
-    db = _get_db(data_dir)
+    if workers is None:
+        effective_workers = (
+            min(3, len(subreddits_to_collect)) if source_type == "shreddit" else 1
+        )
+    else:
+        effective_workers = max(1, int(workers))
+
+    jobs: list[dict] = []
+    for index, sub_name in enumerate(subreddits_to_collect):
+        jobs.append(
+            {
+                "source": source,
+                "source_type": source_type,
+                "subreddit": sub_name,
+                "listing_type": listing_type,
+                "collection_run_id": make_collection_run_id(),
+                "limit": effective_limit,
+                "sort": cfg.collection.sort,
+                "time_filter": cfg.collection.time_filter,
+                "search_query": search,
+                "max_comments_per_submission": effective_max_comments,
+                "max_depth": cfg.comments.max_depth,
+                "include_deleted": cfg.comments.include_deleted,
+                "comment_sort": cfg.comments.sort,
+                "replace_more_limit": cfg.comments.replace_more_limit,
+                "sampling_strategy": "natural",
+                "matched_query_or_keyword": None,
+                "max_seconds": effective_max_seconds,
+                "calendar_since": calendar_since,
+                "calendar_until": calendar_until,
+                "posts_per_day": posts_per_day,
+                "headless": headless,
+                "captcha_wait": captcha_wait,
+                "proxies_path": str(proxies_path),
+                "config_path": str(config_path) if config_path else None,
+                "data_dir": str(data_dir),
+                "log_level": log_level,
+                "lenient": lenient,
+                "worker_index": index,
+                "author_hmac_key": os.environ.get("AUTHOR_HMAC_KEY"),
+            }
+        )
+
+    from uyam.parallel import run_jobs
 
     stopped = False
     try:
-        for sub_name in subreddits_to_collect:
-            run_id = make_collection_run_id()
-            request = CollectionRequest(
-                subreddit=sub_name,
-                listing_type=listing_type,
-                collection_run_id=run_id,
-                limit=effective_limit,
-                sort=cfg.collection.sort,
-                time_filter=cfg.collection.time_filter,
-                search_query=search,
-                max_comments_per_submission=effective_max_comments,
-                max_depth=cfg.comments.max_depth,
-                include_deleted=cfg.comments.include_deleted,
-                comment_sort=cfg.comments.sort,
-                replace_more_limit=cfg.comments.replace_more_limit,
-                sampling_strategy="natural",
-            )
-
-            ctx = run_collection(
-                reddit_source,  # type: ignore[arg-type]
-                request,
-                data_dir=data_dir,
-                db=db,
-                source_type=source_type,
-            )
-
-            if "stopped_by_user" in ctx.errors:
-                stopped = True
-                console.print(
-                    f"[yellow]STOPPED[/yellow] {sub_name}: "
-                    f"{ctx.actual_submissions_stored} submissions, "
-                    f"{ctx.comments_stored} comments stored "
-                    f"({ctx.duplicates_skipped} duplicates skipped)"
-                )
-                break
+        if effective_workers > 1:
             console.print(
-                f"[green]OK[/green] {sub_name}: "
-                f"{ctx.actual_submissions_stored} submissions, "
-                f"{ctx.comments_stored} comments stored "
-                f"({ctx.duplicates_skipped} duplicates skipped)"
+                f"Parallel scrape: {len(jobs)} subreddits, {effective_workers} browsers"
             )
+        results = run_jobs(jobs, max_workers=effective_workers)
+        for row in results:
+            sub_name = str(row.get("subreddit") or "")
+            errors = [str(e) for e in (row.get("errors") or [])]
+            if "stopped_by_user" in errors or "time_limit_reached" in errors:
+                stopped = True
+                why = "time limit" if "time_limit_reached" in errors else "stopped"
+                console.print(
+                    f"[yellow]{why.upper()}[/yellow] {sub_name}: "
+                    f"{row.get('submissions', 0)} submissions, "
+                    f"{row.get('comments', 0)} comments stored "
+                    f"({row.get('duplicates', 0)} duplicates skipped)"
+                )
+            elif not row.get("ok"):
+                console.print(
+                    f"[red]FAIL[/red] {sub_name}: {'; '.join(errors) or 'unknown error'}"
+                )
+            else:
+                console.print(
+                    f"[green]OK[/green] {sub_name}: "
+                    f"{row.get('submissions', 0)} submissions, "
+                    f"{row.get('comments', 0)} comments stored "
+                    f"({row.get('duplicates', 0)} duplicates skipped)"
+                )
 
-        # Oversampling pass (live sources only)
         if (
             cfg.oversampling.enabled
             and cfg.oversampling.keywords
             and source != "fixture"
             and not stopped
         ):
+            over_jobs: list[dict] = []
+            idx = 0
             for keyword in cfg.oversampling.keywords:
                 for sub_name in subreddits_to_collect:
-                    run_id = make_collection_run_id()
-                    request = CollectionRequest(
-                        subreddit=sub_name,
-                        listing_type="search",
-                        collection_run_id=run_id,
-                        limit=effective_limit,
-                        search_query=keyword,
-                        max_comments_per_submission=effective_max_comments,
-                        max_depth=cfg.comments.max_depth,
-                        include_deleted=cfg.comments.include_deleted,
-                        comment_sort=cfg.comments.sort,
-                        replace_more_limit=cfg.comments.replace_more_limit,
-                        sampling_strategy="keyword_oversampled",
-                        matched_query_or_keyword=keyword,
+                    over_jobs.append(
+                        {
+                            **jobs[0],
+                            "subreddit": sub_name,
+                            "listing_type": "search",
+                            "collection_run_id": make_collection_run_id(),
+                            "search_query": keyword,
+                            "sampling_strategy": "keyword_oversampled",
+                            "matched_query_or_keyword": keyword,
+                            "worker_index": idx,
+                        }
                     )
-                    ctx = run_collection(
-                        reddit_source,  # type: ignore[arg-type]
-                        request,
-                        data_dir=data_dir,
-                        db=db,
-                        source_type=source_type,
-                    )
-                    console.print(
-                        f"[yellow]+[/yellow] {sub_name} [{keyword!r}]: "
-                        f"{ctx.actual_submissions_stored} submissions stored"
-                    )
+                    idx += 1
+            over_results = run_jobs(over_jobs, max_workers=effective_workers)
+            for job, row in zip(over_jobs, over_results, strict=True):
+                errs = [str(e) for e in (row.get("errors") or [])]
+                if "stopped_by_user" in errs or "time_limit_reached" in errs:
+                    stopped = True
+                console.print(
+                    f"[yellow]+[/yellow] {row.get('subreddit')} "
+                    f"[{job.get('matched_query_or_keyword')!r}]: "
+                    f"{row.get('submissions', 0)} submissions stored"
+                )
     finally:
-        close = getattr(reddit_source, "close", None)
-        if callable(close):
-            close()
-        db.close()
         write_status(
             "idle",
             "Collection stopped" if stopped else "Collection finished",

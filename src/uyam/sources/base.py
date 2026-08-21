@@ -6,7 +6,7 @@ It never imports FixtureRedditSource or PrawRedditSource directly.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -34,6 +34,18 @@ class CollectionRequest:
 
     sampling_strategy: str = "natural"
     matched_query_or_keyword: str | None = None
+
+    # Wall-clock cap for one collection pass. None or <=0 means no limit.
+    max_seconds: float | None = None
+
+    # Calendar window (UTC days). When set with posts_per_day, the source
+    # walks timestamp-search slices instead of the live /new feed.
+    calendar_since: str | None = None  # YYYY-MM-DD
+    calendar_until: str | None = None  # YYYY-MM-DD inclusive; None = today UTC
+    posts_per_day: int | None = None
+
+    # Optional fullname → already-collected? Used to skip comment harvest.
+    is_seen: Callable[[str], bool] | None = field(default=None, repr=False, compare=False)
 
     extra: dict[str, object] = field(default_factory=dict)
 

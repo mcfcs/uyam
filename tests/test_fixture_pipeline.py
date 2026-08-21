@@ -19,8 +19,11 @@ TEST_KEY = "test-hmac-key-pipeline"
 
 @pytest.fixture(autouse=True)
 def set_hmac_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from uyam.scrape_status import set_control
+
     monkeypatch.setenv("AUTHOR_HMAC_KEY", TEST_KEY)
     reset_hmac_key_cache()
+    set_control("run")
     yield
     reset_hmac_key_cache()
 
@@ -76,6 +79,7 @@ class TestFixturePipelineEndToEnd:
             assert "schema_version" in record
             assert "collection_run_id" in record
             assert record["record_type"] in ("submission", "comment")
+            assert record.get("collected_at") or record.get("retrieved_at_utc")
 
     def test_manifest_written(self, data_dir: Path, db: DedupDatabase) -> None:
         source = FixtureRedditSource(FIXTURE_PATH)
@@ -110,6 +114,26 @@ class TestFixturePipelineEndToEnd:
                 source, request, data_dir=data_dir, db=db, source_type="fixture"
             )
             assert ctx.actual_submissions_stored > 0
+
+    def test_time_limit_stops_collection(self, data_dir: Path, db: DedupDatabase) -> None:
+        import time
+
+        from uyam.scrape_status import clear_status, set_control, write_run_meta
+
+        source = FixtureRedditSource(FIXTURE_PATH)
+        request = _make_request("Philippines")
+        request.max_seconds = 0.01
+        clear_status()
+        set_control("run")
+        write_run_meta(pid=1, max_seconds=0.01)
+        time.sleep(0.05)
+        try:
+            ctx = run_collection(
+                source, request, data_dir=data_dir, db=db, source_type="fixture"
+            )
+        finally:
+            clear_status()
+        assert "time_limit_reached" in ctx.errors
 
 
 class TestPrawMapping:

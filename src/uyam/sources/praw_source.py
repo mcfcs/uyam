@@ -21,6 +21,12 @@ from typing import TYPE_CHECKING, Any
 
 import requests
 
+from uyam.calendar_window import (
+    CalendarWindow,
+    calendar_listing_action,
+    calendar_mode,
+    utc_day_from_unix,
+)
 from uyam.models import CommentRecord, SubmissionRecord
 from uyam.privacy import pseudonymize_author
 from uyam.sources.base import CollectionRequest
@@ -228,6 +234,58 @@ class PrawRedditSource:
         self,
         request: CollectionRequest,
     ) -> Iterable[SubmissionRecord]:
+        if calendar_mode(request):
+            yield from self._iter_calendar_listing(request)
+            return
+        yield from self._iter_listing(request)
+
+    def _iter_calendar_listing(
+        self,
+        request: CollectionRequest,
+    ) -> Iterable[SubmissionRecord]:
+        window = CalendarWindow.from_request(request)
+        if window is None:
+            yield from self._iter_listing(request)
+            return
+        from dataclasses import replace
+
+        subreddit = self._reddit.subreddit(request.subreddit)
+        taken: dict[str, int] = {}
+        old_streak = 0
+        listing = subreddit.new(limit=window.scan_cap())
+        for raw_sub in listing:
+            created = float(getattr(raw_sub, "created_utc", 0) or 0)
+            action = calendar_listing_action(
+                created_unix=created,
+                window=window,
+                taken_on_day=taken,
+            )
+            if action == "stop":
+                old_streak += 1
+                if old_streak >= 5:
+                    break
+                continue
+            old_streak = 0
+            if action != "take":
+                continue
+            day = utc_day_from_unix(created).isoformat()
+            day_req = replace(request, matched_query_or_keyword=day)
+            record = _with_retry(
+                lambda s=raw_sub, req=day_req: self._map_submission(
+                    s,
+                    collection_run_id=req.collection_run_id,
+                    sampling_strategy=req.sampling_strategy,
+                    matched_query_or_keyword=req.matched_query_or_keyword,
+                ),
+                label=f"map_submission:{raw_sub.id}",
+            )
+            yield record
+            taken[day] = taken.get(day, 0) + 1
+
+    def _iter_listing(
+        self,
+        request: CollectionRequest,
+    ) -> Iterable[SubmissionRecord]:
         subreddit = self._reddit.subreddit(request.subreddit)
         limit = request.limit
 
@@ -269,6 +327,12 @@ class PrawRedditSource:
                     "collection_run_id": request.collection_run_id,
                 },
             )
+            day_start = request.extra.get("day_start_unix")
+            day_end = request.extra.get("day_end_unix")
+            if isinstance(day_start, int) and isinstance(day_end, int):
+                ts = record.created_utc.timestamp()
+                if not (day_start <= ts < day_end):
+                    continue
             yield record
 
     def iter_comments(
