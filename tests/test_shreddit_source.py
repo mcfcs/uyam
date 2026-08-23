@@ -41,6 +41,8 @@ def test_nav_error_kind() -> None:
     assert _nav_error_kind(RuntimeError("reddit_block_or_challenge")) == "block"
     assert _nav_error_kind(Exception("Timeout 45000ms exceeded")) == "transient"
     assert _nav_error_kind(Exception()) == "transient"
+    http_fail = "Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at https://x"
+    assert _nav_error_kind(Exception(http_fail)) == "rate_limit"
 
 
 def test_permalink_id() -> None:

@@ -138,6 +138,26 @@ class TestProxyPool:
         pool = ProxyPool(["http://p1:8080", "http://p2:8080", "http://p3:8080"])
         assert pool.healthy_count == 3
 
+    def test_cooldown_rotates_without_killing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("uyam.sources.proxy_pool.time.sleep", lambda _s: None)
+        clock = {"t": 0.0}
+        monkeypatch.setattr(
+            "uyam.sources.proxy_pool.time.monotonic", lambda: clock["t"]
+        )
+        pool = ProxyPool(
+            ["http://p1:8080", "http://p2:8080", "http://p3:8080"]
+        )
+        assert pool.current() == "http://p1:8080"
+        pool.cooldown_current(30)
+        assert pool.current() == "http://p2:8080"
+        assert pool.healthy_count == 3
+        pool.cooldown_current(30)
+        assert pool.current() == "http://p3:8080"
+        clock["t"] = 31.0
+        pool.cooldown_current(30)
+        # p1's cooldown expired; pool wraps instead of marking anyone dead
+        assert pool.current() == "http://p1:8080"
+
     def test_rotated_starts_at_offset(self) -> None:
         pool = ProxyPool(
             ["http://p1:8080", "http://p2:8080", "http://p3:8080"]

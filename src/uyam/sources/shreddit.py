@@ -112,6 +112,18 @@ _TRANSIENT_ERR_SNIPPETS = (
     "navigation interrupted",
     "net::err_timed_out",
 )
+_RATE_LIMIT_SNIPPETS = (
+    "err_http_response_code_failure",
+    "too many requests",
+    "status=429",
+    "http 429",
+    " 429 ",
+    "http_429",
+    "json_http_429",
+    "json_http_403",
+)
+_RATE_LIMIT_JSON_STATUS = frozenset({429, 403})
+_RATE_LIMIT_COOLDOWN_S = 45.0
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_DIR = _REPO_ROOT / "data" / ".browser-profile"
 
@@ -230,6 +242,10 @@ def _proxy_label(proxy_url: str) -> str:
     return f"{parsed.hostname}:{parsed.port}"
 
 
+class RedditRateLimited(RuntimeError):
+    """Reddit returned 429/403 — switch proxy, do not kill it."""
+
+
 def _exc_text(exc: BaseException) -> str:
     """Playwright's Error often has an empty str(); prefer .message."""
     msg = getattr(exc, "message", None)
@@ -242,12 +258,16 @@ def _exc_text(exc: BaseException) -> str:
 
 
 def _nav_error_kind(exc: BaseException) -> str:
-    """Classify a goto failure: proxy | closed | block | transient."""
+    """Classify a goto failure: proxy | closed | block | rate_limit | transient."""
     if isinstance(exc, ScrapeStopRequested):
         return "stop"
+    if isinstance(exc, RedditRateLimited):
+        return "rate_limit"
     blob = _exc_text(exc).lower()
     if "reddit_block_or_challenge" in blob or "captcha" in blob:
         return "block"
+    if any(s in blob for s in _RATE_LIMIT_SNIPPETS):
+        return "rate_limit"
     if any(s in blob for s in _CLOSED_ERR_SNIPPETS):
         return "closed"
     if any(s in blob for s in _PROXY_ERR_SNIPPETS):
@@ -498,12 +518,19 @@ class ShredditBrowserSource:
                 context.close()
         # Persistent profiles are kept so the humanity challenge stays solved.
 
-    def _rotate_proxy(self, *, reason: str) -> None:
+    def _rotate_proxy(self, *, reason: str, fatal: bool = True) -> None:
         logger.warning(
             "shreddit_proxy_rotate",
-            extra={"proxy": self._active_proxy_label, "reason": reason},
+            extra={
+                "proxy": self._active_proxy_label,
+                "reason": reason,
+                "fatal": fatal,
+            },
         )
-        self._pool.mark_current_unhealthy()
+        if fatal:
+            self._pool.mark_current_unhealthy()
+        else:
+            self._pool.cooldown_current(_RATE_LIMIT_COOLDOWN_S)
         self._drop_browser()
 
     def _throttle(self) -> None:
@@ -705,8 +732,14 @@ class ShredditBrowserSource:
                         "proxy": self._active_proxy_label,
                     },
                 )
+                if kind == "rate_limit":
+                    # Instant switch — retrying the same 429 IP is wasted work.
+                    self._rotate_proxy(reason=kind, fatal=False)
+                    same_proxy_tries = 0
+                    rotations += 1
+                    continue
                 if kind == "block":
-                    self._rotate_proxy(reason=kind)
+                    self._rotate_proxy(reason=kind, fatal=False)
                     same_proxy_tries = 0
                     rotations += 1
                     continue
@@ -714,18 +747,18 @@ class ShredditBrowserSource:
                     self._drop_browser()
                     same_proxy_tries += 1
                     if same_proxy_tries >= _SAME_PROXY_RETRIES:
-                        self._rotate_proxy(reason=kind)
+                        self._rotate_proxy(reason=kind, fatal=False)
                         same_proxy_tries = 0
                         rotations += 1
                     continue
                 if kind == "proxy":
-                    self._rotate_proxy(reason=kind)
+                    self._rotate_proxy(reason=kind, fatal=True)
                     same_proxy_tries = 0
                     rotations += 1
                     continue
                 same_proxy_tries += 1
                 if same_proxy_tries >= _SAME_PROXY_RETRIES:
-                    self._rotate_proxy(reason="transient_retries_exhausted")
+                    self._rotate_proxy(reason="transient_retries_exhausted", fatal=False)
                     same_proxy_tries = 0
                     rotations += 1
         raise RuntimeError(
@@ -746,6 +779,12 @@ class ShredditBrowserSource:
                 timeout=self._nav_timeout_ms,
                 headers={"accept": "application/json, text/plain, */*"},
             )
+            if resp.status in _RATE_LIMIT_JSON_STATUS:
+                logger.warning(
+                    "shreddit_json_http",
+                    extra={"status": resp.status, "path": urlparse(url).path},
+                )
+                raise RedditRateLimited(f"json_http_{resp.status}")
             if resp.status != 200:
                 logger.info(
                     "shreddit_json_http",
@@ -756,6 +795,8 @@ class ShredditBrowserSource:
             if isinstance(data, dict) and data.get("error"):
                 return None
             return data
+        except (ScrapeStopRequested, RedditRateLimited):
+            raise
         except Exception as exc:
             logger.info(
                 "shreddit_json_failed",
@@ -810,10 +851,19 @@ class ShredditBrowserSource:
         )
         yielded: list[dict[str, Any]] = []
         after: str | None = None
+        rate_tries = 0
         while len(yielded) < limit:
             page_size = min(100, limit - len(yielded))
             url, params = _listing_endpoint(request, page_size=page_size, after=after)
-            payload = self._fetch_json(f"{url}?{urlencode(params)}")
+            try:
+                payload = self._fetch_json(f"{url}?{urlencode(params)}")
+            except RedditRateLimited:
+                rate_tries += 1
+                if rate_tries >= 5:
+                    return yielded
+                self._rotate_proxy(reason="rate_limit", fatal=False)
+                continue
+            rate_tries = 0
             if not isinstance(payload, dict):
                 return yielded
             children = payload.get("data", {}).get("children") or []
@@ -868,6 +918,26 @@ class ShredditBrowserSource:
                 },
             )
         return out
+
+    def _json_comments_with_rotate(
+        self, submission_id: str, request: CollectionRequest
+    ) -> tuple[list[dict[str, Any]] | None, bool]:
+        """Fetch comments JSON; on 429 switch proxy once and retry."""
+        try:
+            return self._json_comments(submission_id, request), False
+        except RedditRateLimited:
+            logger.warning(
+                "shreddit_comments_json_429",
+                extra={
+                    "submission_id": submission_id,
+                    "collection_run_id": request.collection_run_id,
+                },
+            )
+            self._rotate_proxy(reason="rate_limit", fatal=False)
+            try:
+                return self._json_comments(submission_id, request), False
+            except RedditRateLimited:
+                return None, True
 
     def _collect_listing_permalinks(
         self, request: CollectionRequest, *, fetch_limit: int
@@ -1002,8 +1072,11 @@ class ShredditBrowserSource:
         reddit_id = _reddit_id_from_permalink(permalink)
         json_post = self._json_post_cache.get(reddit_id) if reddit_id else None
         json_comments: list[dict[str, Any]] | None = None
+        json_rate_limited = False
         if reddit_id and request.max_comments_per_submission != 0:
-            json_comments = self._json_comments(reddit_id, request)
+            json_comments, json_rate_limited = self._json_comments_with_rotate(
+                reddit_id, request
+            )
 
         want_all = request.max_comments_per_submission is None
         listed_comments = int((json_post or {}).get("num_comments") or 0)
@@ -1020,6 +1093,16 @@ class ShredditBrowserSource:
                 or json_short
             )
         )
+        # Same IP that 429'd JSON will 429 the HTML page too — skip DOM.
+        if json_rate_limited and json_post is not None:
+            need_dom = False
+            logger.warning(
+                "shreddit_skip_dom_after_429",
+                extra={
+                    "submission_id": reddit_id,
+                    "collection_run_id": request.collection_run_id,
+                },
+            )
 
         used_dom = False
         if need_dom:
@@ -1344,11 +1427,20 @@ class ShredditBrowserSource:
         """Yield listing JSON children, paginating with after=."""
         after: str | None = None
         yielded = 0
+        rate_tries = 0
         while yielded < max_posts:
             check_control()
             page_size = min(100, max_posts - yielded)
             url, params = _listing_endpoint(request, page_size=page_size, after=after)
-            payload = self._fetch_json(f"{url}?{urlencode(params)}")
+            try:
+                payload = self._fetch_json(f"{url}?{urlencode(params)}")
+            except RedditRateLimited:
+                rate_tries += 1
+                if rate_tries >= 5:
+                    return
+                self._rotate_proxy(reason="rate_limit", fatal=False)
+                continue
+            rate_tries = 0
             if not isinstance(payload, dict):
                 return
             children = payload.get("data", {}).get("children") or []

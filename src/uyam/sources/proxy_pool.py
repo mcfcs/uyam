@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -113,6 +114,7 @@ class ProxyPool:
         self._proxies = list(proxies)
         self._index = 0
         self._unhealthy: set[int] = set()
+        self._cooldown_until: dict[int, float] = {}
 
     @classmethod
     def from_file(cls, path: Path | None) -> ProxyPool:
@@ -125,32 +127,67 @@ class ProxyPool:
         return len(self._proxies) == 0
 
     def current(self) -> str | None:
-        """Return the current proxy URL, or None for a direct connection."""
-        while self._index < len(self._proxies):
-            if self._index not in self._unhealthy:
-                proxy = self._proxies[self._index]
-                logger.debug(
-                    "proxy_selected",
-                    extra={"proxy": _safe_label(proxy)},
-                )
+        """Return a usable proxy URL, wrapping the pool and skipping cooldowns."""
+        n = len(self._proxies)
+        if n == 0:
+            return None
+        now = time.monotonic()
+        started = self._index % n
+        soonest: tuple[float, int] | None = None
+        for step in range(n):
+            i = (started + step) % n
+            if i in self._unhealthy:
+                continue
+            until = self._cooldown_until.get(i, 0.0)
+            if until <= now:
+                self._index = i
+                proxy = self._proxies[i]
+                logger.debug("proxy_selected", extra={"proxy": _safe_label(proxy)})
                 return proxy
-            self._index += 1
-        if self._proxies:
-            logger.warning(
-                "proxy_pool_exhausted: all proxies unhealthy, using direct connection"
-            )
+            if soonest is None or until < soonest[0]:
+                soonest = (until, i)
+        if soonest is not None:
+            wait = min(max(0.0, soonest[0] - now), 20.0)
+            if wait > 0:
+                logger.info(
+                    "proxy_wait_cooldown",
+                    extra={"seconds": round(wait, 1)},
+                )
+                time.sleep(wait)
+            self._index = soonest[1]
+            self._cooldown_until.pop(self._index, None)
+            proxy = self._proxies[self._index]
+            logger.debug("proxy_selected", extra={"proxy": _safe_label(proxy)})
+            return proxy
+        logger.warning(
+            "proxy_pool_exhausted: all proxies unhealthy, using direct connection"
+        )
         return None
 
     def mark_current_unhealthy(self) -> None:
         """Mark the current proxy as failed and advance to the next."""
-        if self._index < len(self._proxies):
-            proxy = self._proxies[self._index]
-            logger.warning(
-                "proxy_failure",
-                extra={"proxy": _safe_label(proxy)},
-            )
-            self._unhealthy.add(self._index)
-            self._index += 1
+        n = len(self._proxies)
+        if n == 0:
+            return
+        i = self._index % n
+        proxy = self._proxies[i]
+        logger.warning("proxy_failure", extra={"proxy": _safe_label(proxy)})
+        self._unhealthy.add(i)
+        self._index = (i + 1) % n
+
+    def cooldown_current(self, seconds: float = 45.0) -> None:
+        """Temporarily skip this proxy (rate-limit / 429), then reuse it later."""
+        n = len(self._proxies)
+        if n == 0:
+            return
+        i = self._index % n
+        wait = max(0.0, float(seconds))
+        self._cooldown_until[i] = time.monotonic() + wait
+        logger.warning(
+            "proxy_cooldown",
+            extra={"proxy": _safe_label(self._proxies[i]), "seconds": wait},
+        )
+        self._index = (i + 1) % n
 
     def build_session_proxies(self) -> dict[str, str] | None:
         """Return a dict suitable for requests.Session.proxies, or None for direct."""
