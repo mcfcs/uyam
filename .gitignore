@@ -9,6 +9,9 @@ data/manifests/
 data/.browser-profile/
 data/.browser-profiles/
 data/.scrape-status/
+data/.annotate-status/
+data/models/
+data/annotated/
 .probe-profile/
 
 # Python

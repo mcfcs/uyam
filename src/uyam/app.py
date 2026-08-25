@@ -669,8 +669,8 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_collect, tab_data, tab_history, tab_stats, tab_review = st.tabs(
-    ["Collection", "Data Browser", "Run History", "Stats", "Annotation Review"]
+tab_collect, tab_data, tab_history, tab_stats, tab_annotate, tab_review = st.tabs(
+    ["Collection", "Data Browser", "Run History", "Stats", "Annotation", "Annotation Review"]
 )
 
 # ===========================================================================
@@ -1109,7 +1109,24 @@ with tab_stats:
 
 
 # ===========================================================================
-# Tab 5: Annotation Review (gold subset + low-confidence queue)
+# Tab 5: Annotation (pipeline control — index/select/lid/sentiment/LLM runs)
+# ===========================================================================
+with tab_annotate:
+    try:
+        from uyam.annotate.pipeline_ui import render_annotation_tab
+
+        render_annotation_tab()
+    except ImportError as exc:
+        st.info(
+            "Annotation pipeline needs the annotate extras: `pip install -e .[annotate]` "
+            f"({exc})"
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+        st.error(f"Annotation pipeline unavailable: {exc}")
+
+
+# ===========================================================================
+# Tab 6: Annotation Review (gold subset + low-confidence queue)
 # ===========================================================================
 with tab_review:
     try:

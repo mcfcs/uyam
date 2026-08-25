@@ -440,6 +440,12 @@ uyam annotate aggregate && uyam annotate export --version v1
 uyam annotate status                   # progress dashboard at any point
 ```
 
+Every pass is also available in the Streamlit app: the **Annotation** tab runs
+and monitors index/select/LID/sentiment/LLM runs/adjudication/export (long
+passes run as detached background jobs with live log tails, surviving app
+restarts), and the **Annotation Review** tab is where the gold subset and
+low-confidence queue are human-labeled.
+
 Configuration lives in `config/annotation.yaml` (endpoints, models, prompt
 version, filters, thresholds). All passes are resumable and idempotent. The
 dataset contract for leische — file formats, label semantics, agreement
