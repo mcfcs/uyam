@@ -1,0 +1,77 @@
+# Annotation pipeline configuration (uyam annotate ...)
+#
+# Pass order:
+#   index -> select -> lid -> sentiment -> run -> aggregate -> adjudicate
+#   -> (Streamlit review) -> aggregate -> export
+
+db_path: data/db/annotation.sqlite3
+data_dir: data
+
+# Must match PROMPT_VERSION in src/uyam/annotate/prompts.py. Bump BOTH whenever
+# the prompt, few-shots, or output schema change.
+prompt_version: sarc-v1
+
+endpoints:
+  local: http://127.0.0.1:11434
+  remote: http://100.102.10.69:11434   # 24 GB box over Tailscale
+
+# Three annotators mimicking independent human annotators.
+# think: false only for models with a thinking mode (Qwen3) — sending the
+#   parameter to non-thinking models is an Ollama server error.
+# merge_system_prompt: true for Gemma2-arch models (no system role).
+annotators:
+  - key: qwen3
+    model: "qwen3:8b"                                   # ~5.2 GB q4 — local 8 GB
+    endpoint: local
+    think: false
+  - key: sealion
+    model: "aisingapore/Gemma-SEA-LION-v3-9B-IT:q4_k_m" # ~5.8 GB — local 8 GB, Filipino-tuned
+    endpoint: local
+    merge_system_prompt: true
+  - key: gemma3
+    model: "gemma3:27b"                                 # ~17 GB q4 — remote 24 GB
+    endpoint: remote
+
+# Blind senior annotator for escalated items (2-1 sarcasm splits, 1-1-1 ties).
+adjudicator:
+  key: qwen3-32b
+  model: "qwen3:32b"                                    # ~20 GB q4 — remote 24 GB
+  endpoint: remote
+  think: false
+
+options:
+  temperature: 0.0
+  seed: 7
+  num_ctx: 8192
+  num_predict: 700
+  keep_alive: 30m
+  timeout_seconds: 300
+  max_retries: 3
+
+context:
+  max_parent_chain: 6
+  max_replies: 3
+  max_context_chars: 6000
+
+candidate_filters:
+  min_chars: 12
+  min_tokens: 3
+  exclude_authors: [AutoModerator]
+  exclude_distinguished_moderator: true
+  include_link_posts: false
+
+lid:
+  model_path: data/models/lid.176.bin   # auto-downloaded on first `annotate lid`
+  mono_threshold: 0.9                   # >=90% tokens one language, else taglish
+
+tx_sentiment:
+  model: cardiffnlp/twitter-xlm-roberta-base-sentiment
+  device: auto        # auto | cpu | cuda — use cpu if Ollama holds the local GPU
+  batch_size: 32
+
+review:
+  gold_size: 300
+  adjudicator_confidence_floor: 0.6     # below this -> human queue
+
+export:
+  out_dir: data/annotated

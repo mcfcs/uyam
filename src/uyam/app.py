@@ -669,8 +669,8 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_collect, tab_data, tab_history, tab_stats = st.tabs(
-    ["Collection", "Data Browser", "Run History", "Stats"]
+tab_collect, tab_data, tab_history, tab_stats, tab_review = st.tabs(
+    ["Collection", "Data Browser", "Run History", "Stats", "Annotation Review"]
 )
 
 # ===========================================================================
@@ -1106,3 +1106,20 @@ with tab_stats:
         st.dataframe(df_last, width="stretch", hide_index=True)
 
     _live_stats()
+
+
+# ===========================================================================
+# Tab 5: Annotation Review (gold subset + low-confidence queue)
+# ===========================================================================
+with tab_review:
+    try:
+        from uyam.annotate.review_ui import render_review_tab
+
+        render_review_tab()
+    except ImportError as exc:
+        st.info(
+            "Annotation review needs the annotate extras: `pip install -e .[annotate]` "
+            f"({exc})"
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+        st.error(f"Annotation review unavailable: {exc}")

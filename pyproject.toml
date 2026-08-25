@@ -34,6 +34,18 @@ browser = [
     "patchright>=1.52",
 ]
 
+annotate = [
+    "ollama>=0.5.1",             # chat + format=json-schema + think kwarg
+    "fasttext-predict>=0.9.2",   # prebuilt win_amd64 wheel; plain 'fasttext' needs MSVC
+    "transformers>=4.44",
+    "sentencepiece>=0.2",        # XLM-R tokenizer backend (cardiffnlp sentiment model)
+    "torch>=2.3",                # CUDA build: pip install torch --index-url https://download.pytorch.org/whl/cu124
+    "statsmodels>=0.14",         # fleiss_kappa
+    "scikit-learn>=1.4",         # cohen_kappa_score
+    "krippendorff>=0.6",
+    "pyarrow>=16",               # parquet export
+]
+
 [project.scripts]
 uyam = "uyam.cli:app"
 

@@ -18,6 +18,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from uyam.annotate.cli import annotate_app
 from uyam.config import load_config, load_env
 from uyam.dedup import DedupDatabase
 from uyam.logging_config import configure_logging
@@ -41,6 +42,8 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+app.add_typer(annotate_app, name="annotate")
 
 
 def _get_db(data_dir: Path) -> DedupDatabase:

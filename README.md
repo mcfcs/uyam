@@ -387,29 +387,64 @@ To reproduce a run configuration, read the manifest and pass the same parameters
 
 ## Pipeline Stages
 
-This collector implements the first two stages:
-
 ```
 Reddit API
       ↓
-collection          ← this system
+collection               ← uyam collect
       ↓
 normalized raw records   ← JSONL in data/raw/
       ↓
-candidate selection      ← future work
+candidate selection      ← uyam annotate index / select
       ↓
-context reconstruction   ← future work (using stored IDs)
+context reconstruction   ← uyam annotate run (thread context per target)
       ↓
-annotation dataset
+annotation dataset       ← LLM ensemble + adjudication + human review
       ↓
-sarcasm labels
+sarcasm labels           ← uyam annotate aggregate / export
       ↓
-train/validation/test split
+train/validation/test split   ← leische repository
       ↓
-modeling
+modeling                      ← leische repository
 ```
 
 The raw records contain all relational information (submission IDs, parent IDs, depths) needed to assemble context windows in later stages. No sarcasm classification occurs during collection.
+
+---
+
+## Annotation Pipeline (`uyam annotate`)
+
+Turns the collected corpus into the labeled training dataset for the model
+repository (leische). Three local/remote Ollama LLMs act as independent
+annotators (sarcasm + literal/intended sentiment + language + cue flags per
+item, full thread context in the prompt), a fast transformer classifier
+provides a model-independent sentiment vote, disagreements go to a blind
+large-model adjudicator, and a stratified gold subset is human-labeled in the
+Streamlit "Annotation Review" tab.
+
+```bash
+pip install -e .[annotate]   # + CUDA torch: pip install torch --index-url https://download.pytorch.org/whl/cu124
+
+uyam annotate index                    # raw JSONL -> annotation DB
+uyam annotate select                   # candidate filters (bots, deleted, too short)
+uyam annotate lid                      # fastText language ID (english/tagalog/taglish)
+uyam annotate sentiment                # transformer literal sentiment (before local Ollama!)
+uyam annotate smoke                    # verify endpoints + models end-to-end
+uyam annotate run --annotator gemma3   # remote 24GB box    (run concurrently...)
+uyam annotate run --annotator qwen3    # local 8GB          (...with these two,)
+uyam annotate run --annotator sealion  # local 8GB          (sequentially local)
+uyam annotate aggregate                # votes, kappa, escalation queue
+uyam annotate adjudicate               # blind large-model pass over disagreements
+uyam annotate aggregate
+uyam annotate gold-sample              # then label in Streamlit "Annotation Review"
+uyam annotate aggregate && uyam annotate export --version v1
+uyam annotate status                   # progress dashboard at any point
+```
+
+Configuration lives in `config/annotation.yaml` (endpoints, models, prompt
+version, filters, thresholds). All passes are resumable and idempotent. The
+dataset contract for leische — file formats, label semantics, agreement
+statistics, fold guidance — is documented in
+[docs/dataset-contract-leische.md](docs/dataset-contract-leische.md).
 
 ---
 
