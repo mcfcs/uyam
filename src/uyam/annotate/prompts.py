@@ -14,7 +14,11 @@ import json
 
 from uyam.annotate.schemas import LLM_OUTPUT_SCHEMA
 
-PROMPT_VERSION = "sarc-v1"
+PROMPT_VERSION = "sarc-v2"
+# sarc-v2 (pilot-driven changes): language is judged from the TARGET text alone
+# (v1 models labeled pure-English targets "taglish" from thread vibes — kappa
+# 0.40); explicit jokes-vs-sarcasm rule + Example 6 (SEA-LION over-flagged
+# humorous literal remarks as sarcasm — 21% base rate vs gemma3's 11%).
 
 SYSTEM_PROMPT = """\
 You are an expert annotator of Philippine social media (Reddit) posts written in English, \
@@ -22,8 +26,9 @@ Tagalog, or Taglish (Tagalog-English code-switching). You will be shown a TARGET
 its thread context. Label the TARGET only, using the context to judge it.
 
 Definitions:
-- language: "english" or "tagalog" when roughly 90%+ of the words are one language; \
-"taglish" when there is meaningful mixing.
+- language: judged from the TARGET text ALONE — ignore which language the context or the \
+rest of the thread uses. "english" or "tagalog" when roughly 90%+ of the TARGET's words \
+are that one language; "taglish" only when the TARGET itself meaningfully mixes both.
 - literal_sentiment: the surface polarity of the words alone (positive / neutral / negative), \
 ignoring any sarcasm.
 - Sarcasm cues (mark each true or false for the TARGET):
@@ -36,8 +41,11 @@ situation described (praise under a rant, congratulations on a misfortune).
   4. hyperbole — exaggeration or stacked intensifiers signaling non-literal intent \
 ("sobrang THRILLED talaga ako", "best day ever!!!").
 - sarcastic: true when the intended meaning differs from the literal one AND at least one \
-cue supports it. Genuine positivity, plain jokes, direct insults, and sincere complaints \
-are NOT sarcasm.
+cue supports it. Genuine positivity, direct insults, and sincere complaints are NOT \
+sarcasm. Jokes, banter, and playful teasing whose literal meaning IS the intended meaning \
+are NOT sarcasm either, even when funny or mocking ("mukhang uling yung kape mo haha" is a \
+joke stating what the author really thinks, not sarcasm) — sarcasm requires saying one \
+thing while meaning another.
 - intended_sentiment: the sentiment the author actually means (for sarcastic text this is \
 usually inverted or shifted from the literal sentiment).
 - confidence: your certainty in the sarcastic judgment, from 0.0 to 1.0.
@@ -94,6 +102,15 @@ Answer: {"language": "taglish", "literal_sentiment": "neutral", "cues": \
 {"polarity_inversion": false, "rhetorical_intent": false, "contextual_incongruity": false, \
 "hyperbole": false}, "sarcastic": false, "intended_sentiment": "neutral", "confidence": 0.95, \
 "rationale": "Plain informational answer with no evaluative or ironic content."}
+
+Example 6
+[SUBMISSION r/CasualPH] Tried the new ube latte sa mall, worth it ba? (photo of a grayish drink)
+[TARGET (comment)] Akala ko coffee na may amag hahaha
+Answer: {"language": "tagalog", "literal_sentiment": "negative", "cues": \
+{"polarity_inversion": false, "rhetorical_intent": false, "contextual_incongruity": false, \
+"hyperbole": false}, "sarcastic": false, "intended_sentiment": "negative", "confidence": 0.9, \
+"rationale": "A joke that literally means what it says (the drink looks moldy) — mocking \
+humor, but no gap between literal and intended meaning, so not sarcasm."}
 """
 
 USER_TEMPLATE = """\

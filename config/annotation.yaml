@@ -9,7 +9,8 @@ data_dir: data
 
 # Must match PROMPT_VERSION in src/uyam/annotate/prompts.py. Bump BOTH whenever
 # the prompt, few-shots, or output schema change.
-prompt_version: sarc-v1
+# sarc-v2: language judged from target only; jokes-vs-sarcasm rule (pilot fixes).
+prompt_version: sarc-v2
 
 endpoints:
   local: http://127.0.0.1:11434

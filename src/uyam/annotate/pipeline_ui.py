@@ -270,6 +270,84 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
     st.divider()
 
     # ------------------------------------------------------------------
+    # 4. Annotated data (live from the DB — the export files are snapshots)
+    # ------------------------------------------------------------------
+    st.subheader("4 · Annotated data")
+    if not snap["db_exists"]:
+        df = None
+    else:
+        import pandas as pd
+
+        with AnnotationDatabase(cfg.db_path) as db:
+            df = pd.read_sql_query(
+                """
+                SELECT g.reddit_fullname, c.subreddit, c.record_type,
+                       c.text,
+                       g.sarcastic_final AS sarcastic, g.language_final AS language,
+                       g.literal_final AS literal, g.intended_final AS intended,
+                       g.sarcasm_votes AS votes,
+                       COALESCE(g.resolved_by, 'unresolved') AS resolved_by,
+                       g.mean_confidence AS confidence,
+                       c.sampling_strategy, g.prompt_version
+                FROM aggregates g JOIN corpus_index c USING (reddit_fullname)
+                ORDER BY g.sarcastic_final DESC, g.reddit_fullname
+                """,
+                db.conn,
+            )
+    if df is None or df.empty:
+        st.info("No aggregated labels yet — run the annotators, then Aggregate votes.")
+    else:
+        df["sarcastic"] = df["sarcastic"].map({1: True, 0: False})
+
+        f1, f2, f3, f4 = st.columns([1, 1, 1, 2])
+        with f1:
+            sarc_filter = st.selectbox("Sarcastic", ["all", "yes", "no"], key="tbl_sarc")
+        with f2:
+            lang_filter = st.multiselect(
+                "Language", sorted(df["language"].dropna().unique()), key="tbl_lang"
+            )
+        with f3:
+            res_filter = st.multiselect(
+                "Resolved by", sorted(df["resolved_by"].unique()), key="tbl_res"
+            )
+        with f4:
+            text_query = st.text_input("Search text", key="tbl_query")
+
+        view = df
+        if sarc_filter != "all":
+            view = view[view["sarcastic"] == (sarc_filter == "yes")]
+        if lang_filter:
+            view = view[view["language"].isin(lang_filter)]
+        if res_filter:
+            view = view[view["resolved_by"].isin(res_filter)]
+        if text_query:
+            view = view[view["text"].str.contains(text_query, case=False, na=False)]
+
+        st.caption(
+            f"{len(view)} of {len(df)} labeled items — "
+            f"{int(df['sarcastic'].sum())} sarcastic overall "
+            f"({100 * df['sarcastic'].mean():.0f}%)"
+        )
+        st.dataframe(
+            view,
+            width="stretch",
+            hide_index=True,
+            height=400,
+            column_config={
+                "text": st.column_config.TextColumn("text", width="large"),
+                "confidence": st.column_config.NumberColumn(format="%.2f"),
+            },
+        )
+        st.download_button(
+            "Download filtered rows (CSV)",
+            view.to_csv(index=False).encode("utf-8-sig"),
+            file_name="annotated-review.csv",
+            mime="text/csv",
+        )
+
+    st.divider()
+
+    # ------------------------------------------------------------------
     # Job logs
     # ------------------------------------------------------------------
     st.subheader("Job logs")

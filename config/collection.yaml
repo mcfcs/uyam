@@ -28,19 +28,19 @@ search:
   time_filter: all
 
 oversampling:
-  enabled: false
-  keywords: []
-  # Example oversampling keywords for Taglish sarcasm candidates:
-  # keywords:
-  #   - "edi wow"
-  #   - "sana all"
-  #   - "wow ha"
-  #   - "galing"
-  #   - "ayos"
-  #   - "nice"
-  #   - "talino"
-  #   - "salamat ah"
-  #   - "buti naman"
+  # Pilot showed ~8% natural sarcasm rate — oversample known Taglish ironic
+  # markers so the minority class reaches a trainable size. Each keyword runs
+  # one search scrape per subreddit per collection.
+  enabled: true
+  keywords:
+    - "edi wow"
+    - "sana all"
+    - "wow naman"
+    - "ang galing naman"
+    - "talaga lang"
+    - "ikaw na"
+    - "buti naman"
+    - "yan tayo eh"
   # Records collected via oversampling keywords are tagged:
   #   sampling_strategy: "keyword_oversampled"
   #   matched_query_or_keyword: "<the keyword>"

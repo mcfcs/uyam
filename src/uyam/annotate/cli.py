@@ -16,15 +16,15 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from uyam.annotate.config import load_annotation_config
+from uyam.annotate.db import AnnotationDatabase
+from uyam.logging_config import configure_logging
+
 # Reddit text is full of emoji; Windows consoles (cp1252 pipes) must degrade
 # gracefully instead of crashing dry-run/status output.
 for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(errors="replace")
-
-from uyam.annotate.config import load_annotation_config
-from uyam.annotate.db import AnnotationDatabase
-from uyam.logging_config import configure_logging
 
 annotate_app = typer.Typer(
     name="annotate",
