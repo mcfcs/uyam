@@ -6,6 +6,10 @@ annotation, this repo) and **leische** (the model repository for the thesis
 uyam's responsibility ends at the artifacts described here; leische must not
 need to re-crawl Reddit or re-run annotation.
 
+The model-side companion — architecture, notebook plan, feature-to-model
+mapping, and upgrade recommendations — is
+[leische-model-notebook-guide.md](leische-model-notebook-guide.md).
+
 ## 1. Artifacts and versioning
 
 Produced by `uyam annotate export --version v1` under `data/annotated/`:

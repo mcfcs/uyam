@@ -450,7 +450,9 @@ Configuration lives in `config/annotation.yaml` (endpoints, models, prompt
 version, filters, thresholds). All passes are resumable and idempotent. The
 dataset contract for leische — file formats, label semantics, agreement
 statistics, fold guidance — is documented in
-[docs/dataset-contract-leische.md](docs/dataset-contract-leische.md).
+[docs/dataset-contract-leische.md](docs/dataset-contract-leische.md), and the
+model-side build plan (architecture, notebooks, upgrade recommendations) in
+[docs/leische-model-notebook-guide.md](docs/leische-model-notebook-guide.md).
 
 ---
 
