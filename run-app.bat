@@ -4,7 +4,8 @@ rem Binds to this machine's Tailscale IP when Tailscale is running, so the app
 rem is reachable from any device on your tailnet at http://<tailscale-ip>:8501
 rem (falls back to localhost-only when Tailscale is unavailable).
 rem Extra args are passed through to streamlit, e.g.:  run-app.bat --server.port 8502
-setlocal
+rem Port 8501 is dedicated to this app: any process already listening there is ended.
+setlocal EnableDelayedExpansion
 title Uyam - Streamlit
 cd /d "%~dp0"
 
@@ -16,6 +17,38 @@ rem Reddit text is full of emoji; keep console output UTF-8 safe.
 set "PYTHONIOENCODING=utf-8"
 set "PYTHONUNBUFFERED=1"
 
+rem Default Streamlit port. Override with --server.port N or --server.port=N.
+set "PORT=8501"
+set "EXPECT_PORT="
+for %%A in (%*) do (
+    if defined EXPECT_PORT (
+        set "PORT=%%~A"
+        set "EXPECT_PORT="
+    ) else (
+        set "ARG=%%~A"
+        if /I "!ARG!"=="--server.port" (
+            set "EXPECT_PORT=1"
+        ) else if /I "!ARG:~0,14!"=="--server.port=" (
+            set "PORT=!ARG:~14!"
+        )
+    )
+)
+
+rem End whatever is already LISTENING on this port so Uyam always owns it.
+echo Checking port %PORT%...
+set "KILLED="
+for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr /C:":%PORT% " ^| findstr /C:"LISTENING"') do (
+    if not "%%P"=="0" if not "%%P"=="" (
+        echo Port %PORT% in use by PID %%P - ending it so Uyam can bind.
+        taskkill /F /T /PID %%P >nul 2>&1
+        set "KILLED=1"
+    )
+)
+if defined KILLED (
+    rem Give Windows a moment to release the socket.
+    timeout /t 1 /nobreak >nul
+)
+
 rem Detect this machine's Tailscale IPv4 (first line of `tailscale ip -4`).
 set "ADDR=localhost"
 for /f "usebackq delims=" %%i in (`tailscale ip -4 2^>nul`) do (
@@ -23,12 +56,12 @@ for /f "usebackq delims=" %%i in (`tailscale ip -4 2^>nul`) do (
 )
 if defined TSIP (
     set "ADDR=%TSIP%"
-    echo Tailscale detected - serving on http://%TSIP%:8501 ^(tailnet devices^) and this machine.
+    echo Tailscale detected - serving on http://%TSIP%:%PORT% ^(tailnet devices^) and this machine.
 ) else (
-    echo Tailscale not detected - serving on http://localhost:8501 only.
+    echo Tailscale not detected - serving on http://localhost:%PORT% only.
 )
 
-"%PY%" -m streamlit run src\uyam\app.py --server.address %ADDR% %*
+"%PY%" -m streamlit run src\uyam\app.py --server.address %ADDR% --server.port %PORT% %*
 
 if errorlevel 1 (
     echo.

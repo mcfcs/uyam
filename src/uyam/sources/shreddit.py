@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import random
 import shutil
@@ -60,22 +61,30 @@ from uyam.sources.shreddit_parse import (
     comments_url,
     listing_url,
     parse_shreddit_html,
+    parse_shreddit_timestamp,
     submission_raw_from_shreddit,
 )
 
 logger = logging.getLogger(__name__)
 
-_BLOCK_SNIPPETS = (
+_WHOA_SNIPPETS = (
     "whoa there, pardner",
     "whoa there",
-    "request blocked",
-    "unusual traffic",
+    "far too many requests",
+    "too many requests come from your ip",
+    "we've seen far too many requests",
+)
+_CAPTCHA_SNIPPETS = (
     "verify you are human",
     "prove your humanity",
-    "access denied",
     "checking your browser",
     "just a moment",
 )
+_BLOCK_SNIPPETS = (
+    "request blocked",
+    "unusual traffic",
+    "access denied",
+) + _WHOA_SNIPPETS + _CAPTCHA_SNIPPETS
 _MAX_PROXY_TRIES = 8
 _SAME_PROXY_RETRIES = 3
 _HYDRATE_WAIT_S = 20.0
@@ -113,16 +122,20 @@ _TRANSIENT_ERR_SNIPPETS = (
     "net::err_timed_out",
 )
 _RATE_LIMIT_SNIPPETS = (
-    "err_http_response_code_failure",
     "too many requests",
     "status=429",
     "http 429",
     " 429 ",
     "http_429",
     "json_http_429",
-    "json_http_403",
 )
-_RATE_LIMIT_JSON_STATUS = frozenset({429, 403})
+_HTTP_STATUS_SNIPPETS = (
+    "err_http_response_code_failure",
+)
+# JSON 401/403/429: the .json endpoint is unavailable for this client stack.
+# That is not proof the same IP cannot load Shreddit HTML.
+_JSON_UNAVAILABLE_STATUS = frozenset({401, 403, 429})
+_JSON_429_RETRY_S = 2.0
 _RATE_LIMIT_COOLDOWN_S = 45.0
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_DIR = _REPO_ROOT / "data" / ".browser-profile"
@@ -230,9 +243,26 @@ _LISTING_CARDS_JS = """
     return {
       id: el.getAttribute("id") || "",
       permalink: el.getAttribute("permalink") || "",
+      created: el.getAttribute("created-timestamp")
+        || el.getAttribute("created") || "",
       promoted,
     };
   });
+}
+"""
+
+_FETCH_JSON_JS = """
+async (url) => {
+  try {
+    const r = await fetch(url, { credentials: "include" });
+    const text = await r.text();
+    return { status: r.status, text };
+  } catch (e) {
+    return {
+      status: 0,
+      error: String(e && e.message ? e.message : e),
+    };
+  }
 }
 """
 
@@ -243,7 +273,7 @@ def _proxy_label(proxy_url: str) -> str:
 
 
 class RedditRateLimited(RuntimeError):
-    """Reddit returned 429/403 — switch proxy, do not kill it."""
+    """HTML navigation hit a real 429. JSON 429 is not this."""
 
 
 def _exc_text(exc: BaseException) -> str:
@@ -257,17 +287,48 @@ def _exc_text(exc: BaseException) -> str:
     return repr(exc)[:400]
 
 
+def _json_status_kind(status: int) -> str:
+    """Classify a JSON HTTP status: ok | unavailable | http_error.
+
+    429 on ``.json`` is endpoint-unavailable for this HTTP stack, not a
+    listing-page rate limit. Callers must use the DOM and keep the proxy.
+    """
+    if status == 200:
+        return "ok"
+    if status in _JSON_UNAVAILABLE_STATUS:
+        return "unavailable"
+    return "http_error"
+
+
+def page_text_is_whoa(hay: str) -> bool:
+    """True for Reddit's IP-throttle page (not a captcha)."""
+    h = hay.lower()
+    return any(s in h for s in _WHOA_SNIPPETS)
+
+
+def page_text_is_captcha(hay: str) -> bool:
+    """True for a human-challenge page. Whoa-there is not a captcha."""
+    h = hay.lower()
+    if page_text_is_whoa(h):
+        return False
+    return any(s in h for s in _CAPTCHA_SNIPPETS)
+
+
 def _nav_error_kind(exc: BaseException) -> str:
-    """Classify a goto failure: proxy | closed | block | rate_limit | transient."""
+    """Classify a goto failure: proxy, closed, block, whoa, rate_limit, http_status, transient."""
     if isinstance(exc, ScrapeStopRequested):
         return "stop"
     if isinstance(exc, RedditRateLimited):
         return "rate_limit"
     blob = _exc_text(exc).lower()
+    if "reddit_whoa" in blob:
+        return "whoa"
     if "reddit_block_or_challenge" in blob or "captcha" in blob:
         return "block"
     if any(s in blob for s in _RATE_LIMIT_SNIPPETS):
         return "rate_limit"
+    if any(s in blob for s in _HTTP_STATUS_SNIPPETS):
+        return "http_status"
     if any(s in blob for s in _CLOSED_ERR_SNIPPETS):
         return "closed"
     if any(s in blob for s in _PROXY_ERR_SNIPPETS):
@@ -297,6 +358,27 @@ def _json_created_in_window(raw: dict[str, Any], start: int, end: int) -> bool:
     if ts > 1e12:
         ts = ts / 1000.0
     return start <= ts < end
+
+
+def listing_card_to_raw(card: dict[str, Any]) -> dict[str, Any] | None:
+    """Turn a listing-card dict into the fields calendar/harvest need."""
+    if card.get("promoted"):
+        return None
+    pid = str(card.get("id") or "")
+    permalink = str(card.get("permalink") or "")
+    if not pid.startswith("t3_") or not permalink:
+        return None
+    created_raw = card.get("created") or card.get("created-timestamp") or ""
+    created_utc: float | None
+    try:
+        created_utc = parse_shreddit_timestamp(created_raw)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        created_utc = None
+    return {
+        "id": pid[3:],
+        "permalink": permalink,
+        "created_utc": created_utc,
+    }
 
 
 def submission_already_seen(
@@ -397,6 +479,8 @@ class ShredditBrowserSource:
         self._page: Any = None
         self._profile_dir: Path | None = None
         self._active_proxy_label: str | None = None
+        # auto = try JSON; on = last JSON call worked; off = skip JSON, use DOM
+        self._json_mode: str = "auto"
 
         # reddit_id -> parsed comment raw dicts harvested with the submission
         self._comment_cache: dict[str, list[dict[str, Any]]] = {}
@@ -519,6 +603,7 @@ class ShredditBrowserSource:
         # Persistent profiles are kept so the humanity challenge stays solved.
 
     def _rotate_proxy(self, *, reason: str, fatal: bool = True) -> None:
+        self._json_mode = "auto"
         logger.warning(
             "shreddit_proxy_rotate",
             extra={
@@ -554,9 +639,11 @@ class ShredditBrowserSource:
             body = (self._page.inner_text("body", timeout=2000) or "")[:1500].lower()
         return f"{title}\n{body}"
 
+    def _is_whoa(self) -> bool:
+        return page_text_is_whoa(self._page_text())
+
     def _is_challenge(self) -> bool:
-        hay = self._page_text()
-        return any(s in hay for s in _BLOCK_SNIPPETS)
+        return page_text_is_captcha(self._page_text())
 
     def _has_feed(self) -> bool:
         if self._page is None:
@@ -572,7 +659,7 @@ class ShredditBrowserSource:
         with contextlib.suppress(Exception):
             self._page.bring_to_front()
 
-    def _snapshot_challenge(self, message: str) -> None:
+    def _snapshot_challenge(self, message: str, *, state: str = "captcha") -> None:
         page = self._page
         if page is None:
             return
@@ -584,10 +671,14 @@ class ShredditBrowserSource:
         with contextlib.suppress(Exception):
             title = page.title() or ""
             url = page.url or ""
-        write_status("captcha", message, url=url, title=title)
+        write_status(state, message, url=url, title=title)
 
     def _wait_for_feed(self) -> bool:
-        """Wait for posts, or pause so a human can solve the Chrome captcha."""
+        """Wait for posts, or pause so a human can solve the Chrome captcha.
+
+        "whoa there, pardner" is an IP throttle, not a captcha. Return False
+        so ``_goto`` rotates to a new proxy immediately.
+        """
         page = self._require_page()
         hydrate_until = time.monotonic() + _HYDRATE_WAIT_S
         while time.monotonic() < hydrate_until:
@@ -595,13 +686,15 @@ class ShredditBrowserSource:
             if self._has_feed():
                 write_status("ok", "Feed ready")
                 return True
-            if self._is_challenge():
+            if self._is_whoa() or self._is_challenge():
                 break
             page.wait_for_timeout(1000)
 
         if self._has_feed():
             write_status("ok", "Feed ready")
             return True
+        if self._is_whoa():
+            return False
         if not self._is_challenge():
             return False
         if self._headless:
@@ -703,12 +796,16 @@ class ShredditBrowserSource:
                 self._dismiss_chrome()
                 if wait_selector:
                     ready = self._wait_for_feed()
+                    if not ready and self._is_whoa():
+                        raise RuntimeError("reddit_whoa")
                     if not ready and self._is_challenge():
                         raise RuntimeError("reddit_block_or_challenge")
                     if not ready:
                         loc = page.locator(wait_selector)
                         with contextlib.suppress(Exception):
                             loc.first.wait_for(state="attached", timeout=8000)
+                if self._is_whoa():
+                    raise RuntimeError("reddit_whoa")
                 if self._is_blocked():
                     raise RuntimeError("reddit_block_or_challenge")
                 host = urlparse(url).path
@@ -722,6 +819,17 @@ class ShredditBrowserSource:
             except Exception as exc:
                 last_exc = exc
                 kind = _nav_error_kind(exc)
+                if kind == "http_status":
+                    # Playwright omits the status code. A 403 block page is
+                    # not a 429; only rotate if the tab looks blocked.
+                    if self._page_is_open() and self._is_whoa():
+                        kind = "whoa"
+                    elif self._page_is_open() and (
+                        self._is_challenge() or self._is_blocked()
+                    ):
+                        kind = "block"
+                    else:
+                        kind = "transient"
                 logger.warning(
                     "shreddit_navigation_failed",
                     extra={
@@ -732,6 +840,17 @@ class ShredditBrowserSource:
                         "proxy": self._active_proxy_label,
                     },
                 )
+                if kind == "whoa":
+                    # New residential IP usually clears this; waiting on the
+                    # same address does not.
+                    write_status(
+                        "running",
+                        "Reddit IP throttle — switching proxy (no captcha).",
+                    )
+                    self._rotate_proxy(reason="whoa", fatal=False)
+                    same_proxy_tries = 0
+                    rotations += 1
+                    continue
                 if kind == "rate_limit":
                     # Instant switch — retrying the same 429 IP is wasted work.
                     self._rotate_proxy(reason=kind, fatal=False)
@@ -770,39 +889,145 @@ class ShredditBrowserSource:
     # Listing
     # ------------------------------------------------------------------
 
-    def _fetch_json(self, url: str) -> Any | None:
-        """GET JSON through the live browser context (same proxy + cookies)."""
-        page = self._require_page()
-        try:
-            resp = page.request.get(
-                url,
-                timeout=self._nav_timeout_ms,
-                headers={"accept": "application/json, text/plain, */*"},
+    def _listing_tab_ready(self, listing_href: str) -> bool:
+        """True when the current tab is already on this listing path."""
+        if not self._page_is_open() or self._page is None:
+            return False
+        want = urlparse(listing_href).path.rstrip("/")
+        have = urlparse(self._page.url or "").path.rstrip("/")
+        return bool(want) and have.startswith(want)
+
+    def _mark_json_unavailable(self, *, reason: str, path: str, status: int = 0) -> None:
+        if self._json_mode != "off":
+            logger.info(
+                "shreddit_json_unavailable",
+                extra={
+                    "reason": reason,
+                    "path": path,
+                    "status": status,
+                    "proxy": self._active_proxy_label,
+                },
             )
-            if resp.status in _RATE_LIMIT_JSON_STATUS:
-                logger.warning(
-                    "shreddit_json_http",
-                    extra={"status": resp.status, "path": urlparse(url).path},
-                )
-                raise RedditRateLimited(f"json_http_{resp.status}")
-            if resp.status != 200:
-                logger.info(
-                    "shreddit_json_http",
-                    extra={"status": resp.status, "path": urlparse(url).path},
-                )
-                return None
-            data = resp.json()
-            if isinstance(data, dict) and data.get("error"):
-                return None
-            return data
-        except (ScrapeStopRequested, RedditRateLimited):
+        self._json_mode = "off"
+
+    def _parse_json_http_result(
+        self, url: str, *, status: int, text: str, error: str = ""
+    ) -> Any | None:
+        """Interpret a JSON HTTP result. Never rotates on 401/403/429."""
+        path = urlparse(url).path
+        if error and status == 0:
+            logger.info(
+                "shreddit_json_failed",
+                extra={"reason": error[:200], "path": path},
+            )
+            return None
+        kind = _json_status_kind(status)
+        if kind != "ok":
+            logger.warning(
+                "shreddit_json_http",
+                extra={"status": status, "path": path, "kind": kind},
+            )
+            return None
+        stripped = (text or "").lstrip()
+        if not stripped or stripped[0] not in "{[":
+            logger.info(
+                "shreddit_json_not_json",
+                extra={"path": path, "prefix": stripped[:80]},
+            )
+            return None
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(data, dict) and data.get("error"):
+            return None
+        return data
+
+    def _request_json(self, page: Any, url: str) -> tuple[Any | None, int]:
+        """One Playwright APIRequest GET. Returns (payload, status)."""
+        resp = page.request.get(url, timeout=self._nav_timeout_ms)
+        status = int(resp.status)
+        parsed = self._parse_json_http_result(
+            url, status=status, text=resp.text()
+        )
+        return parsed, status
+
+    def _fetch_json(self, url: str) -> Any | None:
+        """GET listing/comments JSON. Failures do not rotate the proxy.
+
+        In-page ``fetch`` often CORS-fails (``Failed to fetch``). Playwright's
+        ``page.request`` sometimes still returns 200 on the same tab, and
+        sometimes 429. A JSON 429 is not a Shreddit HTML rate limit: the
+        listing page already loaded. One same-proxy retry, then DOM.
+        """
+        if self._json_mode == "off":
+            return None
+        page = self._require_page()
+        path = urlparse(url).path
+        try:
+            result = page.evaluate(_FETCH_JSON_JS, url)
+        except ScrapeStopRequested:
             raise
         except Exception as exc:
             logger.info(
                 "shreddit_json_failed",
-                extra={"reason": type(exc).__name__, "path": urlparse(url).path},
+                extra={"reason": type(exc).__name__, "path": path},
             )
+            result = None
+
+        if isinstance(result, dict):
+            try:
+                status = int(result.get("status") or 0)
+            except (TypeError, ValueError):
+                status = 0
+            parsed = self._parse_json_http_result(
+                url,
+                status=status,
+                text=str(result.get("text") or ""),
+                error=str(result.get("error") or ""),
+            )
+            if parsed is not None:
+                self._json_mode = "on"
+                return parsed
+            if status in _JSON_UNAVAILABLE_STATUS:
+                self._mark_json_unavailable(
+                    reason=_json_status_kind(status), path=path, status=status
+                )
+                return None
+
+        # CORS / blank tab: APIRequestContext still shares cookies and
+        # sometimes succeeds when in-page fetch does not.
+        try:
+            parsed, status = self._request_json(page, url)
+        except ScrapeStopRequested:
+            raise
+        except Exception as exc:
+            logger.info(
+                "shreddit_json_failed",
+                extra={"reason": type(exc).__name__, "path": path},
+            )
+            self._mark_json_unavailable(reason=type(exc).__name__, path=path)
             return None
+        if parsed is not None:
+            self._json_mode = "on"
+            return parsed
+        if status == 429:
+            time.sleep(_JSON_429_RETRY_S)
+            try:
+                parsed, status = self._request_json(page, url)
+            except ScrapeStopRequested:
+                raise
+            except Exception:
+                parsed, status = None, 429
+            if parsed is not None:
+                self._json_mode = "on"
+                return parsed
+        self._mark_json_unavailable(
+            reason=_json_status_kind(status) if status else "empty",
+            path=path,
+            status=status,
+        )
+        return None
 
     def _dom_snapshot(self, request: CollectionRequest) -> None:
         page = self._require_page()
@@ -835,6 +1060,9 @@ class ShredditBrowserSource:
                 {
                     "id": el.get_attribute("id") or "",
                     "permalink": el.get_attribute("permalink") or "",
+                    "created": el.get_attribute("created-timestamp")
+                    or el.get_attribute("created")
+                    or "",
                     "promoted": bool(
                         el.get_attribute("promoted") is not None or "promoted" in cls
                     ),
@@ -851,19 +1079,10 @@ class ShredditBrowserSource:
         )
         yielded: list[dict[str, Any]] = []
         after: str | None = None
-        rate_tries = 0
         while len(yielded) < limit:
             page_size = min(100, limit - len(yielded))
             url, params = _listing_endpoint(request, page_size=page_size, after=after)
-            try:
-                payload = self._fetch_json(f"{url}?{urlencode(params)}")
-            except RedditRateLimited:
-                rate_tries += 1
-                if rate_tries >= 5:
-                    return yielded
-                self._rotate_proxy(reason="rate_limit", fatal=False)
-                continue
-            rate_tries = 0
+            payload = self._fetch_json(f"{url}?{urlencode(params)}")
             if not isinstance(payload, dict):
                 return yielded
             children = payload.get("data", {}).get("children") or []
@@ -922,22 +1141,23 @@ class ShredditBrowserSource:
     def _json_comments_with_rotate(
         self, submission_id: str, request: CollectionRequest
     ) -> tuple[list[dict[str, Any]] | None, bool]:
-        """Fetch comments JSON; on 429 switch proxy once and retry."""
+        """Fetch comments JSON. JSON 429 does not rotate or skip DOM."""
         try:
             return self._json_comments(submission_id, request), False
         except RedditRateLimited:
             logger.warning(
-                "shreddit_comments_json_429",
+                "shreddit_comments_json_unavailable",
                 extra={
                     "submission_id": submission_id,
                     "collection_run_id": request.collection_run_id,
                 },
             )
-            self._rotate_proxy(reason="rate_limit", fatal=False)
-            try:
-                return self._json_comments(submission_id, request), False
-            except RedditRateLimited:
-                return None, True
+            self._mark_json_unavailable(
+                reason="rate_limit",
+                path=f"/comments/{submission_id}.json",
+                status=429,
+            )
+            return None, False
 
     def _collect_listing_permalinks(
         self, request: CollectionRequest, *, fetch_limit: int
@@ -970,6 +1190,16 @@ class ShredditBrowserSource:
             if permalinks:
                 return permalinks
 
+        logger.info(
+            "shreddit_listing_dom_fallback",
+            extra={
+                "subreddit": request.subreddit,
+                "collection_run_id": request.collection_run_id,
+            },
+        )
+        if not self._listing_tab_ready(url):
+            self._goto(url, wait_selector=_POST_SELECTOR)
+
         limit = fetch_limit
         ordered: list[str] = []
         seen: set[str] = set()
@@ -981,12 +1211,11 @@ class ShredditBrowserSource:
             cards = self._read_listing_cards()
             added = 0
             for card in cards:
-                if card.get("promoted"):
+                raw = listing_card_to_raw(card)
+                if raw is None:
                     continue
-                pid = str(card.get("id") or "")
-                permalink = str(card.get("permalink") or "")
-                if not pid.startswith("t3_") or not permalink:
-                    continue
+                pid = f"t3_{raw['id']}"
+                permalink = str(raw["permalink"])
                 if pid in seen:
                     continue
                 seen.add(pid)
@@ -1334,6 +1563,8 @@ class ShredditBrowserSource:
             subreddit=request.subreddit,
             listing_type="new",
         )
+        self._json_post_cache = {}
+        self._json_more = set()
         self._goto(url, wait_selector=_POST_SELECTOR)
         write_status(
             "running",
@@ -1350,20 +1581,48 @@ class ShredditBrowserSource:
                 "collection_run_id": request.collection_run_id,
             },
         )
+        json_posts = list(
+            self._iter_json_listing_posts(listing_req, max_posts=window.scan_cap())
+        )
+        if json_posts:
+            logger.info(
+                "shreddit_listing_json",
+                extra={
+                    "subreddit": request.subreddit,
+                    "count": len(json_posts),
+                    "collection_run_id": request.collection_run_id,
+                },
+            )
+            posts = json_posts
+        else:
+            logger.info(
+                "shreddit_calendar_dom_fallback",
+                extra={
+                    "subreddit": request.subreddit,
+                    "collection_run_id": request.collection_run_id,
+                },
+            )
+            if not self._listing_tab_ready(url):
+                self._goto(url, wait_selector=_POST_SELECTOR)
+            posts = self._collect_dom_listing_posts(
+                listing_req, max_posts=window.scan_cap()
+            )
+
         taken: dict[str, int] = {}
         old_streak = 0
         scanned = 0
-        for raw in self._iter_json_listing_posts(
-            listing_req, max_posts=window.scan_cap()
-        ):
+        for raw in posts:
             check_control()
             scanned += 1
+            created = raw.get("created_utc")
+            if created is None:
+                continue
             try:
-                created = float(raw.get("created_utc") or 0)
+                created_unix = float(created)
             except (TypeError, ValueError):
                 continue
             action = calendar_listing_action(
-                created_unix=created,
+                created_unix=created_unix,
                 window=window,
                 taken_on_day=taken,
             )
@@ -1381,8 +1640,11 @@ class ShredditBrowserSource:
                 continue
             if submission_already_seen(permalink, request.is_seen):
                 continue
-            self._json_post_cache[reddit_id] = raw
-            day = utc_day_from_unix(created).isoformat()
+            # Full listing-JSON rows have title/score. DOM stubs do not —
+            # leave the cache empty so harvest reads the comments page.
+            if "title" in raw or "score" in raw:
+                self._json_post_cache[reddit_id] = raw
+            day = utc_day_from_unix(created_unix).isoformat()
             day_req = replace(request, matched_query_or_keyword=day)
             try:
                 record = self._harvest_post(permalink, day_req)
@@ -1421,26 +1683,75 @@ class ShredditBrowserSource:
             },
         )
 
+    def _collect_dom_listing_posts(
+        self, request: CollectionRequest, *, max_posts: int
+    ) -> list[dict[str, Any]]:
+        """Scroll /new and read shreddit-post cards (id, permalink, created)."""
+        ordered: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        idle = 0
+        max_scrolls = max(
+            self._max_scrolls, min(500, max(40, (max_posts // 3) + 10))
+        )
+        for _scroll in range(max_scrolls):
+            check_control()
+            page = self._require_page()
+            added = 0
+            for card in self._read_listing_cards():
+                raw = listing_card_to_raw(card)
+                if raw is None:
+                    continue
+                pid = f"t3_{raw['id']}"
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                ordered.append(raw)
+                added += 1
+                if len(ordered) >= max_posts:
+                    logger.info(
+                        "shreddit_listing_collected",
+                        extra={
+                            "subreddit": request.subreddit,
+                            "count": len(ordered),
+                            "collection_run_id": request.collection_run_id,
+                        },
+                    )
+                    return ordered[:max_posts]
+            if added == 0:
+                idle += 1
+            else:
+                idle = 0
+            if idle >= 3:
+                break
+            try:
+                page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+            except Exception:
+                break
+            page.wait_for_timeout(self._scroll_wait_ms)
+            self._click_feed_loader()
+        logger.info(
+            "shreddit_listing_collected",
+            extra={
+                "subreddit": request.subreddit,
+                "count": len(ordered),
+                "collection_run_id": request.collection_run_id,
+            },
+        )
+        if not ordered:
+            self._dom_snapshot(request)
+        return ordered[:max_posts]
+
     def _iter_json_listing_posts(
         self, request: CollectionRequest, *, max_posts: int
     ) -> Iterator[dict[str, Any]]:
         """Yield listing JSON children, paginating with after=."""
         after: str | None = None
         yielded = 0
-        rate_tries = 0
         while yielded < max_posts:
             check_control()
             page_size = min(100, max_posts - yielded)
             url, params = _listing_endpoint(request, page_size=page_size, after=after)
-            try:
-                payload = self._fetch_json(f"{url}?{urlencode(params)}")
-            except RedditRateLimited:
-                rate_tries += 1
-                if rate_tries >= 5:
-                    return
-                self._rotate_proxy(reason="rate_limit", fatal=False)
-                continue
-            rate_tries = 0
+            payload = self._fetch_json(f"{url}?{urlencode(params)}")
             if not isinstance(payload, dict):
                 return
             children = payload.get("data", {}).get("children") or []
