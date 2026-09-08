@@ -70,6 +70,10 @@ class TxSentimentConfig:
 class ReviewConfig:
     gold_size: int = 300
     adjudicator_confidence_floor: float = 0.6
+    # Gold strata weight for items whose base annotators split on sarcasm
+    # (2-1, 1-1): that is where the disagreement lives, so the human sample
+    # over-represents them (1.0 = proportional).
+    gold_split_oversample: float = 2.0
 
 
 @dataclass
@@ -206,7 +210,10 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
     review = ReviewConfig(
         gold_size=int(rev_raw.get("gold_size", 300)),
         adjudicator_confidence_floor=float(rev_raw.get("adjudicator_confidence_floor", 0.6)),
+        gold_split_oversample=float(rev_raw.get("gold_split_oversample", 2.0)),
     )
+    if review.gold_split_oversample <= 0:
+        raise ValueError("annotation.yaml review.gold_split_oversample must be > 0")
 
     exp_raw: dict[str, Any] = raw.get("export") or {}
     export = ExportConfig(out_dir=_resolve(Path(exp_raw.get("out_dir", "data/annotated"))))

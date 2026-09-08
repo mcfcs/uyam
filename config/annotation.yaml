@@ -73,6 +73,7 @@ tx_sentiment:
 review:
   gold_size: 300
   adjudicator_confidence_floor: 0.6     # below this -> human queue
+  gold_split_oversample: 2.0            # weight of 2-1 / 1-1 sarcasm splits in the gold strata
 
 # `uyam annotate pipeline` / Streamlit "Start ALL": every annotator labels the
 # SAME target set of N eligible items (items that already have votes first,
