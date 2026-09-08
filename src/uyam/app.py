@@ -2,12 +2,22 @@
 
 Launch with:
     streamlit run src/uyam/app.py
+
+Performance notes (the app is usually used over Tailscale from another
+device, so every byte and every rerun matters):
+- The raw JSONL corpus is parsed once per change (cached by file signature),
+  never on a timer.
+- Big tables (Data Browser, annotated data) render on demand, paginated, and
+  are cached; only small counters and log tails auto-refresh.
+- Live fragments run slowly while idle and faster only during a scrape.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import math
 import os
 import sqlite3
 import subprocess
@@ -56,6 +66,8 @@ DB_PATH: Path = DATA_DIR / "db" / "collection.sqlite3"
 PROXIES_PATH: Path = _REPO_ROOT / "proxies.txt"
 CONFIG_PATH: Path = _REPO_ROOT / "config" / "collection.yaml"
 
+PAGE_SIZE = 200  # rows per table page shipped to the browser
+
 # ---------------------------------------------------------------------------
 # Session state
 # ---------------------------------------------------------------------------
@@ -78,7 +90,7 @@ class _ListHandler(logging.Handler):
 
 
 # ---------------------------------------------------------------------------
-# Data helpers (no cache — always read fresh after a collection run)
+# Data helpers
 # ---------------------------------------------------------------------------
 
 _SUBMISSION_BROWSER_COLS = [
@@ -310,11 +322,78 @@ def _thread_lines(records: list[dict[str, Any]]) -> str:
     return "\n".join(lines).rstrip()
 
 
-def _load_jsonl_records() -> list[dict[str, Any]]:
-    """Read JSONL under data/raw, dropping duplicate reddit_fullname rows."""
+# ---------------------------------------------------------------------------
+# Cached corpus access
+# ---------------------------------------------------------------------------
+
+
+def _raw_signature() -> tuple[tuple[str, int, int], ...]:
+    """Cheap change detector for data/raw: (path, mtime_ns, size) per JSONL file."""
+    raw_dir = DATA_DIR / "raw"
+    if not raw_dir.exists():
+        return ()
+    sig: list[tuple[str, int, int]] = []
+    for path in sorted(raw_dir.glob("**/*.jsonl")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        sig.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(sig)
+
+
+@st.cache_resource(show_spinner="Reading corpus…", max_entries=2)
+def _records_for_signature(
+    signature: tuple[tuple[str, int, int], ...],
+) -> list[dict[str, Any]]:
+    """Parse every JSONL line once per corpus change. Callers must not mutate."""
     return load_jsonl_records(DATA_DIR, unique=True)  # type: ignore[return-value]
 
 
+def _load_jsonl_records() -> list[dict[str, Any]]:
+    """Unique raw records, cached until a JSONL file under data/raw changes."""
+    return _records_for_signature(_raw_signature())
+
+
+def _tail_text(path: Path, max_bytes: int = 24_000) -> str:
+    """Last `max_bytes` of a (possibly huge) log file without reading all of it."""
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - max_bytes))
+            data = fh.read()
+    except OSError:
+        return ""
+    text = data.decode("utf-8", errors="replace")
+    if size > max_bytes:
+        # Drop the partial first line.
+        text = text.split("\n", 1)[-1]
+    return text
+
+
+def _latest_records(n: int = 8) -> list[dict[str, Any]]:
+    """Newest records from the most recently written JSONL file only."""
+    raw_dir = DATA_DIR / "raw"
+    if not raw_dir.exists():
+        return []
+    files = list(raw_dir.glob("**/*.jsonl"))
+    if not files:
+        return []
+    files.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+    out: list[dict[str, Any]] = []
+    for line in _tail_text(files[0], 96_000).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        with contextlib.suppress(json.JSONDecodeError):
+            parsed = json.loads(line)
+            if isinstance(parsed, dict):
+                out.append(parsed)
+    return out[-n:]
+
+
+@st.cache_data(show_spinner=False, ttl=30)
 def _load_runs() -> list[dict[str, Any]]:
     if not DB_PATH.exists():
         return []
@@ -324,6 +403,55 @@ def _load_runs() -> list[dict[str, Any]]:
             "SELECT * FROM collection_runs ORDER BY started_at_utc DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _load_stats() -> list[dict[str, Any]]:
+    if not DB_PATH.exists():
+        return []
+    with sqlite3.connect(str(DB_PATH)) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT subreddit,
+                   SUM(CASE WHEN record_type = 'submission' THEN 1 ELSE 0 END) AS submissions,
+                   SUM(CASE WHEN record_type = 'comment'    THEN 1 ELSE 0 END) AS comments,
+                   MAX(first_seen_at_utc) AS last_collection
+            FROM collected_records
+            GROUP BY subreddit
+            ORDER BY subreddit
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _proxies_signature() -> tuple[int, int]:
+    try:
+        stat = PROXIES_PATH.stat()
+    except OSError:
+        return (0, 0)
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _proxy_pool_for(signature: tuple[int, int]) -> ProxyPool:
+    return ProxyPool.from_file(PROXIES_PATH)
+
+
+def _paginate(df: pd.DataFrame, key: str, page_size: int = PAGE_SIZE) -> pd.DataFrame:
+    """Return one page of `df` and render the page picker. Keeps payloads small."""
+    total = len(df)
+    pages = max(1, math.ceil(total / page_size))
+    if pages == 1:
+        st.caption(f"{total} rows")
+        return df
+    if int(st.session_state.get(key, 1) or 1) > pages:
+        st.session_state[key] = pages
+    c1, c2 = st.columns([1, 5])
+    page = int(c1.number_input("Page", min_value=1, max_value=pages, value=1, key=key))
+    start = (page - 1) * page_size
+    end = min(total, start + page_size)
+    c2.caption(f"rows {start + 1}–{end} of {total} ({page_size} per page)")
+    return df.iloc[start:end]
 
 
 def _max_comments_arg(collect: bool, all_replies: bool, cap: int) -> int:
@@ -441,24 +569,10 @@ def _start_background_collect(
     return proc.pid
 
 
-def _load_stats() -> list[dict[str, Any]]:
-    if not DB_PATH.exists():
-        return []
-    with sqlite3.connect(str(DB_PATH)) as conn:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            """
-            SELECT subreddit,
-                   SUM(CASE WHEN record_type = 'submission' THEN 1 ELSE 0 END) AS submissions,
-                   SUM(CASE WHEN record_type = 'comment'    THEN 1 ELSE 0 END) AS comments,
-                   MAX(first_seen_at_utc) AS last_collection
-            FROM collected_records
-            GROUP BY subreddit
-            ORDER BY subreddit
-            """
-        ).fetchall()
-    return [dict(r) for r in rows]
-
+# One process-liveness check per rerun; fragments re-check on their own timer.
+scraping_now: bool = scrape_is_running()
+# Live panels poll fast only while a scrape is running.
+LIVE_INTERVAL: float = 2.0 if scraping_now else 10.0
 
 # ---------------------------------------------------------------------------
 # Sidebar — collection controls
@@ -479,14 +593,16 @@ with st.sidebar:
         ),
     )  # type: ignore[assignment]
 
+    proxy_pool_empty = True
     if source_type == "shreddit":
         st.info(
             "No Reddit API credentials. Starts a real Chrome scrape through "
             "`proxies.txt` (Shreddit HTML). A pseudonymization key is "
             "auto-generated in `.env` on first run."
         )
-        proxy_pool = ProxyPool.from_file(PROXIES_PATH)
-        if proxy_pool.is_empty():
+        proxy_pool = _proxy_pool_for(_proxies_signature())
+        proxy_pool_empty = proxy_pool.is_empty()
+        if proxy_pool_empty:
             st.error(f"No proxies loaded from `{PROXIES_PATH.name}`. Scrape will not start.")
         else:
             st.caption(f"Proxies loaded: {proxy_pool.healthy_count} from `{PROXIES_PATH.name}`")
@@ -653,17 +769,18 @@ with st.sidebar:
 
     st.divider()
 
-    shreddit_blocked = source_type == "shreddit" and ProxyPool.from_file(PROXIES_PATH).is_empty()
-    already_running = scrape_is_running()
+    shreddit_blocked = source_type == "shreddit" and proxy_pool_empty
     run_btn = st.button(
         "Start Collection",
         type="primary",
         use_container_width=True,
-        disabled=(not bool(selected_subs)) or shreddit_blocked or already_running,
+        disabled=(not bool(selected_subs)) or shreddit_blocked or scraping_now,
         help="Safe to run again: reddit_fullname is unique in SQLite, so stored rows are skipped.",
     )
 
-    if st.button("Refresh data", use_container_width=True):
+    if st.button("Refresh data", use_container_width=True, help="Clear caches and reload."):
+        _records_for_signature.clear()
+        _load_runs.clear()
         st.rerun()
 
 # ---------------------------------------------------------------------------
@@ -761,6 +878,7 @@ with tab_collect:
                 root_logger.removeHandler(handler)
             st.session_state["logs"] = logs
             st.session_state["last_results"] = results
+            _load_runs.clear()
         else:
             try:
                 pid = _start_background_collect(
@@ -791,8 +909,10 @@ with tab_collect:
                     + "."
                     + limit_note
                     + " Already-stored posts/comments are skipped (no duplicates)."
-                    + " This page stays up — tables and logs refresh below."
+                    + " This page stays up — counters and logs refresh below."
                 )
+                # Re-render with the fast live interval and the Start button disabled.
+                st.rerun()
             except Exception as exc:
                 st.error(f"Could not start collection: {exc}")
 
@@ -800,34 +920,30 @@ with tab_collect:
     if notice:
         st.success(notice)
 
-    @st.fragment(run_every=1.5)
+    @st.fragment(run_every=LIVE_INTERVAL)
     def _live_scrape_panel() -> None:
         running = scrape_is_running()
         ctrl = get_control()
         status = read_status()
         st.subheader("Live scrape")
 
-        records = _load_jsonl_records()
-        n_sub = sum(1 for r in records if r.get("record_type") == "submission")
-        n_com = sum(1 for r in records if r.get("record_type") == "comment")
+        stats = _load_stats()
+        n_sub = sum(int(s["submissions"] or 0) for s in stats)
+        n_com = sum(int(s["comments"] or 0) for s in stats)
         m1, m2, m3 = st.columns(3)
         m1.metric("Posts in dataset", n_sub)
         m2.metric("Comments in dataset", n_com)
-        m3.metric("Total records", len(records))
-        by_sub: dict[str, dict[str, int]] = {}
-        for rec in records:
-            sub = str(rec.get("subreddit") or "?")
-            bucket = by_sub.setdefault(sub, {"posts": 0, "comments": 0})
-            if rec.get("record_type") == "submission":
-                bucket["posts"] += 1
-            else:
-                bucket["comments"] += 1
-        if by_sub:
+        m3.metric("Total records", n_sub + n_com)
+        if stats:
             st.dataframe(
                 pd.DataFrame(
                     [
-                        {"subreddit": sub, "posts": v["posts"], "comments": v["comments"]}
-                        for sub, v in sorted(by_sub.items())
+                        {
+                            "subreddit": s["subreddit"],
+                            "posts": int(s["submissions"] or 0),
+                            "comments": int(s["comments"] or 0),
+                        }
+                        for s in stats
                     ]
                 ),
                 width="stretch",
@@ -843,10 +959,13 @@ with tab_collect:
             b1, b2, b3 = st.columns(3)
             if b1.button("Pause", disabled=ctrl == "pause", key="scrape_pause"):
                 set_control("pause")
+                st.rerun(scope="fragment")
             if b2.button("Resume", disabled=ctrl == "run", key="scrape_resume"):
                 set_control("run")
+                st.rerun(scope="fragment")
             if b3.button("Stop", type="primary", key="scrape_stop"):
                 request_stop_and_kill()
+                st.rerun()
             warn_slot = st.empty()
             img_slot = st.empty()
             _refresh_captcha_preview(warn_slot, img_slot)
@@ -857,17 +976,18 @@ with tab_collect:
 
         st.markdown("#### Scraper log")
         if LOG_FILE.exists():
-            try:
-                lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                lines = []
-            st.caption(f"{len(lines)} lines — auto-refreshes while collecting")
-            st.code("\n".join(lines[-120:]) or "(empty)", language=None)
+            tail = _tail_text(LOG_FILE)
+            st.caption(
+                "last lines — auto-refreshes while collecting"
+                if running
+                else "last lines of the previous run"
+            )
+            st.code(tail or "(empty)", language=None)
         else:
             st.caption("No collect.log yet.")
 
-        if records:
-            preview = records[-8:]
+        preview = _latest_records(8)
+        if preview:
             st.markdown("#### Latest records")
             st.dataframe(
                 pd.DataFrame(
@@ -906,7 +1026,7 @@ with tab_collect:
                 f"{r['comments']} comments · "
                 f"{r['duplicates']} duplicates skipped"
             )
-    elif not run_btn and not scrape_is_running() and not st.session_state.get("collect_notice"):
+    elif not run_btn and not scraping_now and not st.session_state.get("collect_notice"):
         st.info("Configure subreddits in the sidebar and click **Start Collection**.")
 
     log_lines: list[str] = st.session_state["logs"]
@@ -916,17 +1036,86 @@ with tab_collect:
 
 
 # ===========================================================================
-# Tab 2: Data Browser
+# Tab 2: Data Browser (on demand, cached, paginated)
 # ===========================================================================
-with tab_data:
-    records = _load_jsonl_records()
 
+
+@st.cache_resource(show_spinner="Building table…", max_entries=4)
+def _browser_frame(
+    signature: tuple[tuple[str, int, int], ...],
+    filter_subs: tuple[str, ...],
+    filter_type: str,
+) -> pd.DataFrame:
+    records = _records_for_signature(signature)
+    posts_by_id: dict[str, dict[str, Any]] = {}
+    for rec in records:
+        if rec.get("record_type") == "submission":
+            sid = rec.get("id") or rec.get("reddit_id")
+            if sid:
+                posts_by_id[str(sid)] = rec
+    subs = set(filter_subs)
+    filtered = [
+        r
+        for r in records
+        if r.get("subreddit") in subs
+        and (filter_type == "all" or r.get("record_type") == filter_type)
+    ]
+    enriched = [_enrich_relationships(rec, posts_by_id) for rec in filtered]
+    enriched.sort(
+        key=lambda r: (
+            str(r.get("post_id") or r.get("id") or ""),
+            0 if r.get("record_type") == "submission" else 1,
+            int(r.get("depth") or 0),
+            str(r.get("parent_id") or ""),
+            str(r.get("created_utc") or ""),
+        )
+    )
+    if filter_type == "submission":
+        columns = _SUBMISSION_BROWSER_COLS
+    elif filter_type == "comment":
+        columns = _COMMENT_BROWSER_COLS
+    else:
+        columns = _ALL_BROWSER_COLS
+    rows = [_browser_row(rec, columns) for rec in enriched]
+    return pd.DataFrame(rows, columns=columns)
+
+
+@st.cache_resource(show_spinner="Building thread tree…", max_entries=2)
+def _thread_tree_text(
+    signature: tuple[tuple[str, int, int], ...], filter_subs: tuple[str, ...]
+) -> str:
+    records = _records_for_signature(signature)
+    subs = set(filter_subs)
+    posts_by_id: dict[str, dict[str, Any]] = {}
+    for rec in records:
+        if rec.get("record_type") == "submission":
+            sid = rec.get("id") or rec.get("reddit_id")
+            if sid:
+                posts_by_id[str(sid)] = rec
+    enriched = [
+        _enrich_relationships(rec, posts_by_id)
+        for rec in records
+        if rec.get("subreddit") in subs
+    ]
+    return _thread_lines(enriched)
+
+
+@st.cache_resource(show_spinner=False, max_entries=2)
+def _csv_bytes(
+    signature: tuple[tuple[str, int, int], ...],
+    filter_subs: tuple[str, ...],
+    filter_type: str,
+) -> bytes:
+    return _browser_frame(signature, filter_subs, filter_type).to_csv(index=False).encode("utf-8")
+
+
+with tab_data:
     with st.expander("Clear previous scrapes", expanded=False):
         st.caption(
             "Deletes all JSONL, manifests, and the SQLite index. "
             "Does not delete the Chrome profile."
         )
-        if scrape_is_running():
+        if scraping_now:
             st.warning("Stop the live scrape before clearing.")
         else:
             confirm_clear = st.text_input(
@@ -941,6 +1130,8 @@ with tab_data:
                 stats = clear_collected_data(DATA_DIR)
                 st.session_state["last_results"] = []
                 st.session_state["logs"] = []
+                _records_for_signature.clear()
+                _load_runs.clear()
                 st.success(
                     f"Deleted {stats['jsonl_files']} JSONL files, "
                     f"{stats['manifests']} manifests, "
@@ -948,15 +1139,26 @@ with tab_data:
                 )
                 st.rerun()
 
-    @st.fragment(run_every=2.0)
-    def _live_data_browser() -> None:
-        records = _load_jsonl_records()
-        if scrape_is_running():
-            st.caption("Live — table refreshes as new JSONL rows are written.")
-        if not records:
-            st.info("No records yet. Run a collection first.")
-            return
+    raw_sig = _raw_signature()
+    if not raw_sig:
+        st.info("No records yet. Run a collection first.")
+    else:
+        head_l, head_r = st.columns([5, 1])
+        with head_r:
+            if st.button("Refresh table", key="data_refresh", use_container_width=True):
+                _records_for_signature.clear()
+                _browser_frame.clear()
+                _thread_tree_text.clear()
+                _csv_bytes.clear()
+                st.rerun()
+        with head_l:
+            if scraping_now:
+                st.caption(
+                    "A scrape is running — the table is a snapshot; click Refresh table "
+                    "to pick up new rows."
+                )
 
+        records = _load_jsonl_records()
         all_subs = sorted(
             {str(r.get("subreddit") or "") for r in records if r.get("subreddit")}
         )
@@ -973,46 +1175,15 @@ with tab_data:
         )
         fcol3.metric("Total records", len(records))
 
-        filtered = [
-            r
-            for r in records
-            if r.get("subreddit") in filter_subs
-            and (filter_type == "all" or r.get("record_type") == filter_type)
-        ]
-
-        posts_by_id: dict[str, dict[str, Any]] = {}
-        for rec in records:
-            if rec.get("record_type") == "submission":
-                sid = rec.get("id") or rec.get("reddit_id")
-                if sid:
-                    posts_by_id[str(sid)] = rec
-        enriched = [_enrich_relationships(rec, posts_by_id) for rec in filtered]
-        enriched.sort(
-            key=lambda r: (
-                str(r.get("post_id") or r.get("id") or ""),
-                0 if r.get("record_type") == "submission" else 1,
-                int(r.get("depth") or 0),
-                str(r.get("parent_id") or ""),
-                str(r.get("created_utc") or ""),
-            )
-        )
-
-        if filter_type == "submission":
-            columns = _SUBMISSION_BROWSER_COLS
-        elif filter_type == "comment":
-            columns = _COMMENT_BROWSER_COLS
-        else:
-            columns = _ALL_BROWSER_COLS
-
-        rows = [_browser_row(rec, columns) for rec in enriched]
-        df = pd.DataFrame(rows, columns=columns)
+        df = _browser_frame(raw_sig, tuple(filter_subs), str(filter_type))
         st.caption(
-            f"{len(df)} unique records shown (duplicates by reddit_fullname dropped). "
+            f"{len(df)} unique records match (duplicates by reddit_fullname dropped). "
             "Comments include post_id / post_url (which post) and "
             "parent_comment_id / parent_url (reply-to-reply)."
         )
+        page_df = _paginate(df, key="data_page")
         st.dataframe(
-            df,
+            page_df,
             width="stretch",
             height=560,
             column_config={
@@ -1028,34 +1199,34 @@ with tab_data:
             },
         )
 
-        thread_src = enriched if filter_type == "all" else [
-            _enrich_relationships(rec, posts_by_id)
-            for rec in records
-            if rec.get("subreddit") in filter_subs
-        ]
-        thread_text = _thread_lines(thread_src)
-        if thread_text:
-            with st.expander("Thread tree (post → replies → replies-to-replies)", expanded=False):
+        if st.checkbox(
+            "Show thread tree (post → replies → replies-to-replies)",
+            value=False,
+            key="data_show_tree",
+        ):
+            thread_text = _thread_tree_text(raw_sig, tuple(filter_subs))
+            if thread_text:
                 st.text(thread_text)
+            else:
+                st.caption("No threads for the current subreddit filter.")
 
-        csv_bytes = df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            "Download as CSV",
-            data=csv_bytes,
+            "Download all matching rows as CSV",
+            data=_csv_bytes(raw_sig, tuple(filter_subs), str(filter_type)),
             file_name="uyam_export.csv",
             mime="text/csv",
             key="data_download_csv",
         )
-
-    _live_data_browser()
 
 
 # ===========================================================================
 # Tab 3: Run History
 # ===========================================================================
 with tab_history:
-    @st.fragment(run_every=3.0)
+    @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
     def _live_history() -> None:
+        if scraping_now:
+            _load_runs.clear()
         runs = _load_runs()
         if not runs:
             st.info("No collection runs yet.")
@@ -1069,8 +1240,11 @@ with tab_history:
             "submissions_seen", "comments_seen", "validation_failures",
         ]
         df_runs = df_runs[[c for c in preferred_cols if c in df_runs.columns]]
-        st.dataframe(df_runs, width="stretch")
-        st.caption(f"{len(df_runs)} runs total — auto-refreshes during a scrape")
+        st.dataframe(_paginate(df_runs, key="history_page"), width="stretch")
+        st.caption(
+            f"{len(df_runs)} runs total — "
+            + ("auto-refreshes during the scrape" if scraping_now else "use Refresh data to reload")
+        )
 
     _live_history()
 
@@ -1079,7 +1253,7 @@ with tab_history:
 # Tab 4: Stats
 # ===========================================================================
 with tab_stats:
-    @st.fragment(run_every=3.0)
+    @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
     def _live_stats() -> None:
         stats = _load_stats()
         if not stats:

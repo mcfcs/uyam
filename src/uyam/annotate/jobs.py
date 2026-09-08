@@ -128,14 +128,19 @@ def stop_job(name: str) -> bool:
 
 
 def tail_log(name: str, max_chars: int = 4000) -> str:
+    """Last `max_chars` of the job log, reading only the file tail (logs grow to MBs)."""
     path = log_path(name)
     if not path.exists():
         return ""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - max_chars * 4))  # UTF-8 is at most 4 bytes/char
+            data = fh.read()
     except OSError:
         return ""
-    return text[-max_chars:]
+    return data.decode("utf-8", errors="replace")[-max_chars:]
 
 
 def job_summary(name: str) -> dict[str, Any]:

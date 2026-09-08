@@ -9,6 +9,7 @@ folderWatchBlacklist = [
     "data/db",
     "data/manifests",
     "data/.scrape-status",
+    "data/.annotate-status",
     "data/.browser-profile",
     "src/uyam/__pycache__",
     "tests/__pycache__",
@@ -16,9 +17,14 @@ folderWatchBlacklist = [
     "context",
     "__pycache__",
 ]
+# The app is mostly used over Tailscale from another device: compress the
+# websocket so table/log payloads are a fraction of the size.
+enableWebsocketCompression = true
 
 [browser]
 gatherUsageStats = false
 
 [runner]
-fastReruns = false
+# Interrupt a slow render when the user clicks something instead of queueing
+# the click behind it (the default). With fastReruns off, clicks were dropped.
+fastReruns = true

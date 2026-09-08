@@ -337,6 +337,12 @@ class AnnotationDatabase:
         ).fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
 
+    def eligible_count(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM candidates WHERE eligible = 1"
+        ).fetchone()
+        return int(row["n"] or 0)
+
     # ------------------------------------------------------------------
     # LID / transformer sentiment
     # ------------------------------------------------------------------
@@ -361,16 +367,19 @@ class AnnotationDatabase:
             ),
         )
 
+    _MISSING_LID_SQL = """
+        SELECT c.reddit_fullname FROM candidates c
+        WHERE c.eligible = 1 AND NOT EXISTS
+          (SELECT 1 FROM lid_results l WHERE l.reddit_fullname = c.reddit_fullname)
+    """
+
     def missing_lid(self) -> list[str]:
-        rows = self._conn.execute(
-            """
-            SELECT c.reddit_fullname FROM candidates c
-            WHERE c.eligible = 1 AND NOT EXISTS
-              (SELECT 1 FROM lid_results l WHERE l.reddit_fullname = c.reddit_fullname)
-            ORDER BY c.reddit_fullname
-            """
-        ).fetchall()
+        rows = self._conn.execute(self._MISSING_LID_SQL + " ORDER BY c.reddit_fullname").fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
+
+    def missing_lid_count(self) -> int:
+        row = self._conn.execute(f"SELECT COUNT(*) AS n FROM ({self._MISSING_LID_SQL})").fetchone()
+        return int(row["n"] or 0)
 
     def upsert_tx_sentiment(self, reddit_fullname: str, result: dict[str, Any]) -> None:
         self._conn.execute(
@@ -393,16 +402,19 @@ class AnnotationDatabase:
             ),
         )
 
+    _MISSING_TX_SQL = """
+        SELECT c.reddit_fullname FROM candidates c
+        WHERE c.eligible = 1 AND NOT EXISTS
+          (SELECT 1 FROM tx_sentiment t WHERE t.reddit_fullname = c.reddit_fullname)
+    """
+
     def missing_tx_sentiment(self) -> list[str]:
-        rows = self._conn.execute(
-            """
-            SELECT c.reddit_fullname FROM candidates c
-            WHERE c.eligible = 1 AND NOT EXISTS
-              (SELECT 1 FROM tx_sentiment t WHERE t.reddit_fullname = c.reddit_fullname)
-            ORDER BY c.reddit_fullname
-            """
-        ).fetchall()
+        rows = self._conn.execute(self._MISSING_TX_SQL + " ORDER BY c.reddit_fullname").fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
+
+    def missing_tx_sentiment_count(self) -> int:
+        row = self._conn.execute(f"SELECT COUNT(*) AS n FROM ({self._MISSING_TX_SQL})").fetchone()
+        return int(row["n"] or 0)
 
     # ------------------------------------------------------------------
     # Contexts (snapshot of exactly what annotators saw)
@@ -537,6 +549,23 @@ class AnnotationDatabase:
         ).fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
 
+    def pending_adjudicator_count(self, model_key: str, prompt_version: str) -> int:
+        row = self._conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM aggregates g
+            WHERE g.needs_adjudication = 1 AND g.prompt_version = :pv
+            AND (g.resolved_by IS NULL OR g.resolved_by != 'human')
+            AND NOT EXISTS (SELECT 1 FROM llm_annotations a
+                WHERE a.reddit_fullname = g.reddit_fullname
+                  AND a.prompt_version = :pv AND a.role = 'adjudicator')
+            AND NOT EXISTS (SELECT 1 FROM llm_failures f
+                WHERE f.reddit_fullname = g.reddit_fullname
+                  AND f.model_key = :model AND f.prompt_version = :pv AND f.role = 'adjudicator')
+            """,
+            {"model": model_key, "pv": prompt_version},
+        ).fetchone()
+        return int(row["n"] or 0)
+
     def annotations_for_item(
         self, reddit_fullname: str, prompt_version: str
     ) -> list[dict[str, Any]]:
@@ -665,6 +694,20 @@ class AnnotationDatabase:
             f"SELECT * FROM review_queue {clause} ORDER BY reason, reddit_fullname"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def review_queue_counts(self) -> dict[str, int]:
+        """Pending items per reason plus 'completed' — one cheap GROUP BY."""
+        rows = self._conn.execute(
+            """
+            SELECT CASE WHEN completed = 1 THEN 'completed' ELSE reason END AS bucket,
+                   COUNT(*) AS n
+            FROM review_queue GROUP BY bucket
+            """
+        ).fetchall()
+        counts = {"gold": 0, "low_confidence": 0, "completed": 0}
+        for r in rows:
+            counts[str(r["bucket"])] = int(r["n"])
+        return counts
 
     # ------------------------------------------------------------------
     # Prompt version guard
