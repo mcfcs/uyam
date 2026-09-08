@@ -150,6 +150,12 @@ class CommentRecord(BaseModel):
 
     retrieved_at_utc: datetime = Field(default_factory=_utc_now)
 
+    # Inherited from the parent submission: comments harvested from a
+    # keyword-oversampled thread carry the tag too (thesis §3.1), so a blank
+    # value is never mistaken for "not recorded".
+    sampling_strategy: SamplingStrategy = "natural"
+    matched_query_or_keyword: str | None = None
+
     @field_validator("created_utc", "retrieved_at_utc", mode="before")
     @classmethod
     def _ensure_utc(cls, v: object) -> datetime:

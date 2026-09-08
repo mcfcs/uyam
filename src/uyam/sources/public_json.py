@@ -236,7 +236,10 @@ class PublicJsonRedditSource:
             # Ensure depth reflects what we observed if Reddit omitted it.
             raw_com.setdefault("depth", traversed_depth)
             record = map_comment_dict(
-                raw_com, collection_run_id=request.collection_run_id
+                raw_com,
+                collection_run_id=request.collection_run_id,
+                sampling_strategy=submission.sampling_strategy,
+                matched_query_or_keyword=submission.matched_query_or_keyword,
             )
             logger.debug(
                 "comment_seen",

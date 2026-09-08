@@ -183,6 +183,8 @@ class PrawRedditSource:
         com: Any,
         *,
         collection_run_id: str,
+        sampling_strategy: str = "natural",
+        matched_query_or_keyword: str | None = None,
     ) -> CommentRecord:
         author_name: str | None
         if com.author is None:
@@ -222,6 +224,8 @@ class PrawRedditSource:
             author_hash=author_hash,
             author_status=author_status,
             retrieved_at_utc=_utc_now(),
+            sampling_strategy=sampling_strategy,  # type: ignore[arg-type]
+            matched_query_or_keyword=matched_query_or_keyword,
         )
 
     # ------------------------------------------------------------------
@@ -366,7 +370,10 @@ class PrawRedditSource:
 
             record = _with_retry(
                 lambda c=com: self._map_comment(
-                    c, collection_run_id=request.collection_run_id
+                    c,
+                    collection_run_id=request.collection_run_id,
+                    sampling_strategy=submission.sampling_strategy,
+                    matched_query_or_keyword=submission.matched_query_or_keyword,
                 ),
                 label=f"map_comment:{com.id}",
             )

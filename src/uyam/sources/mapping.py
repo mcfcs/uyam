@@ -70,8 +70,14 @@ def map_comment_dict(
     raw: dict[str, Any],
     *,
     collection_run_id: str,
+    sampling_strategy: str = "natural",
+    matched_query_or_keyword: str | None = None,
 ) -> CommentRecord:
-    """Normalize a raw Reddit-shaped comment dict into a CommentRecord."""
+    """Normalize a raw Reddit-shaped comment dict into a CommentRecord.
+
+    `sampling_strategy` / `matched_query_or_keyword` are the parent
+    submission's values (comments inherit how their thread was found).
+    """
     raw_author = raw.get("author")
     author_hash, author_status = pseudonymize_author(
         raw_author if isinstance(raw_author, str) else None
@@ -103,4 +109,6 @@ def map_comment_dict(
         author_hash=author_hash,
         author_status=author_status,
         retrieved_at_utc=_utc_now(),
+        sampling_strategy=sampling_strategy,  # type: ignore[arg-type]
+        matched_query_or_keyword=matched_query_or_keyword,
     )

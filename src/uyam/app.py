@@ -506,6 +506,7 @@ def _start_background_collect(
     calendar_since: str | None = None,
     calendar_until: str | None = None,
     posts_per_day: int | None = None,
+    oversample_only: bool = False,
 ) -> int:
     """Start `uyam collect` in the background so Pause/Stop stay clickable."""
     cmd: list[str] = [
@@ -543,6 +544,8 @@ def _start_background_collect(
             cmd.extend(["--until", calendar_until])
         if posts_per_day:
             cmd.extend(["--per-day", str(int(posts_per_day))])
+    if oversample_only:
+        cmd.append("--oversample-only")
 
     env = os.environ.copy()
     src_path = str(_REPO_ROOT / "src")
@@ -703,6 +706,15 @@ with st.sidebar:
     if listing_opt == "search" and not calendar_on:
         raw_q = st.text_input("Search query", placeholder="e.g. sana all, edi wow")
         search_q = raw_q.strip() or None
+    oversample_only: bool = st.checkbox(
+        "Keyword oversampling only",
+        value=False,
+        disabled=source_type == "fixture" or calendar_on,
+        help="Skip the natural listing and run one search per sarcasm marker in "
+        "collection.yaml (oversampling.keywords) for each selected subreddit. "
+        "Threads found this way are tagged sampling_strategy=keyword_oversampled "
+        "(comments inherit the tag).",
+    )
 
     limit_val: int = st.number_input(
         "Limit per subreddit",
@@ -897,6 +909,7 @@ with tab_collect:
                     calendar_since=calendar_since_val,
                     calendar_until=calendar_until_val,
                     posts_per_day=posts_per_day_val,
+                    oversample_only=bool(oversample_only),
                 )
                 limit_note = (
                     f" Time limit: {int(max_seconds_val)}s."

@@ -108,6 +108,12 @@ def collect(
         None,
         help="Max new posts per UTC day (default 15 when --since is set).",
     ),
+    oversample_only: bool = typer.Option(
+        False,
+        "--oversample-only",
+        help="Skip the natural listing; run one search per sarcasm marker in "
+        "collection.yaml oversampling.keywords (tagged keyword_oversampled).",
+    ),
     config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
     lenient: bool = typer.Option(False, help="Use lenient fixture validation"),
     log_level: str = typer.Option("INFO", help="Logging level"),
@@ -228,11 +234,15 @@ def collect(
 
     stopped = False
     try:
-        if effective_workers > 1:
-            console.print(
-                f"Parallel scrape: {len(jobs)} subreddits, {effective_workers} browsers"
-            )
-        results = run_jobs(jobs, max_workers=effective_workers)
+        if oversample_only:
+            console.print("Keyword oversampling only — skipping the natural listing pass.")
+            results = []
+        else:
+            if effective_workers > 1:
+                console.print(
+                    f"Parallel scrape: {len(jobs)} subreddits, {effective_workers} browsers"
+                )
+            results = run_jobs(jobs, max_workers=effective_workers)
         for row in results:
             sub_name = str(row.get("subreddit") or "")
             errors = [str(e) for e in (row.get("errors") or [])]
@@ -257,12 +267,17 @@ def collect(
                     f"({row.get('duplicates', 0)} duplicates skipped)"
                 )
 
-        if (
-            cfg.oversampling.enabled
-            and cfg.oversampling.keywords
+        want_oversampling = (
+            (oversample_only or cfg.oversampling.enabled)
+            and bool(cfg.oversampling.keywords)
             and source != "fixture"
-            and not stopped
-        ):
+        )
+        if want_oversampling and stopped:
+            console.print(
+                "[yellow]Keyword oversampling skipped[/yellow]: the natural pass was stopped. "
+                "Run `uyam collect --oversample-only` to do it on its own."
+            )
+        if want_oversampling and not stopped:
             over_jobs: list[dict] = []
             idx = 0
             for keyword in cfg.oversampling.keywords:

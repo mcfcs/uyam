@@ -150,5 +150,20 @@ def index_corpus(
             seen.add(row["reddit_fullname"])
             db.upsert_corpus_record(row)
             stats["records"] += 1
+    # Comments written before 2026-09-08 carry no sampling_strategy: inherit
+    # the parent submission's tag so keyword-oversampled threads stay marked.
+    cur = db.conn.execute(
+        """
+        UPDATE corpus_index SET
+            sampling_strategy = (SELECT s.sampling_strategy FROM corpus_index s
+                                 WHERE s.reddit_fullname = corpus_index.submission_fullname),
+            matched_query_or_keyword = (SELECT s.matched_query_or_keyword FROM corpus_index s
+                                        WHERE s.reddit_fullname = corpus_index.submission_fullname)
+        WHERE record_type = 'comment' AND sampling_strategy IS NULL
+          AND submission_fullname IN
+              (SELECT reddit_fullname FROM corpus_index WHERE record_type = 'submission')
+        """
+    )
+    stats["comments_inherited_sampling"] = int(cur.rowcount or 0)
     db.commit()
     return stats

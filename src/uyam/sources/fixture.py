@@ -287,6 +287,8 @@ class FixtureRedditSource:
             com = _map_comment(
                 raw_com,
                 collection_run_id=request.collection_run_id,
+                sampling_strategy=submission.sampling_strategy,
+                matched_query_or_keyword=submission.matched_query_or_keyword,
             )
             logger.debug(
                 "comment_seen",

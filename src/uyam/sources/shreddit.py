@@ -1875,7 +1875,12 @@ class ShredditBrowserSource:
             body = raw.get("body") or ""
             if not request.include_deleted and body in ("[deleted]", "[removed]"):
                 continue
-            record = map_comment_dict(raw, collection_run_id=request.collection_run_id)
+            record = map_comment_dict(
+                raw,
+                collection_run_id=request.collection_run_id,
+                sampling_strategy=submission.sampling_strategy,
+                matched_query_or_keyword=submission.matched_query_or_keyword,
+            )
             logger.debug(
                 "comment_seen",
                 extra={
