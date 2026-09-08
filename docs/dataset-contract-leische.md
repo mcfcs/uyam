@@ -23,9 +23,14 @@ Produced by `uyam annotate export --version v1` under `data/annotated/`:
 
 Versioning: the dataset version (`v1`) is bumped for any re-export with
 different labels; `dataset_card.json` records the `prompt_version`
-(annotation prompt contract) and the `uyam_commit` hash that produced it.
+(annotation prompt contract), the `uyam_commit` hash and `created_at`.
 Treat `(dataset_version, prompt_version, uyam_commit)` as the full identity
 of the dataset.
+
+**Only these files are the contract.** The CSV buttons in the Streamlit app
+(`annotated-review.csv`, `uyam_export.csv`) are eyeballing aids: they carry
+no context snapshot, no cues, no per-annotator confidence, no LID ratios and
+no identity stamp. Do not build the model dataset from them.
 
 ## 2. Row schema (`dataset-v1.jsonl`)
 
@@ -41,7 +46,11 @@ Identity and metadata:
   `corpus-v1.jsonl`, meaningless outside them. Raw usernames never ship.
 - `is_submitter` — comment author is the thread OP
 - `sampling_strategy` — `natural` | `keyword_oversampled` (see §7),
-  `matched_query_or_keyword`
+  `matched_query_or_keyword`. Comments inherit their submission's value, so
+  the column is never blank.
+- `is_text_only` — false for submissions that are link/image posts with no
+  body (thesis §3.2 excludes them at candidate selection; the flag lets you
+  verify none slipped through and slice by it)
 
 Text:
 
@@ -63,7 +72,12 @@ Labels (`labels`, the ensemble finals — the training targets):
 Reliability (`reliability`):
 
 - `resolved_by` — `unanimous` | `majority` | `adjudicator` | `human`. How the
-  final label was decided (see §3).
+  final label was decided (see §3) — the JOINT resolution of all four labels.
+- `per_label` — the same decision for EACH label separately:
+  `{sarcastic, language, literal_sentiment, intended_sentiment}` →
+  `unanimous` | `majority` | `adjudicator` | `human` | `unresolved`. Sarcasm
+  is `unresolved` only under `--include-unresolved`; use this rather than
+  `resolved_by` when a single label (e.g. language) is what you filter on.
 - `sarcasm_votes` — e.g. `"3-0"`, `"2-1"` across the base annotators
 - `n_annotators`, `mean_confidence` (weakly calibrated — prefer the vote
   pattern), `needs_human`
@@ -74,14 +88,22 @@ Reliability (`reliability`):
 `human_gold` — non-null only for the ~300-item stratified validation subset:
 the native-speaker labels, shipped ALONGSIDE (not replacing) the ensemble
 labels so leische can reproduce the human-vs-ensemble Cohen's kappa.
+**Gold rows are evaluation-only: never train on them.** The subset is
+stratified on `sarcastic × language × record_type × subreddit × split`, where
+split rows (base annotators disagreed on sarcasm, later decided by the
+adjudicator) are weighted ×2 (`review.gold_split_oversample`).
 
 Auxiliary signals (`aux`):
 
 - `tx_sentiment` — cardiffnlp/twitter-xlm-roberta-base-sentiment probabilities
   (model-independent literal-sentiment vote)
-- `lid` — two-stage fastText token-ratio language ID (`en_ratio`, `tl_ratio`,
-  message-level confidence). The ensemble `labels.language` is the primary
-  language label; `aux.lid` exists for the LID-validation analysis.
+- `lid` — two-stage fastText token-ratio language ID: `auto_label` (alias
+  `language`), `en_ratio`, `tl_ratio`, `other_ratio`, message-level
+  `confidence`. The ensemble `labels.language` is the primary language label;
+  `aux.lid` exists for the LID-validation analysis (thesis §3.2.1). The card
+  reports `lid_vs_ensemble_language` and, once gold labels exist,
+  `lid_vs_human_gold_language` accuracy. Each annotator's own language vote
+  is in `reliability.annotators[].language`.
 
 `context` — see §5. `provenance` — `prompt_version`, `dataset_version`.
 
@@ -124,11 +146,15 @@ annotation time:
 
 ```json
 {
+  "source":       "annotator_snapshot",
   "submission":   {"reddit_fullname", "author_hash", "created_utc", "title", "selftext"},
   "parent_chain": [{"reddit_fullname", "author_hash", "is_submitter", "depth", "created_utc", "text"}, ...],
   "replies":      [{...same shape...}]
 }
 ```
+
+`source` is always `annotator_snapshot` for annotated rows (`missing` would
+mean the snapshot was lost — treat as a bug, never rebuild from the corpus).
 
 - `parent_chain` is oldest→newest, capped at 6 ancestors (nearest 2 kept
   fullest); `replies` are up to 3 direct replies to the target; long selftexts
@@ -151,6 +177,22 @@ within this dataset.
 **Retrieval** context (sarcastic / non-sarcastic exemplars) is built at train
 time from the labeled rows. To avoid leakage, restrict each fold's retrieval
 pool to that fold's TRAINING rows only — never retrieve from validation/test.
+
+### Dataset card additions
+
+- `readiness` — the numbers the model-side gate checks: exported rows,
+  sarcastic positives, the smallest `language × sarcastic` cell, gold items
+  labeled and their sarcasm Cohen's κ, rows with a snapshot context.
+- `collection_window` — first/last `created_utc` of the corpus and of the
+  exported rows. Thesis §1.4 scopes "at least three months"; the card makes
+  the actual span explicit so the limitation is stated with the data.
+- `temporal_context_coverage` — under the thesis §3.4 rule (≤5 same-author
+  posts within 48 h before the target, from the collected corpus): share of
+  exported rows with ≥1, ≥3 and the full 5 history posts. Two thirds of rows
+  currently have none; a wider *subreddit* crawl is the only way to raise it
+  — per-author history cannot be back-filled because usernames are hashed
+  before storage (§3.1), by design.
+- `label_distributions.is_text_only`, `sarcastic_per_label_resolution`.
 
 ## 7. Recommended evaluation protocol
 
@@ -188,17 +230,41 @@ All commands are resumable and idempotent (`uyam annotate status` shows
 progress):
 
 ```
+uyam scrub-authors                          # once: strip legacy plaintext usernames
+uyam collect --source shreddit --oversample-only   # keyword_oversampled threads
+uyam annotate pipeline                      # everything below, to pipeline.target_items
+uyam annotate gold-sample                   # (pipeline draws it) then label in the Streamlit tab
+uyam annotate aggregate && uyam annotate export --version vN
+
+# pass by pass, if you prefer:
 uyam annotate index && uyam annotate select && uyam annotate lid
-uyam annotate sentiment                     # local GPU, BEFORE Ollama passes
-uyam annotate run --annotator gemma3        # remote box (parallel with below)
-uyam annotate run --annotator qwen3         # local
-uyam annotate run --annotator sealion       # local, after qwen3
+uyam annotate sentiment --target 0          # local GPU, BEFORE Ollama passes
+uyam annotate run --annotator gemma3 --target 0        # remote box (parallel with below)
+uyam annotate run --annotator sealion --annotator qwen3 --target 0   # local, least-done first
 uyam annotate aggregate
 uyam annotate adjudicate                    # remote box
 uyam annotate aggregate
-uyam annotate gold-sample                   # then label in the Streamlit tab
-uyam annotate aggregate && uyam annotate export --version vN
 ```
+
+## 10. Handoff status (uyam, 2026-09-08)
+
+Response to `UYAM_HANDOFF.md` (written by leische against the Streamlit CSV
+downloads, not against `dataset-*.jsonl`):
+
+| item | status |
+|---|---|
+| H1 gold subset + κ | Pipeline draws a 300-item gold sample weighted ×2 on split votes; Gio labels it in the Annotation Review tab; `aggregate` + `export` then fill `human_gold` and the card's `gold_vs_ensemble_cohen_kappa`. Not automatable. |
+| H2 context snapshot | Was already in the JSONL export; now stamped `context.source = "annotator_snapshot"` with `depth` / `is_submitter` / `created_utc` per entry. |
+| H3 sealion "failures" | Not failures: zero sealion failure records. Those rows were simply not yet annotated by sealion (least-covered model). `annotate pipeline` runs it first to the shared target. |
+| H4 adjudication | Runs inside `annotate pipeline`; rows it decides carry `resolved_by = "adjudicator"`. `reliability.per_label` added for per-label resolution. |
+| H5 cues | Always in the JSONL export (`labels.cues`, per-annotator `cues`). |
+| H6 LID | Always in the JSONL export (`aux.lid`); `auto_label` alias added, plus `lid_vs_human_gold_language` in the card. |
+| H7 plaintext authors | Fixed at the source (no `author` field on records); `uyam scrub-authors` rewrites legacy files; the browser shows hashes. |
+| H8 collection window | Cannot be fixed by code: `/new` reaches only days back and per-author back-fill is impossible with hashed identifiers. Card now reports `collection_window` + `temporal_context_coverage`; the thesis must state the actual span. |
+| H9 oversampling | Comments inherit `sampling_strategy`; `uyam collect --oversample-only` / sidebar checkbox runs the keyword searches on their own (before, they only ran after an un-stopped natural pass). |
+| H10 image-only posts | Already excluded at candidate selection (`link_post`, 0 in the annotated set); `is_text_only` flag added to every row. |
+| H11 export identity | Always in `dataset_card.json` (`dataset_version`, `prompt_version`, `uyam_commit`, `created_at`). |
+| H12 per-annotator confidence | Always in the JSONL export (`reliability.annotators[].confidence`). |
 
 New scraped data only requires re-running from `index`; existing annotations
 are keyed by `(reddit_fullname, model, prompt_version)` and are never redone.

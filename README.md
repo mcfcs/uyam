@@ -250,6 +250,8 @@ Raw JSONL files are never overwritten; new records are appended. The date in the
 | `author_hash` | string? | Pseudonymized author identifier |
 | `author_status` | string | `"pseudonymized"`, `"deleted"`, `"unavailable"` |
 | `retrieved_at_utc` | datetime | UTC ISO 8601 |
+| `sampling_strategy` | string | Inherited from the parent submission: `"natural"` or `"keyword_oversampled"` |
+| `matched_query_or_keyword` | string? | The parent submission's oversampling keyword, if any |
 
 ---
 
@@ -266,6 +268,12 @@ where `normalize` lowercases and strips the username.
 **Important:** The resulting identifiers are *pseudonymized*, not anonymous. The persistent HMAC digest can still link a user's contributions within this dataset. This linkage is intentional — it enables duplicate detection and research auditing — but must be accurately described in the thesis methodology.
 
 The HMAC key is stored only in `.env` and never committed to the repository.
+
+Records have no plaintext `author` field at all (the models cannot serialise
+one). Files written before 2026-09-08 carried it next to the hash; run
+`uyam scrub-authors` once to strip it in place (idempotent, refuses to run
+during a scrape). Bot accounts are recognised at index time by the HMAC
+digest of their username, so nothing downstream needs the plaintext.
 
 ---
 
@@ -339,6 +347,23 @@ Comments (`#`) and blank lines are ignored. If the file is missing or empty, the
 See [`proxies.example.txt`](proxies.example.txt) for format examples.
 
 ---
+
+## Keyword Oversampling
+
+`config/collection.yaml` → `oversampling.keywords` lists Taglish sarcasm
+markers ("edi wow", "sana all", …). A normal `uyam collect` runs one search
+per keyword per subreddit *after* the natural listing pass — but only if that
+pass was not stopped, which is why earlier corpora had no
+`keyword_oversampled` rows. Run it on its own with:
+
+```bash
+uyam collect --source shreddit --oversample-only
+```
+
+or tick **Keyword oversampling only** in the Streamlit sidebar. Submissions
+found this way are tagged `sampling_strategy: keyword_oversampled` with the
+keyword in `matched_query_or_keyword`, and their comments inherit the tag.
+Keep those rows out of any metric that claims a natural distribution.
 
 ## Rate Limiting
 
@@ -466,6 +491,9 @@ how many items carry every annotator's vote.
 
 Lanes are detached child jobs with their own logs under
 `data/.annotate-status/`; **Stop ALL** ends the orchestrator and its children.
+The gold sample drawn at the end weights sarcasm split votes (2-1 / 1-1) by
+`review.gold_split_oversample` (2.0) so the human validation concentrates
+where the ensemble disagreed.
 Everything is idempotent: run it again to resume. Options: `--target N`,
 `--skip-prep`, `--skip-sentiment`, `--skip-adjudicate`, `--skip-gold`,
 `--retry-failed` (same checkboxes in the UI). `--target 0` on `run` /
