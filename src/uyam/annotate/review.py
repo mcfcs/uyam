@@ -80,18 +80,22 @@ def sample_gold_subset(
         total_weight = sum(weights.values())
         rng = random.Random(seed)
         sampled: list[str] = []
-        split_sampled = 0
         # At least one per stratum, remainder proportional to (weighted) stratum size.
         for key in sorted(strata, key=str):
             members = sorted(strata[key])
             quota = max(1, round(target * weights[key] / total_weight))
             quota = min(quota, len(members))
-            picked = rng.sample(members, quota)
-            sampled.extend(picked)
-            if key[-1]:
-                split_sampled += len(picked)
+            sampled.extend(rng.sample(members, quota))
         rng.shuffle(sampled)
         sampled = sampled[:target]
+        # A weighted stratum capped by its own size leaves the target
+        # under-filled: top up from the members not yet picked so the sample
+        # always holds min(target, population) items.
+        if len(sampled) < target:
+            picked = set(sampled)
+            leftovers = sorted(f for members in strata.values() for f in members if f not in picked)
+            rng.shuffle(leftovers)
+            sampled.extend(leftovers[: target - len(sampled)])
         split_set = {f for key, members in strata.items() if key[-1] for f in members}
         split_sampled = sum(1 for f in sampled if f in split_set)
 

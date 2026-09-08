@@ -46,7 +46,9 @@ def _seed(tmp_path: Path):  # type: ignore[no-untyped-def]
     with AnnotationDatabase(cfg.db_path) as db:
         votes = {
             str(r["reddit_fullname"]): (str(r["sarcasm_votes"]), r["resolved_by"])
-            for r in db.conn.execute("SELECT reddit_fullname, sarcasm_votes, resolved_by FROM aggregates")
+            for r in db.conn.execute(
+                "SELECT reddit_fullname, sarcasm_votes, resolved_by FROM aggregates"
+            )
         }
     assert votes["t1_c1"] == ("3-0", "unanimous")
     assert votes["t1_c4"] == ("2-1", "adjudicator")
