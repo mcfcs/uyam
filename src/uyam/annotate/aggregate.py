@@ -61,6 +61,41 @@ def _sarcasm_vote(values: list[int]) -> tuple[int | None, bool, str]:
     return None, True, votes
 
 
+def per_label_resolution(
+    annotator_rows: list[dict[str, Any]],
+    adjudicator_rows: list[dict[str, Any]],
+    human: dict[str, Any] | None,
+) -> dict[str, str]:
+    """How EACH label was decided: unanimous | majority | adjudicator | human | unresolved.
+
+    `aggregates.resolved_by` is the joint resolution of all four labels; the
+    model repository needs the per-label view because sarcasm often resolves
+    while language does not (and vice versa).
+    """
+    if human is not None and not human.get("is_gold"):
+        return dict.fromkeys(
+            ("sarcastic", "language", "literal_sentiment", "intended_sentiment"), "human"
+        )
+    if adjudicator_rows:
+        return dict.fromkeys(
+            ("sarcastic", "language", "literal_sentiment", "intended_sentiment"), "adjudicator"
+        )
+    out: dict[str, str] = {}
+    sarc_values = [int(r["sarcastic"]) for r in annotator_rows if r.get("sarcastic") is not None]
+    _, escalate, _ = _sarcasm_vote(sarc_values)
+    out["sarcastic"] = "unresolved" if escalate else "unanimous"
+    for label in ("language", "literal_sentiment", "intended_sentiment"):
+        values = [str(r[label]) for r in annotator_rows if r.get(label) is not None]
+        final, escalate = _majority_3class(values)
+        if escalate:
+            out[label] = "unresolved"
+        elif len(set(values)) == 1:
+            out[label] = "unanimous"
+        else:
+            out[label] = "majority"
+    return out
+
+
 def _cue_majority(rows: list[dict[str, Any]], col: str) -> int:
     votes = [int(r[col]) for r in rows if r.get(col) is not None]
     if not votes:
@@ -314,6 +349,21 @@ def _lid_agreement(db: AnnotationDatabase) -> dict[str, Any]:
     return {"n": len(rows), "agreement": round(agree / len(rows), 4)}
 
 
+def _lid_vs_human_gold(db: AnnotationDatabase) -> dict[str, Any]:
+    """Thesis §3.2.1: accuracy of the automatic LID step against the manual labels."""
+    rows = db.conn.execute(
+        """
+        SELECT h.language AS human, l.language AS lid
+        FROM human_reviews h JOIN lid_results l ON l.reddit_fullname = h.reddit_fullname
+        WHERE h.is_gold = 1 AND h.language IS NOT NULL
+        """
+    ).fetchall()
+    if not rows:
+        return {"n": 0, "accuracy": None}
+    agree = sum(1 for r in rows if str(r["human"]) == str(r["lid"]))
+    return {"n": len(rows), "accuracy": round(agree / len(rows), 4)}
+
+
 def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, Any]:
     """Full agreement report — printed by `annotate aggregate --report` and
     embedded in the dataset card at export."""
@@ -338,4 +388,5 @@ def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
             }
         report["gold_vs_ensemble_cohen_kappa"] = _gold_cohen_kappa(db)
         report["lid_vs_ensemble_language"] = _lid_agreement(db)
+        report["lid_vs_human_gold_language"] = _lid_vs_human_gold(db)
         return report

@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from uyam.annotate.aggregate import compute_agreement
+from uyam.annotate.aggregate import compute_agreement, per_label_resolution
 from uyam.annotate.config import AnnotationConfig
 from uyam.annotate.db import AnnotationDatabase
 
@@ -56,6 +56,19 @@ def _git_commit() -> str | None:
         return None
 
 
+def is_text_only(record: dict[str, Any]) -> bool:
+    """Thesis §3.2: multimodal-only content (image/link posts with no body) is out.
+
+    Comments are always text. A submission counts as text-only when it is a
+    self post or carries a non-empty selftext.
+    """
+    if record.get("record_type") != "submission":
+        return True
+    if record.get("is_self"):
+        return True
+    return bool(str(record.get("selftext") or "").strip())
+
+
 def _annotation_view(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "model_key": row["model_key"],
@@ -79,11 +92,18 @@ def build_export_row(
         return None
 
     annotations = db.annotations_for_item(fullname, str(agg["prompt_version"]))
-    annotator_rows = [_annotation_view(r) for r in annotations if r["role"] == "annotator"]
-    adjudicator_rows = [_annotation_view(r) for r in annotations if r["role"] == "adjudicator"]
+    raw_annotators = [r for r in annotations if r["role"] == "annotator"]
+    raw_adjudicators = [r for r in annotations if r["role"] == "adjudicator"]
+    annotator_rows = [_annotation_view(r) for r in raw_annotators]
+    adjudicator_rows = [_annotation_view(r) for r in raw_adjudicators]
 
+    # The context block the annotator prompt was given, verbatim — never a
+    # rebuild from the corpus dump (the labels were conditioned on THIS).
     ctx_row = db.get_context(fullname)
-    context = json.loads(str(ctx_row["context_json"])) if ctx_row else None
+    if ctx_row:
+        context = {"source": "annotator_snapshot", **json.loads(str(ctx_row["context_json"]))}
+    else:
+        context = {"source": "missing", "submission": None, "parent_chain": [], "replies": []}
 
     lid = db.conn.execute(
         "SELECT * FROM lid_results WHERE reddit_fullname = ?", (fullname,)
@@ -107,6 +127,7 @@ def build_export_row(
         "score": record.get("score"),
         "sampling_strategy": record.get("sampling_strategy"),
         "matched_query_or_keyword": record.get("matched_query_or_keyword"),
+        "is_text_only": is_text_only(record),
         "title": record.get("title"),
         "selftext": record.get("selftext"),
         "text": record["text"],
@@ -123,6 +144,7 @@ def build_export_row(
         },
         "reliability": {
             "resolved_by": agg.get("resolved_by"),
+            "per_label": per_label_resolution(raw_annotators, raw_adjudicators, human),
             "sarcasm_votes": agg.get("sarcasm_votes"),
             "n_annotators": agg.get("n_annotators"),
             "mean_confidence": agg.get("mean_confidence"),
@@ -156,6 +178,7 @@ def build_export_row(
             ),
             "lid": (
                 {
+                    "auto_label": lid["language"],
                     "language": lid["language"],
                     "en_ratio": lid["en_ratio"],
                     "tl_ratio": lid["tl_ratio"],
@@ -189,10 +212,105 @@ def _corpus_dump_row(record: dict[str, Any]) -> dict[str, Any]:
         "is_submitter": record.get("is_submitter"),
         "score": record.get("score"),
         "sampling_strategy": record.get("sampling_strategy"),
+        "matched_query_or_keyword": record.get("matched_query_or_keyword"),
+        "is_text_only": is_text_only(record),
         "title": record.get("title"),
         "selftext": record.get("selftext"),
         "text": record["text"],
         "permalink": record.get("permalink"),
+    }
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def temporal_context_coverage(
+    db: AnnotationDatabase,
+    fullnames: list[str],
+    *,
+    window_hours: float = 48.0,
+    max_posts: int = 5,
+) -> dict[str, Any]:
+    """Thesis §3.4(2): up to `max_posts` same-author posts within `window_hours`
+    BEFORE the target, drawn from the collected corpus only. Reports what share
+    of the exported rows actually have that history — the temporal channel is
+    only as thick as the collection window (handoff H8)."""
+    import bisect
+    from collections import defaultdict
+    from datetime import timedelta
+
+    by_author: dict[str, list[datetime]] = defaultdict(list)
+    for row in db.conn.execute(
+        "SELECT author_hash, created_utc FROM corpus_index "
+        "WHERE author_hash IS NOT NULL AND created_utc IS NOT NULL"
+    ):
+        ts = _parse_utc(row["created_utc"])
+        if ts is not None:
+            by_author[str(row["author_hash"])].append(ts)
+    for stamps in by_author.values():
+        stamps.sort()
+
+    counts: list[int] = []
+    for fullname in fullnames:
+        record = db.get_record(fullname)
+        if record is None:
+            continue
+        ts = _parse_utc(record.get("created_utc"))
+        author = record.get("author_hash")
+        if ts is None or not author:
+            counts.append(0)
+            continue
+        stamps = by_author.get(str(author), [])
+        lo = bisect.bisect_left(stamps, ts - timedelta(hours=window_hours))
+        hi = bisect.bisect_left(stamps, ts)
+        counts.append(min(max_posts, max(0, hi - lo)))
+
+    n = len(counts)
+    share = lambda k: (round(sum(1 for c in counts if c >= k) / n, 4) if n else None)  # noqa: E731
+    return {
+        "rule": f"<= {max_posts} same-author posts within {window_hours:g} h before the target",
+        "n_rows": n,
+        "share_with_at_least_1": share(1),
+        "share_with_at_least_3": share(3),
+        "share_with_full_5": share(max_posts),
+        "mean_available": round(sum(counts) / n, 3) if n else None,
+    }
+
+
+def _collection_window(db: AnnotationDatabase, fullnames: list[str]) -> dict[str, Any]:
+    corpus = db.conn.execute(
+        "SELECT MIN(created_utc) AS lo, MAX(created_utc) AS hi FROM corpus_index "
+        "WHERE created_utc >= '2000'"
+    ).fetchone()
+    exported: dict[str, str | None] = {"from": None, "to": None}
+    if fullnames:
+        stamps = sorted(
+            str(r["created_utc"])
+            for r in db.conn.execute(
+                "SELECT created_utc FROM corpus_index WHERE created_utc IS NOT NULL"
+            )
+            if str(r["created_utc"]) >= "2000"
+        )
+        keep = set(fullnames)
+        stamps = [
+            str(r["created_utc"])
+            for r in db.conn.execute(
+                "SELECT reddit_fullname, created_utc FROM corpus_index "
+                "WHERE created_utc IS NOT NULL"
+            )
+            if str(r["reddit_fullname"]) in keep
+        ]
+        if stamps:
+            exported = {"from": min(stamps), "to": max(stamps)}
+    return {
+        "corpus": {"from": corpus["lo"], "to": corpus["hi"]},
+        "exported_rows": exported,
     }
 
 
@@ -215,6 +333,31 @@ def _label_distributions(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "sampling_strategy": count_by(lambda r: r["sampling_strategy"]),
         "sarcastic_by_language": count_by(
             lambda r: f"{r['labels']['language']}|sarcastic={r['labels']['sarcastic']}"
+        ),
+        "is_text_only": count_by(lambda r: r["is_text_only"]),
+        "sarcastic_per_label_resolution": count_by(
+            lambda r: r["reliability"]["per_label"]["sarcastic"]
+        ),
+    }
+
+
+def _readiness(rows: list[dict[str, Any]], agreement: dict[str, Any]) -> dict[str, Any]:
+    """The numbers the model repository's readiness gate checks (no verdicts here)."""
+    positives = sum(1 for r in rows if r["labels"]["sarcastic"] is True)
+    cells: dict[str, int] = {}
+    for r in rows:
+        key = f"{r['labels']['language']}|{r['labels']['sarcastic']}"
+        cells[key] = cells.get(key, 0) + 1
+    gold = agreement.get("gold_vs_ensemble_cohen_kappa") or {}
+    return {
+        "exported_rows": len(rows),
+        "sarcastic_positives": positives,
+        "min_language_x_sarcastic_cell": min(cells.values()) if cells else 0,
+        "language_x_sarcastic_cells": dict(sorted(cells.items())),
+        "gold_items_labeled": gold.get("n_gold_items", 0),
+        "gold_sarcastic_cohen_kappa": gold.get("sarcastic"),
+        "rows_with_annotator_snapshot_context": sum(
+            1 for r in rows if r["context"].get("source") == "annotator_snapshot"
         ),
     }
 
@@ -293,7 +436,11 @@ def run_export(
         ]
         candidate_counts = db.candidate_counts()
         corpus_counts = db.corpus_counts()
+        exported_fullnames = [str(r["reddit_fullname"]) for r in rows]
+        collection_window = _collection_window(db, exported_fullnames)
+        temporal_coverage = temporal_context_coverage(db, exported_fullnames)
 
+    agreement = compute_agreement(cfg, prompt_version)
     card = {
         "dataset_version": dataset_version,
         "prompt_version": prompt_version,
@@ -306,7 +453,10 @@ def run_export(
             "skipped_unresolved": skipped_unresolved,
         },
         "label_distributions": _label_distributions(rows) if rows else {},
-        "agreement": compute_agreement(cfg, prompt_version),
+        "agreement": agreement,
+        "readiness": _readiness(rows, agreement),
+        "collection_window": collection_window,
+        "temporal_context_coverage": temporal_coverage,
         "annotator_provenance": annotator_provenance,
         "candidate_filters": {
             "min_chars": cfg.candidate_filters.min_chars,
@@ -325,6 +475,11 @@ def run_export(
             "Temperature-0 decoding is near- but not bit-reproducible across Ollama "
             "versions/GPUs; provenance (digests + options + prompt_version) is the "
             "reproducibility contract.",
+            "context.source == 'annotator_snapshot' is the block the annotator prompt saw; "
+            "never rebuild conversational context from corpus-*.jsonl.",
+            "human_gold rows are evaluation-only: never train on them.",
+            "reliability.per_label gives the resolution of EACH label; "
+            "reliability.resolved_by is the joint resolution of all four.",
         ],
     }
     card_path = out_dir / "dataset_card.json"
