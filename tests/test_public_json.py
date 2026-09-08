@@ -202,7 +202,7 @@ class TestIterSubmissions:
         src = PublicJsonRedditSource(min_interval_seconds=0)
         subs = list(src.iter_submissions(_request(limit=1)))
 
-        assert subs[0].author == "TopSecretName"
+        assert "TopSecretName" not in subs[0].model_dump_json()
         assert subs[0].id == "aaa"
         assert subs[0].author_hash == pseudonymize_author("TopSecretName")[0]
 
@@ -301,7 +301,7 @@ class TestIterComments:
         src = PublicJsonRedditSource(min_interval_seconds=0)
         comments = list(src.iter_comments(sub_record, _request()))
 
-        assert comments[0].author == "HiddenCommenter"
+        assert "HiddenCommenter" not in comments[0].model_dump_json()
         assert comments[0].id == "c1"
 
 

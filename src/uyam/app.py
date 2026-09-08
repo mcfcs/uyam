@@ -99,7 +99,7 @@ _SUBMISSION_BROWSER_COLS = [
     "subreddit",
     "title",
     "selftext",
-    "author",
+    "author_hash",
     "created_utc",
     "collected_at",
     "score",
@@ -127,7 +127,7 @@ _SUBMISSION_BROWSER_COLS = [
 _COMMENT_BROWSER_COLS = [
     "record_type",
     "id",
-    "author",
+    "author_hash",
     "body",
     "depth",
     "reply_to",
@@ -157,7 +157,7 @@ _ALL_BROWSER_COLS = [
     "record_type",
     "id",
     "subreddit",
-    "author",
+    "author_hash",
     "title",
     "selftext",
     "body",
@@ -293,7 +293,7 @@ def _thread_lines(records: list[dict[str, Any]]) -> str:
     def walk(parent_fullname: str, indent: int) -> None:
         for com in by_parent.get(parent_fullname, []):
             cid = com.get("id") or com.get("reddit_id")
-            author = com.get("author") or com.get("author_status") or "?"
+            author = str(com.get("author_hash") or com.get("author_status") or "?")[:10]
             body = (com.get("body") or "").replace("\n", " ")
             if len(body) > 90:
                 body = body[:90] + "…"
@@ -996,7 +996,7 @@ with tab_collect:
                             "type": r.get("record_type"),
                             "id": r.get("id") or r.get("reddit_id"),
                             "subreddit": r.get("subreddit"),
-                            "author": r.get("author"),
+                            "author_hash": str(r.get("author_hash") or "")[:10],
                             "collected_at": r.get("collected_at") or r.get("retrieved_at_utc"),
                             "title_or_body": (
                                 r.get("title")

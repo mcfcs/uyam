@@ -2,6 +2,11 @@
 
 All models use Pydantic v2. Datetimes are always timezone-aware UTC.
 These models are the single source of truth for the JSONL schema.
+
+Raw Reddit usernames are NOT part of the schema: records carry only
+`author_hash` (HMAC-SHA256) and `author_status`, so identifiers are
+anonymized before storage (thesis §3.1). `uyam scrub-authors` removes the
+plaintext field from files written before this rule.
 """
 
 from __future__ import annotations
@@ -58,7 +63,6 @@ class SubmissionRecord(BaseModel):
     num_crossposts: int
     gilded: int = 0
 
-    author: str | None = None
     author_hash: str | None = None
     author_status: AuthorStatus
 
@@ -141,7 +145,6 @@ class CommentRecord(BaseModel):
 
     permalink: str
 
-    author: str | None = None
     author_hash: str | None = None
     author_status: AuthorStatus
 

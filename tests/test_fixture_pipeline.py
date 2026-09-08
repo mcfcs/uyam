@@ -102,7 +102,7 @@ class TestFixturePipelineEndToEnd:
 
         jsonl_files = list((data_dir / "raw" / "Philippines").glob("*.jsonl"))
         content = jsonl_files[0].read_text(encoding="utf-8")
-        assert '"author"' in content
+        assert '"author":' not in content  # plaintext usernames are never stored
         assert "author_hash" in content
         assert '"id"' in content
 
@@ -184,7 +184,7 @@ class TestPrawMapping:
         assert record.score == 42
         assert record.author_status == "pseudonymized"
         assert record.author_hash is not None
-        assert record.author == "real_username_never_stored"
+        assert "real_username_never_stored" not in record.model_dump_json()
         assert record.id == "abc123"
 
     def test_map_comment_from_mock(self) -> None:
@@ -221,7 +221,7 @@ class TestPrawMapping:
         assert record.parent_record_type == "submission"
         assert record.depth == 0
         assert record.author_status == "pseudonymized"
-        assert record.author == "commenter_username_secret"
+        assert "commenter_username_secret" not in record.model_dump_json()
         assert record.id == "xyz789"
 
     def test_deleted_author_on_mock_submission(self) -> None:

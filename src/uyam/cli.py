@@ -336,6 +336,32 @@ def clear_data_cmd(
 # validate-fixtures
 # ---------------------------------------------------------------------------
 
+@app.command(name="scrub-authors")
+def scrub_authors_cmd(
+    config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
+) -> None:
+    """Remove plaintext usernames from every raw JSONL line (keeps author_hash).
+
+    Thesis §3.1: author identifiers are anonymized before storage. Files
+    written before 2026-09-08 carried the raw `author` next to the hash; this
+    rewrites them in place. Idempotent. Refuses to run during a live scrape.
+    """
+    from uyam.scrape_status import scrape_is_running
+    from uyam.storage import scrub_author_field
+
+    cfg = load_config(config_path)
+    if scrape_is_running():
+        typer.echo("Error: a live scrape is running — stop it before scrubbing.", err=True)
+        raise typer.Exit(1)
+    data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
+    stats = scrub_author_field(data_dir)
+    console.print(
+        f"[green]Scrubbed[/green] {stats['records_scrubbed']} records in "
+        f"{stats['files_rewritten']} of {stats['files']} JSONL files "
+        "(plaintext `author` removed; author_hash kept)."
+    )
+
+
 @app.command(name="validate-fixtures")
 def validate_fixtures_cmd(
     fixture_path: Path | None = typer.Option(None, help="Path to fixture JSON"),

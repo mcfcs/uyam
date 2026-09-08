@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,6 +45,50 @@ def record_identity(record: dict[str, object]) -> str | None:
             return reddit_id
         return f"{prefix}{reddit_id}"
     return None
+
+
+def scrub_author_field(data_dir: Path) -> dict[str, int]:
+    """Remove the plaintext `author` key from every JSONL line under data/raw.
+
+    Files written before 2026-09-08 stored the raw username next to
+    author_hash. Each file is rewritten atomically (temp file + replace);
+    unparseable lines (a crash-window partial line) are kept untouched.
+    Idempotent: a second run rewrites nothing. Do not run during a scrape.
+    """
+    stats = {"files": 0, "files_rewritten": 0, "records_scrubbed": 0}
+    raw_dir = data_dir / "raw"
+    if not raw_dir.exists():
+        return stats
+    for path in sorted(raw_dir.glob("**/*.jsonl")):
+        stats["files"] += 1
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        out_lines: list[str] = []
+        changed = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                out_lines.append(line)
+                continue
+            if isinstance(parsed, dict) and "author" in parsed:
+                parsed.pop("author")
+                changed += 1
+                out_lines.append(json.dumps(parsed, ensure_ascii=False))
+            else:
+                out_lines.append(line)
+        if changed:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+            stats["files_rewritten"] += 1
+            stats["records_scrubbed"] += changed
+    return stats
 
 
 def load_jsonl_records(data_dir: Path, *, unique: bool = True) -> list[dict[str, object]]:

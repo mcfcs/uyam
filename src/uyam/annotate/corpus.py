@@ -1,7 +1,8 @@
 """Corpus indexer: raw JSONL -> corpus_index table.
 
-Raw usernames are consumed here only to compute the is_bot flag; they are
-never written to the annotation database or any downstream artifact.
+Bot accounts are recognised by the HMAC digest of their username, so the raw
+JSONL never needs a plaintext author (files written before the scrub still
+carry one; it is honoured but never stored downstream).
 """
 
 from __future__ import annotations
@@ -19,16 +20,40 @@ logger = logging.getLogger(__name__)
 _BOT_AUTHORS = {"automoderator"}
 
 
+def bot_author_hashes(bot_authors: set[str]) -> set[str]:
+    """HMAC digests of the bot usernames (empty when no AUTHOR_HMAC_KEY is set)."""
+    from uyam.config import load_env
+    from uyam.privacy import pseudonymize_author
+
+    load_env()
+    hashes: set[str] = set()
+    for name in bot_authors:
+        try:
+            digest, _ = pseudonymize_author(name)
+        except RuntimeError:
+            logger.warning("bot_hashes_unavailable", extra={"reason": "AUTHOR_HMAC_KEY missing"})
+            return set()
+        if digest:
+            hashes.add(digest)
+    return hashes
+
+
 def _corpus_row(
-    record: dict[str, Any], jsonl_path: str, bot_authors: set[str]
+    record: dict[str, Any],
+    jsonl_path: str,
+    bot_authors: set[str],
+    bot_hashes: set[str] | None = None,
 ) -> dict[str, Any] | None:
     record_type = record.get("record_type")
     fullname = record_identity(record)
     if not fullname or record_type not in ("submission", "comment"):
         return None
 
-    author = record.get("author")
-    is_bot = isinstance(author, str) and author.lower() in bot_authors
+    author = record.get("author")  # legacy files only; new records never carry it
+    author_hash = record.get("author_hash")
+    is_bot = (isinstance(author, str) and author.lower() in bot_authors) or (
+        isinstance(author_hash, str) and author_hash in (bot_hashes or set())
+    )
 
     if record_type == "submission":
         title = str(record.get("title") or "")
@@ -88,6 +113,7 @@ def index_corpus(
 ) -> dict[str, int]:
     """Index every JSONL record under data/raw into corpus_index (idempotent)."""
     bot_authors = _BOT_AUTHORS | {a.lower() for a in (extra_bot_authors or [])}
+    bot_hashes = bot_author_hashes(bot_authors)
     raw_dir = data_dir / "raw"
     stats = {"files": 0, "records": 0, "skipped": 0}
     seen: set[str] = set()
@@ -115,7 +141,7 @@ def index_corpus(
             if not isinstance(parsed, dict):
                 stats["skipped"] += 1
                 continue
-            row = _corpus_row(parsed, rel_path, bot_authors)
+            row = _corpus_row(parsed, rel_path, bot_authors, bot_hashes)
             if row is None:
                 stats["skipped"] += 1
                 continue

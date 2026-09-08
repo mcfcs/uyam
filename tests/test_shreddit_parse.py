@@ -157,7 +157,7 @@ class TestParseHtmlFixture:
         assert sub.reddit_fullname == "t3_1vthze0"
         assert sub.author_status == "pseudonymized"
         assert sub.author_hash == pseudonymize_author("nayryanaryn")[0]
-        assert sub.author == "nayryanaryn"
+        assert "nayryanaryn" not in sub.model_dump_json()
         assert sub.id == "1vthze0"
         assert sub.link_flair_text == "ViralPH"
 
@@ -166,7 +166,7 @@ class TestParseHtmlFixture:
         assert rec.parent_record_type == "comment"
         assert rec.is_submitter is True
         assert rec.submission_id == "1vthze0"
-        assert rec.author == "nayryanaryn"
+        assert "nayryanaryn" not in rec.model_dump_json()
         assert rec.id == "p4twfc6"
 
         deleted = next(c for c in comments if c["id"] == "deleted1")
