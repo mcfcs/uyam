@@ -29,13 +29,27 @@ def _resolve_device(device: str) -> str:
 
 
 def run_tx_sentiment(
-    db: AnnotationDatabase, cfg: TxSentimentConfig, *, force: bool = False
+    db: AnnotationDatabase,
+    cfg: TxSentimentConfig,
+    *,
+    force: bool = False,
+    target: int | None = None,
+    prompt_version: str | None = None,
 ) -> dict[str, Any]:
-    """Classify literal sentiment for every eligible candidate missing a result."""
+    """Classify literal sentiment for every eligible candidate missing a result.
+
+    With `target`, only the pipeline's N-item target set is covered (the items
+    the LLM annotators will label), which keeps the GPU pass short.
+    """
     if force:
         db.conn.execute("DELETE FROM tx_sentiment")
         db.commit()
-    pending = db.missing_tx_sentiment()
+    if target is not None:
+        if not prompt_version:
+            raise ValueError("prompt_version is required when target is set")
+        pending = db.missing_tx_sentiment_in_target(prompt_version, target)
+    else:
+        pending = db.missing_tx_sentiment()
     if not pending:
         return {"processed": 0, "device": None}
 

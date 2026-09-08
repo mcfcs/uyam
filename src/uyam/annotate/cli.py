@@ -3,7 +3,8 @@
   index -> select -> lid -> sentiment -> run -> aggregate -> adjudicate
   -> (Streamlit review) -> aggregate -> export
 
-Plus: status, smoke, gold-sample.
+Plus: status, smoke, gold-sample, and `pipeline` (the whole chain to a
+target count in one command).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from uyam.annotate.config import load_annotation_config
+from uyam.annotate.config import AnnotationConfig, load_annotation_config
 from uyam.annotate.db import AnnotationDatabase
 from uyam.logging_config import configure_logging
 
@@ -34,6 +35,17 @@ annotate_app = typer.Typer(
 console = Console()
 
 _CONFIG_OPT = typer.Option(None, help="Path to annotation.yaml")
+_TARGET_HELP = (
+    "Work through the shared N-item target set and stop at N done "
+    "(0 = pipeline.target_items from annotation.yaml)."
+)
+
+
+def _resolve_target(cfg: AnnotationConfig, target: int | None) -> int | None:
+    """None -> no target (legacy behaviour); <= 0 -> the configured default."""
+    if target is None:
+        return None
+    return target if target > 0 else cfg.pipeline.target_items
 
 
 @annotate_app.command()
@@ -100,6 +112,9 @@ def sentiment(
     device: str | None = typer.Option(None, help="auto|cpu|cuda (overrides annotation.yaml)"),
     batch_size: int | None = typer.Option(None),
     force: bool = typer.Option(False, help="Recompute all sentiment results"),
+    target: int | None = typer.Option(
+        None, "--target", help="Only the pipeline target set. " + _TARGET_HELP
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
@@ -116,7 +131,13 @@ def sentiment(
     from uyam.annotate.sentiment_tx import run_tx_sentiment
 
     with AnnotationDatabase(cfg.db_path) as db:
-        stats = run_tx_sentiment(db, cfg.tx_sentiment, force=force)
+        stats = run_tx_sentiment(
+            db,
+            cfg.tx_sentiment,
+            force=force,
+            target=_resolve_target(cfg, target),
+            prompt_version=cfg.prompt_version,
+        )
     console.print(
         f"[green]Sentiment[/green] processed {stats['processed']} items"
         + (f" on {stats['device']}" if stats.get("device") else "")
@@ -128,7 +149,12 @@ def run(
     annotator: list[str] = typer.Option(
         [], "--annotator", help="Annotator key from annotation.yaml (repeatable). Default: all."
     ),
-    limit: int | None = typer.Option(None, help="Stop after N items per annotator"),
+    limit: int | None = typer.Option(None, help="Stop after N items per annotator THIS run"),
+    target: int | None = typer.Option(
+        None,
+        "--target",
+        help=_TARGET_HELP + " With several annotators the least-done one runs first.",
+    ),
     dry_run: bool = typer.Option(False, help="Render prompts, make no calls"),
     only_fullname: str | None = typer.Option(None, help="Annotate a single item (debug)"),
     retry_failed: bool = typer.Option(False, help="Clear recorded failures and retry them"),
@@ -138,18 +164,66 @@ def run(
     """LLM annotator pass. Run one annotator per machine; safe to interrupt and resume."""
     configure_logging(log_level)
     cfg = load_annotation_config(config_path)
-    from uyam.annotate.runner import run_annotator
+    from uyam.annotate.runner import order_least_done_first, run_annotator
 
     keys = annotator or [a.key for a in cfg.annotators]
+    resolved_target = _resolve_target(cfg, target)
+    if resolved_target is not None and len(keys) > 1:
+        with AnnotationDatabase(cfg.db_path) as db:
+            keys = order_least_done_first(db, keys, cfg.prompt_version, resolved_target)
+        console.print(f"Order (least done first): {' -> '.join(keys)}")
     for key in keys:
         run_annotator(
             cfg,
             key,
             limit=limit,
+            target=resolved_target,
             dry_run=dry_run,
             only_fullname=only_fullname,
             retry_failed=retry_failed,
         )
+
+
+@annotate_app.command()
+def pipeline(
+    target: int | None = typer.Option(
+        None,
+        "--target",
+        help="Items per annotator (default: pipeline.target_items in annotation.yaml).",
+    ),
+    skip_prep: bool = typer.Option(False, help="Skip index / select / language ID"),
+    skip_sentiment: bool = typer.Option(False, help="Skip the GPU transformer sentiment pass"),
+    skip_adjudicate: bool = typer.Option(False, help="Stop after aggregation (no adjudicator)"),
+    skip_gold: bool = typer.Option(False, help="Do not draw the gold sample"),
+    retry_failed: bool = typer.Option(False, help="Retry previously failed items in every pass"),
+    poll_seconds: float = typer.Option(5.0, help="How often to poll child jobs"),
+    config_path: Path | None = _CONFIG_OPT,
+    log_level: str = typer.Option("INFO"),
+) -> None:
+    """Everything in one go, to a target count.
+
+    index -> select -> LID -> sentiment (target set) -> annotators (remote lane
+    concurrently, local lane least-done-first, each to N) -> aggregate ->
+    adjudicate -> aggregate -> gold sample. Resumable: re-run to continue.
+    """
+    configure_logging(log_level)
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.pipeline import PipelineError, run_pipeline
+
+    try:
+        run_pipeline(
+            cfg,
+            target=_resolve_target(cfg, target if target is not None else 0),
+            skip_prep=skip_prep,
+            skip_sentiment=skip_sentiment,
+            skip_adjudicate=skip_adjudicate,
+            skip_gold=skip_gold,
+            retry_failed=retry_failed,
+            poll_seconds=poll_seconds,
+        )
+    except PipelineError as exc:
+        console.print(f"[red]Pipeline stopped:[/red] {exc}")
+        raise typer.Exit(1) from exc
 
 
 @annotate_app.command()
@@ -225,9 +299,12 @@ def status(
             (f["model_key"], f["role"]): f["failed"]
             for f in db.failure_counts(cfg.prompt_version)
         }
-        lid_missing = len(db.missing_lid())
-        tx_missing = len(db.missing_tx_sentiment())
+        lid_missing = db.missing_lid_count()
+        tx_missing = db.missing_tx_sentiment_count()
         queue = db.review_queue_items()
+        target_prog = db.target_progress(
+            cfg.prompt_version, cfg.pipeline.target_items, [a.key for a in cfg.annotators]
+        )
 
     console.print(
         f"Corpus: {corpus['total']} records — eligible candidates: {eligible} "
@@ -252,6 +329,19 @@ def status(
         if ann.key not in seen_keys:
             table.add_row(ann.key, "annotator", "0", "0", str(eligible), "-")
     console.print(table)
+
+    ttable = Table(
+        title=f"Pipeline target: {target_prog['in_target']} of {target_prog['target']} items — "
+        f"{target_prog['complete']} carry every annotator's vote",
+        header_style="bold",
+    )
+    ttable.add_column("Annotator")
+    ttable.add_column("Done", justify="right")
+    ttable.add_column("Failed", justify="right")
+    ttable.add_column("Pending", justify="right")
+    for key, m in target_prog["models"].items():
+        ttable.add_row(key, str(m["done"]), str(m["failed"]), str(m["pending"]))
+    console.print(ttable)
     if queue:
         gold = sum(1 for q in queue if q["reason"] == "gold")
         console.print(

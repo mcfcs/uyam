@@ -95,18 +95,32 @@ def _annotation_row(
     }
 
 
+def order_least_done_first(
+    db: AnnotationDatabase, keys: list[str], prompt_version: str, target: int
+) -> list[str]:
+    """Annotator keys sorted by how few target-set items they have finished."""
+    progress = db.target_progress(prompt_version, target, keys)["models"]
+    return sorted(keys, key=lambda k: (progress[k]["done"], keys.index(k)))
+
+
 def run_annotator(
     cfg: AnnotationConfig,
     annotator_key: str,
     *,
     role: str = "annotator",
     limit: int | None = None,
+    target: int | None = None,
     dry_run: bool = False,
     only_fullname: str | None = None,
     retry_failed: bool = False,
     client_factory: Callable[[AnnotationConfig, AnnotatorConfig], AnnotatorClient] | None = None,
 ) -> dict[str, int]:
-    """Run one model over its pending queue. Returns done/failed/skipped counts."""
+    """Run one model over its pending queue. Returns done/failed/skipped counts.
+
+    `limit` caps how many items THIS run labels. `target` makes the model work
+    through the shared N-item target set (see AnnotationDatabase.target_items)
+    and stop once it has N done — the pipeline's "reach 12k then move on".
+    """
     if cfg.prompt_version != PROMPT_VERSION:
         raise RuntimeError(
             f"annotation.yaml prompt_version={cfg.prompt_version!r} does not match "
@@ -126,6 +140,8 @@ def run_annotator(
             pending = [only_fullname]
         elif role == "adjudicator":
             pending = db.pending_adjudicator_items(annotator.key, PROMPT_VERSION)
+        elif target is not None:
+            pending = db.pending_target_items(annotator.key, PROMPT_VERSION, target)
         else:
             pending = db.pending_annotator_items(annotator.key, PROMPT_VERSION)
         if limit is not None:
@@ -133,7 +149,22 @@ def run_annotator(
 
         stats = {"done": 0, "failed": 0, "skipped": 0}
         if not pending:
-            console.print(f"[green]Nothing pending[/green] for {annotator.key} ({role})")
+            if target is not None and role == "annotator":
+                prog = db.target_progress(PROMPT_VERSION, target, [annotator.key])
+                mine = prog["models"][annotator.key]
+                if mine["done"] >= prog["in_target"]:
+                    console.print(
+                        f"[green]Target reached[/green] {annotator.key}: "
+                        f"{mine['done']}/{prog['in_target']} target items done"
+                    )
+                else:
+                    console.print(
+                        f"[yellow]Nothing pending[/yellow] for {annotator.key}: "
+                        f"{mine['done']}/{prog['in_target']} done, {mine['failed']} failed "
+                        "(re-run with --retry-failed to retry them)"
+                    )
+            else:
+                console.print(f"[green]Nothing pending[/green] for {annotator.key} ({role})")
             return stats
 
         if dry_run:
@@ -155,9 +186,10 @@ def run_annotator(
         client = (client_factory or _make_client)(cfg, annotator)
         ollama_version = client.server_version()
         model_digest = client.model_digest(annotator.model)
+        target_note = f" (target {target})" if target is not None else ""
         console.print(
             f"Annotating with [bold]{annotator.model}[/bold] ({annotator.key}, {role}) "
-            f"on {annotator.endpoint} — {len(pending)} pending"
+            f"on {annotator.endpoint} — {len(pending)} pending{target_note}"
         )
 
         progress = Progress(

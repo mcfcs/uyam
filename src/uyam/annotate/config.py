@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -77,6 +78,13 @@ class ExportConfig:
 
 
 @dataclass
+class PipelineConfig:
+    """Defaults for the one-click chain (`annotate pipeline` / Streamlit Start ALL)."""
+
+    target_items: int = 12000  # every annotator covers the same N-item target set
+
+
+@dataclass
 class AnnotationConfig:
     db_path: Path
     data_dir: Path
@@ -91,6 +99,7 @@ class AnnotationConfig:
     tx_sentiment: TxSentimentConfig
     review: ReviewConfig
     export: ExportConfig
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
     def annotator(self, key: str) -> AnnotatorConfig:
         if key == self.adjudicator.key:
@@ -105,6 +114,13 @@ class AnnotationConfig:
             return self.endpoints[name]
         except KeyError as exc:
             raise KeyError(f"No endpoint named {name!r} in annotation.yaml") from exc
+
+    def is_local_endpoint(self, name: str) -> bool:
+        """The endpoint that shares this machine's GPU with the transformer passes."""
+        if name == "local":
+            return True
+        host = urlparse(self.endpoint_url(name)).hostname or ""
+        return host in {"127.0.0.1", "localhost", "::1"}
 
 
 def _resolve(path: Path) -> Path:
@@ -195,6 +211,11 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
     exp_raw: dict[str, Any] = raw.get("export") or {}
     export = ExportConfig(out_dir=_resolve(Path(exp_raw.get("out_dir", "data/annotated"))))
 
+    pipe_raw: dict[str, Any] = raw.get("pipeline") or {}
+    pipeline = PipelineConfig(target_items=int(pipe_raw.get("target_items", 12000)))
+    if pipeline.target_items <= 0:
+        raise ValueError("annotation.yaml pipeline.target_items must be a positive integer")
+
     return AnnotationConfig(
         db_path=_resolve(Path(raw.get("db_path", "data/db/annotation.sqlite3"))),
         data_dir=_resolve(Path(raw.get("data_dir", "data"))),
@@ -209,4 +230,5 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         tx_sentiment=tx_sentiment,
         review=review,
         export=export,
+        pipeline=pipeline,
     )

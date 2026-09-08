@@ -37,6 +37,26 @@ class AnnotationCallError(Exception):
     """All retries exhausted for one annotation call."""
 
 
+def unload_model(endpoint_url: str, model: str, *, timeout: float = 60.0) -> bool:
+    """Ask Ollama to evict `model` from VRAM now (keep_alive=0). Best-effort.
+
+    The pipeline calls this before the GPU sentiment pass so a local LLM left
+    resident by `keep_alive: 30m` does not push torch into a CUDA OOM.
+    """
+    try:
+        import requests
+
+        resp = requests.post(
+            f"{endpoint_url.rstrip('/')}/api/generate",
+            json={"model": model, "keep_alive": 0},
+            timeout=timeout,
+        )
+        return bool(resp.ok)
+    except Exception as exc:  # noqa: BLE001 - never block the pipeline on this
+        logger.warning("ollama_unload_failed", extra={"model": model, "error": str(exc)})
+        return False
+
+
 @dataclass
 class AnnotationResult:
     parsed: LLMAnnotationOut

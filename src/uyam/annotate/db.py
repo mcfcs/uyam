@@ -566,6 +566,158 @@ class AnnotationDatabase:
         ).fetchone()
         return int(row["n"] or 0)
 
+    # ------------------------------------------------------------------
+    # Target set: the N eligible items every annotator must cover
+    # ------------------------------------------------------------------
+    #
+    # Ranking: items that already have annotator votes (from any model) first,
+    # most votes first, ties by id. Every model works through the same ranked
+    # list minus its own finished items, so the N-item set fills with complete
+    # 3-vote items as fast as possible. The set is stable while the pipeline
+    # runs: votes only ever land inside it, so no outside item can overtake.
+
+    _TARGET_CTE = """
+        WITH ranked AS (
+            SELECT c.reddit_fullname,
+                   (SELECT COUNT(*) FROM llm_annotations a
+                     WHERE a.reddit_fullname = c.reddit_fullname
+                       AND a.prompt_version = :pv AND a.role = 'annotator') AS n_votes
+            FROM candidates c WHERE c.eligible = 1
+        ),
+        target AS (
+            SELECT reddit_fullname, n_votes FROM ranked
+            ORDER BY n_votes DESC, reddit_fullname LIMIT :n
+        )
+    """
+
+    def target_items(self, prompt_version: str, target: int) -> list[str]:
+        rows = self._conn.execute(
+            self._TARGET_CTE
+            + "SELECT reddit_fullname FROM target ORDER BY n_votes DESC, reddit_fullname",
+            {"pv": prompt_version, "n": int(target)},
+        ).fetchall()
+        return [str(r["reddit_fullname"]) for r in rows]
+
+    def pending_target_items(
+        self,
+        model_key: str,
+        prompt_version: str,
+        target: int,
+        *,
+        include_failed: bool = False,
+    ) -> list[str]:
+        """Target-set items this model has not finished, most-voted-by-others first."""
+        failed_clause = (
+            ""
+            if include_failed
+            else """
+            AND NOT EXISTS (SELECT 1 FROM llm_failures f
+                WHERE f.reddit_fullname = t.reddit_fullname
+                  AND f.model_key = :model AND f.prompt_version = :pv AND f.role = 'annotator')
+            """
+        )
+        rows = self._conn.execute(
+            self._TARGET_CTE
+            + f"""
+            SELECT t.reddit_fullname FROM target t
+            WHERE NOT EXISTS (SELECT 1 FROM llm_annotations a
+                WHERE a.reddit_fullname = t.reddit_fullname
+                  AND a.model_key = :model AND a.prompt_version = :pv AND a.role = 'annotator')
+            {failed_clause}
+            ORDER BY t.n_votes DESC, t.reddit_fullname
+            """,
+            {"pv": prompt_version, "n": int(target), "model": model_key},
+        ).fetchall()
+        return [str(r["reddit_fullname"]) for r in rows]
+
+    def missing_tx_sentiment_in_target(self, prompt_version: str, target: int) -> list[str]:
+        rows = self._conn.execute(
+            self._TARGET_CTE
+            + """
+            SELECT t.reddit_fullname FROM target t
+            WHERE NOT EXISTS
+              (SELECT 1 FROM tx_sentiment x WHERE x.reddit_fullname = t.reddit_fullname)
+            ORDER BY t.n_votes DESC, t.reddit_fullname
+            """,
+            {"pv": prompt_version, "n": int(target)},
+        ).fetchall()
+        return [str(r["reddit_fullname"]) for r in rows]
+
+    def target_progress(
+        self, prompt_version: str, target: int, annotator_keys: list[str]
+    ) -> dict[str, Any]:
+        """Per-model done/failed/pending inside the target set + fully-covered count."""
+        params: dict[str, Any] = {"pv": prompt_version, "n": int(target)}
+        in_target = int(
+            self._conn.execute(
+                self._TARGET_CTE + "SELECT COUNT(*) AS n FROM target", params
+            ).fetchone()["n"]
+            or 0
+        )
+        done = {
+            str(r["model_key"]): int(r["done"])
+            for r in self._conn.execute(
+                self._TARGET_CTE
+                + """
+                SELECT a.model_key AS model_key, COUNT(*) AS done
+                FROM target t JOIN llm_annotations a
+                  ON a.reddit_fullname = t.reddit_fullname
+                 AND a.prompt_version = :pv AND a.role = 'annotator'
+                GROUP BY a.model_key
+                """,
+                params,
+            ).fetchall()
+        }
+        failed = {
+            str(r["model_key"]): int(r["failed"])
+            for r in self._conn.execute(
+                self._TARGET_CTE
+                + """
+                SELECT f.model_key AS model_key, COUNT(DISTINCT f.reddit_fullname) AS failed
+                FROM target t JOIN llm_failures f
+                  ON f.reddit_fullname = t.reddit_fullname
+                 AND f.prompt_version = :pv AND f.role = 'annotator'
+                GROUP BY f.model_key
+                """,
+                params,
+            ).fetchall()
+        }
+        complete = 0
+        if annotator_keys:
+            key_params = {f"k{i}": key for i, key in enumerate(annotator_keys)}
+            placeholders = ", ".join(f":{name}" for name in key_params)
+            complete = int(
+                self._conn.execute(
+                    self._TARGET_CTE
+                    + f"""
+                    SELECT COUNT(*) AS n FROM (
+                        SELECT t.reddit_fullname FROM target t JOIN llm_annotations a
+                          ON a.reddit_fullname = t.reddit_fullname
+                         AND a.prompt_version = :pv AND a.role = 'annotator'
+                        WHERE a.model_key IN ({placeholders})
+                        GROUP BY t.reddit_fullname
+                        HAVING COUNT(DISTINCT a.model_key) = :k
+                    )
+                    """,
+                    {**params, **key_params, "k": len(annotator_keys)},
+                ).fetchone()["n"]
+                or 0
+            )
+        models = {
+            key: {
+                "done": done.get(key, 0),
+                "failed": failed.get(key, 0),
+                "pending": max(0, in_target - done.get(key, 0) - failed.get(key, 0)),
+            }
+            for key in annotator_keys
+        }
+        return {
+            "target": int(target),
+            "in_target": in_target,
+            "models": models,
+            "complete": complete,
+        }
+
     def annotations_for_item(
         self, reddit_fullname: str, prompt_version: str
     ) -> list[dict[str, Any]]:

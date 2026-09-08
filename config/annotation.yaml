@@ -74,5 +74,12 @@ review:
   gold_size: 300
   adjudicator_confidence_floor: 0.6     # below this -> human queue
 
+# `uyam annotate pipeline` / Streamlit "Start ALL": every annotator labels the
+# SAME target set of N eligible items (items that already have votes first,
+# then by id), the least-annotated model runs first on each machine, and each
+# model stops once it has N done. Override per run with --target / the UI box.
+pipeline:
+  target_items: 12000
+
 export:
   out_dir: data/annotated
