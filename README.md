@@ -424,27 +424,58 @@ Streamlit "Annotation Review" tab.
 ```bash
 pip install -e .[annotate]   # + CUDA torch: pip install torch --index-url https://download.pytorch.org/whl/cu124
 
+uyam annotate smoke                    # verify endpoints + models end-to-end
+uyam annotate pipeline                 # EVERYTHING below, to the target (see next section)
+uyam annotate status                   # progress dashboard at any point
+
+# ...or pass by pass:
 uyam annotate index                    # raw JSONL -> annotation DB
 uyam annotate select                   # candidate filters (bots, deleted, too short)
 uyam annotate lid                      # fastText language ID (english/tagalog/taglish)
-uyam annotate sentiment                # transformer literal sentiment (before local Ollama!)
-uyam annotate smoke                    # verify endpoints + models end-to-end
-uyam annotate run --annotator gemma3   # remote 24GB box    (run concurrently...)
-uyam annotate run --annotator qwen3    # local 8GB          (...with these two,)
-uyam annotate run --annotator sealion  # local 8GB          (sequentially local)
+uyam annotate sentiment --target 0     # transformer literal sentiment (before local Ollama!)
+uyam annotate run --annotator gemma3 --target 0   # remote 24GB box   (concurrently with...)
+uyam annotate run --annotator sealion --annotator qwen3 --target 0  # local 8GB, least-done first
 uyam annotate aggregate                # votes, kappa, escalation queue
 uyam annotate adjudicate               # blind large-model pass over disagreements
 uyam annotate aggregate
 uyam annotate gold-sample              # then label in Streamlit "Annotation Review"
 uyam annotate aggregate && uyam annotate export --version v1
-uyam annotate status                   # progress dashboard at any point
 ```
 
-Every pass is also available in the Streamlit app: the **Annotation** tab runs
-and monitors index/select/LID/sentiment/LLM runs/adjudication/export (long
-passes run as detached background jobs with live log tails, surviving app
-restarts), and the **Annotation Review** tab is where the gold subset and
-low-confidence queue are human-labeled.
+### One command / one button: `annotate pipeline` and Start ALL
+
+`config/annotation.yaml` sets `pipeline.target_items` (12000). `uyam annotate
+pipeline` (CLI) or **Start ALL** (Streamlit Annotation tab) runs the whole
+chain to that target and stops:
+
+1. index → select → language ID
+2. the remote annotator lane starts (`run-all-remote`, concurrent)
+3. transformer sentiment over the target set on the local GPU, after evicting
+   any resident local Ollama model
+4. the local lane (`run-all-local`): local annotators one after the other,
+   **least-annotated model first**, each until it has `target_items` done
+5. wait for every lane → aggregate → adjudicate (remote) → aggregate → gold sample
+
+**Target set.** Every annotator labels the *same* N items: eligible candidates
+ranked by how many annotator votes they already carry, ties by id. Each
+model's queue is that set minus its own finished items, most-voted-by-others
+first, so items with all three votes accumulate as fast as possible, and a
+model that already has N done is skipped. `uyam annotate status` and the
+Annotation tab show per-model done/failed/pending inside the target set and
+how many items carry every annotator's vote.
+
+Lanes are detached child jobs with their own logs under
+`data/.annotate-status/`; **Stop ALL** ends the orchestrator and its children.
+Everything is idempotent: run it again to resume. Options: `--target N`,
+`--skip-prep`, `--skip-sentiment`, `--skip-adjudicate`, `--skip-gold`,
+`--retry-failed` (same checkboxes in the UI). `--target 0` on `run` /
+`sentiment` means "use `pipeline.target_items`".
+
+Every pass is also available individually in the Streamlit app: the
+**Annotation** tab runs and monitors index/select/LID/sentiment/LLM
+runs/adjudication/export (long passes run as detached background jobs with
+live log tails, surviving app restarts), and the **Annotation Review** tab is
+where the gold subset and low-confidence queue are human-labeled.
 
 Configuration lives in `config/annotation.yaml` (endpoints, models, prompt
 version, filters, thresholds). All passes are resumable and idempotent. The

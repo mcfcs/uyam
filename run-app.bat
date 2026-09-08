@@ -35,12 +35,14 @@ for %%A in (%*) do (
 )
 
 rem End whatever is already LISTENING on this port so Uyam always owns it.
+rem No /T: the scraper and annotation jobs Streamlit launched are detached
+rem children that must survive an app restart (taskkill /T would end them).
 echo Checking port %PORT%...
 set "KILLED="
 for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr /C:":%PORT% " ^| findstr /C:"LISTENING"') do (
     if not "%%P"=="0" if not "%%P"=="" (
         echo Port %PORT% in use by PID %%P - ending it so Uyam can bind.
-        taskkill /F /T /PID %%P >nul 2>&1
+        taskkill /F /PID %%P >nul 2>&1
         set "KILLED=1"
     )
 )
