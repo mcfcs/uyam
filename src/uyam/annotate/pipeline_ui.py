@@ -24,8 +24,8 @@ import streamlit as st
 from uyam.annotate import jobs
 from uyam.annotate.config import AnnotationConfig, load_annotation_config
 from uyam.annotate.db import AnnotationDatabase
+from uyam.annotate.pipeline import PIPELINE_JOB, lane_job_name
 
-_PREP_JOBS = ("lid", "sentiment")
 _PAGE_SIZE = 200
 
 
@@ -33,7 +33,7 @@ def _run_job_key(annotator_key: str) -> str:
     return f"run-{annotator_key}"
 
 
-def _pipeline_snapshot(cfg: AnnotationConfig) -> dict[str, Any]:
+def _pipeline_snapshot(cfg: AnnotationConfig, *, target: int | None = None) -> dict[str, Any]:
     """One cheap read (COUNT queries only) of everything the tab displays."""
     snap: dict[str, Any] = {
         "db_exists": cfg.db_path.exists(),
@@ -47,11 +47,17 @@ def _pipeline_snapshot(cfg: AnnotationConfig) -> dict[str, Any]:
         "escalated_pending": 0,
         "queue_gold": 0,
         "queue_low_conf": 0,
+        "target": None,
     }
     if not snap["db_exists"]:
         return snap
     with AnnotationDatabase(cfg.db_path) as db:
         snap["corpus"] = db.corpus_counts()
+        snap["target"] = db.target_progress(
+            cfg.prompt_version,
+            int(target or cfg.pipeline.target_items),
+            [a.key for a in cfg.annotators],
+        )
         snap["eligible"] = db.eligible_count()
         snap["lid_missing"] = db.missing_lid_count()
         snap["tx_missing"] = db.missing_tx_sentiment_count()
@@ -84,6 +90,7 @@ def _job_button(
     args: list[str],
     help_text: str,
     extra_disabled: bool = False,
+    stop_tree: bool = False,
 ) -> None:
     """A start/stop button pair for one background job."""
     running = jobs.is_running(job_name)
@@ -96,7 +103,10 @@ def _job_button(
             st.rerun()
     with col_stop:
         if running and st.button("Stop", key=f"stop_{job_name}"):
-            jobs.stop_job(job_name)
+            if stop_tree:
+                jobs.stop_job_tree(job_name)
+            else:
+                jobs.stop_job(job_name)
             st.rerun()
     if running:
         st.caption(f"⏳ running (pid {jobs.read_meta(job_name).get('pid')}) — resume-safe")
@@ -353,7 +363,10 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
     # ------------------------------------------------------------------
     @st.fragment(run_every=10.0)
     def _live_status() -> None:
-        live = _pipeline_snapshot(cfg)
+        import pandas as pd
+
+        ui_target = int(st.session_state.get("target_items") or cfg.pipeline.target_items)
+        live = _pipeline_snapshot(cfg, target=ui_target)
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Corpus records", live["corpus"]["total"])
         c2.metric("Eligible candidates", live["eligible"])
@@ -362,9 +375,33 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
         c4.metric("Resolved labels", resolved)
         c5.metric("Escalated pending", live["escalated_pending"])
 
-        if live["progress"]:
-            import pandas as pd
+        tp = live["target"]
+        if tp:
+            t1, t2 = st.columns([1, 3])
+            t1.metric(
+                f"Complete of {tp['in_target']:,} target items",
+                tp["complete"],
+                help="Target-set items that carry EVERY annotator's vote. "
+                "The Start ALL chain stops when each annotator reaches the target.",
+            )
+            with t2:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "annotator": key,
+                                "done in target": m["done"],
+                                "failed": m["failed"],
+                                "pending to target": m["pending"],
+                            }
+                            for key, m in tp["models"].items()
+                        ]
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
 
+        if live["progress"]:
             rows = []
             for p in live["progress"]:
                 key, role = str(p["model_key"]), str(p["role"])
@@ -442,50 +479,134 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
 
     @st.fragment(run_every=5.0)
     def _annotator_controls() -> None:
-        local_run_jobs = [_run_job_key(a.key) for a in local_annotators] + ["run-all-local"]
+        local_lanes = [lane_job_name(ep) for ep in endpoints_in_use if cfg.is_local_endpoint(ep)]
+        local_run_jobs = [_run_job_key(a.key) for a in local_annotators] + local_lanes
+        pipeline_running = jobs.is_running(PIPELINE_JOB)
         local_llm_busy = any(jobs.is_running(j) for j in local_run_jobs)
         sentiment_busy = jobs.is_running("sentiment")
         any_annotator_busy = local_llm_busy or any(
             jobs.is_running(j)
             for j in [_run_job_key(a.key) for a in cfg.annotators] + run_all_job_names
         )
-        if sentiment_busy and local_llm_busy:
+        chain_busy = (
+            pipeline_running
+            or any_annotator_busy
+            or sentiment_busy
+            or jobs.is_running("adjudicate")
+        )
+        if sentiment_busy and local_llm_busy and not pipeline_running:
             st.warning("Sentiment and a local LLM annotator are BOTH running — VRAM contention!")
 
-        # One-click run: every annotator, grouped per endpoint — sequential on the
-        # same machine (shared GPU), concurrent across machines.
+        # ---- Start ALL: the whole chain to the target ----------------------
+        t_col, s_col = st.columns([1, 2])
+        with t_col:
+            target = int(
+                st.number_input(
+                    "Target items per annotator",
+                    min_value=1,
+                    value=int(cfg.pipeline.target_items),
+                    step=500,
+                    key="target_items",
+                    help="Every annotator labels the SAME set of this many eligible items "
+                    "(items that already have votes first, then by id). On each machine "
+                    "the least-annotated model runs first, and each model stops once it "
+                    "has this many done. Default: annotation.yaml pipeline.target_items.",
+                )
+            )
+        with s_col:
+            o1, o2, o3, o4 = st.columns(4)
+            skip_prep = o1.checkbox(
+                "skip prep", key="pl_skip_prep", help="Skip index / select / language ID."
+            )
+            skip_sent = o2.checkbox(
+                "skip sentiment",
+                key="pl_skip_sent",
+                help="Skip the GPU transformer-sentiment pass over the target set.",
+            )
+            skip_adj = o3.checkbox(
+                "skip adjudicate", key="pl_skip_adj", help="Stop after aggregation."
+            )
+            retry_failed = o4.checkbox(
+                "retry failed",
+                key="pl_retry",
+                help="Clear recorded failures and retry those items in every pass.",
+            )
+            if pipeline_running:
+                if st.button("■ Stop ALL", type="primary", key="stop_pipeline"):
+                    jobs.stop_job_tree(PIPELINE_JOB)
+                    st.rerun()
+                kids = [j for j in jobs.child_jobs(PIPELINE_JOB) if jobs.is_running(j)]
+                st.caption(
+                    f"⏳ pipeline running (pid {jobs.read_meta(PIPELINE_JOB).get('pid')}) — "
+                    f"child jobs: {', '.join(kids) or 'none yet'} — "
+                    "phases and progress in the pipeline job log below"
+                )
+            else:
+                if st.button(
+                    f"▶ Start ALL — full chain to {target:,} items per annotator",
+                    type="primary",
+                    key="start_pipeline",
+                    disabled=chain_busy,
+                    help="index → select → language ID → transformer sentiment on the "
+                    "target set (local GPU) → annotators (remote lane concurrently; local "
+                    "lane least-done-first, each to the target) → aggregate → adjudicate "
+                    "→ aggregate → gold sample. Resumable: Start again to continue.",
+                ):
+                    args = ["pipeline", "--target", str(target)]
+                    if skip_prep:
+                        args.append("--skip-prep")
+                    if skip_sent:
+                        args.append("--skip-sentiment")
+                    if skip_adj:
+                        args.append("--skip-adjudicate")
+                    if retry_failed:
+                        args.append("--retry-failed")
+                    jobs.start_job(PIPELINE_JOB, args)
+                    st.rerun()
+                if chain_busy:
+                    st.caption(
+                        "Start ALL waits until the running annotation job finishes "
+                        "(or stop it below)."
+                    )
+
+        st.divider()
+
+        # ---- Annotators only: same target, one lane per machine ------------
+        st.markdown("**Annotators only** — same target set, no prep or adjudication:")
         all_col, count_col = st.columns([2, 1])
         with count_col:
-            items_to_label = st.number_input(
-                "Items per annotator",
-                min_value=0,
-                value=0,
-                step=50,
-                key="items_per_annotator",
-                help="How many pending items each annotator labels this run. 0 = ALL pending "
-                "(everything still required).",
+            items_to_label = int(
+                st.number_input(
+                    "Max items per annotator this run",
+                    min_value=0,
+                    value=0,
+                    step=50,
+                    key="items_per_annotator",
+                    help="0 = keep going until the target. Otherwise stop after this many "
+                    "items this run (resumable).",
+                )
             )
         with all_col:
-            pending_note = "all pending" if items_to_label == 0 else f"{items_to_label} items"
             if st.button(
-                f"▶ Run ALL annotators ({pending_note} each)",
-                type="primary",
-                disabled=any_annotator_busy,
-                help="Starts one background job per machine: the remote annotator runs "
-                "concurrently while the local annotators run one after the other. "
-                "Resumable — stop or rerun anytime.",
+                f"▶ Run ALL annotators to {target:,}",
+                key="run_all_annotators",
+                disabled=chain_busy,
+                help="One background job per machine: the remote annotator runs "
+                "concurrently while the local annotators run one after the other, "
+                "least-done first. Resumable — stop or rerun anytime.",
             ):
                 for endpoint in endpoints_in_use:
-                    keys = [a.key for a in cfg.annotators if a.endpoint == endpoint]
                     args = ["run"]
-                    for key in keys:
-                        args.extend(["--annotator", key])
+                    for ann in cfg.annotators:
+                        if ann.endpoint == endpoint:
+                            args.extend(["--annotator", ann.key])
+                    args.extend(["--target", str(target)])
                     if items_to_label > 0:
-                        args.extend(["--limit", str(int(items_to_label))])
-                    jobs.start_job(f"run-all-{endpoint}", args)
+                        args.extend(["--limit", str(items_to_label)])
+                    jobs.start_job(lane_job_name(endpoint), args)
                 st.rerun()
             running_all = [j for j in run_all_job_names if jobs.is_running(j)]
-            if running_all:
+            if running_all and not pipeline_running:
                 if st.button("Stop all", key="stop_run_all"):
                     for j in running_all:
                         jobs.stop_job(j)
@@ -493,16 +614,16 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
                 st.caption(f"⏳ running: {', '.join(running_all)} — see Job logs below")
 
         st.caption(
-            "Or run annotators individually. The two local models cannot share the 8 GB GPU — "
-            "run them one after the other. Every run is resumable: stopping mid-pass loses "
-            "nothing."
+            "Or run annotators individually (to the target above). The two local models "
+            "cannot share the 8 GB GPU — run them one after the other. Every run is "
+            "resumable: stopping mid-pass loses nothing."
         )
         ann_cols = st.columns(len(cfg.annotators))
         for col, ann in zip(ann_cols, cfg.annotators, strict=True):
             with col:
-                endpoint_run_all_busy = jobs.is_running(f"run-all-{ann.endpoint}")
-                other_local_busy = ann.endpoint == "local" and (
-                    jobs.is_running("run-all-local")
+                endpoint_run_all_busy = jobs.is_running(lane_job_name(ann.endpoint))
+                other_local_busy = cfg.is_local_endpoint(ann.endpoint) and (
+                    any(jobs.is_running(j) for j in local_lanes)
                     or any(
                         jobs.is_running(_run_job_key(a.key))
                         for a in local_annotators
@@ -513,17 +634,17 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
                 if other_local_busy:
                     st.caption("waiting: another local model holds the GPU")
                 elif endpoint_run_all_busy:
-                    st.caption("covered by the Run-ALL job")
-                run_args = ["run", "--annotator", ann.key]
+                    st.caption("covered by the lane job")
+                run_args = ["run", "--annotator", ann.key, "--target", str(target)]
                 if items_to_label > 0:
-                    run_args.extend(["--limit", str(int(items_to_label))])
+                    run_args.extend(["--limit", str(items_to_label)])
                 _job_button(
                     label=f"Run {ann.key}",
                     job_name=_run_job_key(ann.key),
                     args=run_args,
-                    help_text=f"Annotate pending items with {ann.model} on {ann.endpoint}. "
-                    "Respects the items-per-annotator count above (0 = all).",
-                    extra_disabled=endpoint_run_all_busy,
+                    help_text=f"Annotate target-set items with {ann.model} on {ann.endpoint} "
+                    "until it reaches the target (or the per-run cap above).",
+                    extra_disabled=endpoint_run_all_busy or pipeline_running,
                 )
 
     _annotator_controls()
@@ -598,6 +719,7 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
     # ------------------------------------------------------------------
     st.subheader("Job logs")
     job_names = [
+        PIPELINE_JOB,
         "lid",
         "sentiment",
         *run_all_job_names,
