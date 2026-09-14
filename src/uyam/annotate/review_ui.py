@@ -19,11 +19,37 @@ from typing import Any
 from uyam.annotate.config import load_annotation_config
 from uyam.annotate.db import AnnotationDatabase
 
+# (key, label, definition, worked example) — definitions mirror the cue taxonomy in
+# annotate/prompts.py so human gold labels and model votes are graded on one rubric.
 _CUES = (
-    ("cue_polarity_inversion", "Polarity inversion"),
-    ("cue_rhetorical_intent", "Rhetorical intent"),
-    ("cue_contextual_incongruity", "Contextual incongruity"),
-    ("cue_hyperbole", "Hyperbole"),
+    (
+        "cue_polarity_inversion",
+        "Polarity inversion",
+        "The stated sentiment is the opposite of the intended one.",
+        '"Ang galing mo naman" said to someone who just broke something — praise on the '
+        "surface, criticism underneath.",
+    ),
+    (
+        "cue_rhetorical_intent",
+        "Rhetorical intent",
+        "Mock praise, feigned agreement, or a rhetorical question not seeking an answer.",
+        '"Edi wow", "sana all" used pointedly, "talaga lang ha" — the form is praise or a '
+        "question, the function is a jab.",
+    ),
+    (
+        "cue_contextual_incongruity",
+        "Contextual incongruity",
+        "The literal reading clashes with the thread context or the situation described.",
+        'A rant about a 6-hour outage, replied to with "Reliable service as always" — only '
+        "the surrounding thread makes the mismatch visible.",
+    ),
+    (
+        "cue_hyperbole",
+        "Hyperbole",
+        "Exaggeration or stacked intensifiers signaling non-literal intent.",
+        '"Sobrang THRILLED talaga ako", "best day ever!!!" — the intensity overshoots the '
+        "situation on purpose.",
+    ),
 )
 _SENTIMENTS = ["positive", "neutral", "negative"]
 _LANGUAGES = ["english", "tagalog", "taglish"]
@@ -52,7 +78,9 @@ def _render_context(st: Any, db: AnnotationDatabase, fullname: str) -> None:
             st.markdown(f"> **reply {i}:** {reply.get('text') or ''}")
     permalink = record.get("permalink")
     if permalink:
-        url = permalink if str(permalink).startswith("http") else f"https://www.reddit.com{permalink}"
+        url = (
+            permalink if str(permalink).startswith("http") else f"https://www.reddit.com{permalink}"
+        )
         st.caption(f"[view on reddit]({url})")
 
 
@@ -117,9 +145,15 @@ def render_review_tab(config_path: Path | None = None) -> None:
             st.caption("Sarcasm cues present in the target:")
             cue_values: dict[str, bool] = {}
             cue_cols = st.columns(len(_CUES))
-            for col, (cue_key, cue_label) in zip(cue_cols, _CUES, strict=True):
+            for col, (cue_key, cue_label, definition, example) in zip(cue_cols, _CUES, strict=True):
                 with col:
-                    cue_values[cue_key] = st.checkbox(cue_label)
+                    cue_values[cue_key] = st.checkbox(
+                        cue_label, help=f"{definition}\n\n*Example:* {example}"
+                    )
+            with st.expander("Cue guide"):
+                for _, cue_label, definition, example in _CUES:
+                    st.markdown(f"**{cue_label}** — {definition}")
+                    st.caption(f"Example: {example}")
             notes = st.text_input("Notes (optional)")
             submitted = st.form_submit_button("Save label", type="primary")
 
