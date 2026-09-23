@@ -1,0 +1,1017 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Uyám Pipeline Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+body { margin: 0; }
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #eceff4;
+  --ink: #141820;
+  --ink-2: #454b58;
+  --ink-3: #6d7482;
+  --line: #d6dbe4;
+  --c-collect: #2a78d6;
+  --c-prep: #eb6834;
+  --c-llm: #1baf7a;
+  --c-resolve: #eda100;
+  --c-export: #e87ba4;
+  --good: #1a7f37;
+  --bad: #b42318;
+  --tint: 13%;
+  --band: 5%;
+  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1216; --surface: #171b21; --surface-2: #1f242c;
+    --ink: #eef1f5; --ink-2: #b5bcc8; --ink-3: #8a92a0; --line: #2e343e;
+    --c-collect: #3987e5; --c-prep: #d95926; --c-llm: #199e70; --c-resolve: #c98500; --c-export: #d55181;
+    --good: #4ac26b; --bad: #f47067; --tint: 20%; --band: 7%;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1216; --surface: #171b21; --surface-2: #1f242c;
+  --ink: #eef1f5; --ink-2: #b5bcc8; --ink-3: #8a92a0; --line: #2e343e;
+  --c-collect: #3987e5; --c-prep: #d95926; --c-llm: #199e70; --c-resolve: #c98500; --c-export: #d55181;
+  --good: #4ac26b; --bad: #f47067; --tint: 20%; --band: 7%;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.6 var(--f-body);
+  padding-inline: 20px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(30px, 4.4vw, 50px); font-weight: 800; line-height: 1.05; }
+h2 { font-size: clamp(23px, 2.6vw, 31px); font-weight: 700; line-height: 1.15; }
+h3 { font-size: 18px; font-weight: 700; }
+p { margin: 0; }
+.mono, code, pre { font-family: var(--f-mono); }
+code { font-size: 0.9em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--c-collect); outline-offset: 2px; }
+
+.eyebrow { font: 600 12px/1 var(--f-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
+.lede { color: var(--ink-2); max-width: 68ch; font-size: 17px; }
+
+/* ---------- header */
+header { padding-block: 44px 28px; display: grid; gap: 14px; }
+nav { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 6px; font-size: 14px; }
+nav a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid var(--line); }
+nav a:hover { color: var(--ink); border-color: var(--ink-3); }
+
+/* ---------- stage strip */
+.strip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-block: 8px 12px; }
+.stage {
+  --c: var(--ink-3);
+  background: color-mix(in oklab, var(--c) var(--tint), var(--surface));
+  border: 1px solid color-mix(in oklab, var(--c) 45%, var(--surface));
+  border-radius: 12px;
+  padding: 14px 16px 16px;
+  display: grid; gap: 4px; align-content: start;
+  position: relative;
+}
+.stage:not(:last-child)::after {
+  content: ""; position: absolute; right: -9px; top: 50%; width: 8px; height: 8px;
+  border-top: 2px solid var(--ink-3); border-right: 2px solid var(--ink-3);
+  transform: translate(0, -50%) rotate(45deg); z-index: 1;
+}
+.stage .k { font: 600 11px/1.2 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
+.stage .k::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c); flex: none; }
+.stage .v { font: 700 30px/1.1 var(--f-display); font-variant-numeric: tabular-nums; }
+.stage .d { font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+.s-collect { --c: var(--c-collect); } .s-prep { --c: var(--c-prep); } .s-llm { --c: var(--c-llm); }
+.s-resolve { --c: var(--c-resolve); } .s-export { --c: var(--c-export); }
+.source-note { font-size: 13px; color: var(--ink-3); }
+
+/* ---------- sections */
+section { padding-block: 48px 8px; display: grid; gap: 18px; }
+.sec-head { display: grid; gap: 8px; }
+
+/* ---------- figures */
+figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 18px 14px; display: grid; gap: 12px; }
+.svg-scroll { overflow-x: auto; }
+figure svg { display: block; width: 100%; min-width: 900px; height: auto; font-family: var(--f-body); }
+figcaption { font-size: 14px; color: var(--ink-2); max-width: 90ch; }
+figcaption b { color: var(--ink); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--c); background: color-mix(in oklab, var(--c) var(--tint), var(--surface)); }
+
+svg .band { stroke: none; }
+svg .band-collect { fill: color-mix(in oklab, var(--c-collect) var(--band), var(--surface)); }
+svg .band-prep { fill: color-mix(in oklab, var(--c-prep) var(--band), var(--surface)); }
+svg .n { stroke-width: 1.6; }
+svg .n-collect { fill: color-mix(in oklab, var(--c-collect) var(--tint), var(--surface)); stroke: var(--c-collect); }
+svg .n-prep { fill: color-mix(in oklab, var(--c-prep) var(--tint), var(--surface)); stroke: var(--c-prep); }
+svg .n-llm { fill: color-mix(in oklab, var(--c-llm) var(--tint), var(--surface)); stroke: var(--c-llm); }
+svg .n-resolve { fill: color-mix(in oklab, var(--c-resolve) var(--tint), var(--surface)); stroke: var(--c-resolve); }
+svg .n-export { fill: color-mix(in oklab, var(--c-export) var(--tint), var(--surface)); stroke: var(--c-export); }
+svg .dashed { stroke-dasharray: 5 4; }
+svg .n-rule { stroke: var(--line); stroke-width: 1; }
+svg text { fill: var(--ink); }
+svg .t-title { font: 600 14px var(--f-body); }
+svg .t-line { font: 400 11.5px var(--f-body); fill: var(--ink-2); }
+svg .t-count { font: 600 12px var(--f-mono); }
+svg .t-dia { font: 600 12.5px var(--f-body); }
+svg .t-edge { font: 500 11.5px var(--f-body); fill: var(--ink-2); }
+svg .t-edge.strong { font-weight: 600; fill: var(--ink); }
+svg .t-band { font: 600 11.5px var(--f-mono); letter-spacing: 0.08em; fill: var(--ink-2); }
+svg .edge { fill: none; stroke: var(--ink-3); stroke-width: 1.6; }
+svg .ah { fill: var(--ink-3); }
+svg .t-sub { font: 400 11.5px var(--f-body); fill: var(--ink-2); }
+svg .t-title-sm { font: 600 12px var(--f-body); }
+svg .band-llm { fill: color-mix(in oklab, var(--c-llm) var(--band), var(--surface)); }
+svg .band-resolve { fill: color-mix(in oklab, var(--c-resolve) var(--band), var(--surface)); }
+svg .band-export { fill: color-mix(in oklab, var(--c-export) var(--band), var(--surface)); }
+svg .dot-collect { fill: var(--c-collect); } svg .dot-prep { fill: var(--c-prep); } svg .dot-llm { fill: var(--c-llm); }
+svg .dot-resolve { fill: var(--c-resolve); } svg .dot-export { fill: var(--c-export); }
+
+.schedule { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; counter-reset: s; }
+.schedule li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 14px; color: var(--ink-2); display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; }
+.schedule li::before { content: counter(s); font: 700 13px/22px var(--f-mono); width: 24px; height: 24px; text-align: center; border-radius: 50%; background: var(--surface-2); color: var(--ink); }
+.schedule b { color: var(--ink); font-weight: 600; }
+
+/* ---------- worked example */
+.note-box { background: var(--surface-2); border-radius: 12px; padding: 12px 16px; font-size: 14px; color: var(--ink-2); max-width: 100ch; }
+.steps { display: grid; gap: 14px; }
+.step { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
+.step-side { display: grid; gap: 8px; align-content: start; }
+.step-no { display: flex; align-items: center; gap: 10px; }
+.step-no b { font: 700 13px/26px var(--f-mono); width: 28px; height: 28px; border-radius: 50%; text-align: center; border: 1.6px solid var(--c); background: color-mix(in oklab, var(--c) var(--tint), var(--surface)); }
+.step-no span { font: 600 11px var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.step-side p { font-size: 14px; color: var(--ink-2); }
+.step-main { min-width: 0; display: grid; gap: 10px; align-content: start; }
+pre { margin: 0; background: var(--surface-2); border-radius: 10px; padding: 12px 14px; font-size: 12.5px; line-height: 1.55; overflow-x: auto; white-space: pre; color: var(--ink); }
+pre.wrap-pre { white-space: pre-wrap; }
+.src { font-size: 12px; color: var(--ink-3); }
+
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+.table-scroll { overflow-x: auto; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font: 600 11px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+td.mono { font-size: 12.5px; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.drop td:nth-child(2) { color: var(--ink-3); }
+.verdict { white-space: nowrap; font-weight: 600; font-size: 13px; }
+tr.keep .verdict { color: var(--good); }
+tr.drop .verdict { color: var(--bad); }
+.norm { font: 12px var(--f-mono); color: var(--ink-3); margin-top: 2px; }
+.tag { font: 600 10px var(--f-mono); text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 99px; background: color-mix(in oklab, var(--c-llm) 22%, var(--surface)); color: var(--ink); margin-left: 4px; }
+
+.meter { display: grid; grid-template-columns: 90px minmax(0, 1fr) 56px; gap: 10px; align-items: center; font-size: 13.5px; }
+.meter .track { position: relative; height: 14px; background: var(--surface-2); border-radius: 4px; }
+.meter .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--c); }
+.meter .thr { position: absolute; top: -5px; bottom: -5px; left: 90%; width: 0; border-left: 2px dashed var(--ink); }
+.meter .val { font: 600 13px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.meters { display: grid; gap: 10px; max-width: 620px; }
+.result { font-size: 14px; }
+.result b { font-family: var(--f-mono); }
+
+.votes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.vote { border: 1px solid color-mix(in oklab, var(--c-llm) 50%, var(--surface)); background: color-mix(in oklab, var(--c-llm) 7%, var(--surface)); border-radius: 12px; padding: 12px 14px; display: grid; gap: 8px; align-content: start; font-size: 13.5px; }
+.vote-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
+.vote-head .where { font: 500 11px var(--f-mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.verdict-big { font-family: var(--f-mono); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; }
+.kv dt { color: var(--ink-3); }
+.kv dd { margin: 0; font-family: var(--f-mono); font-size: 12.5px; }
+.cues { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.cues li { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); }
+.cues li.on { background: var(--surface); border-color: var(--ink-3); color: var(--ink); }
+.cues li.off { color: var(--ink-3); }
+.vote blockquote { margin: 0; font-style: italic; color: var(--ink-2); font-size: 13px; }
+
+.agg-table td:first-child { font-weight: 600; }
+
+/* ---------- numbers */
+.grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; display: grid; gap: 12px; align-content: start; }
+.card .sub { font-size: 13.5px; color: var(--ink-2); }
+.bars { display: grid; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) 64px; gap: 10px; align-items: center; font-size: 13.5px; border-radius: 6px; }
+.bar-row .track { height: 18px; position: relative; }
+.bar-row .fill { position: absolute; inset: 0 auto 0 0; background: var(--c); border-radius: 0 4px 4px 0; min-width: 3px; }
+.bar-row .val { font: 600 13px var(--f-mono); text-align: right; font-variant-numeric: tabular-nums; }
+.bar-row:hover .fill, .bar-row:focus-visible .fill { filter: brightness(1.08) saturate(1.1); }
+.bar-row:focus-visible { outline: 2px solid var(--ink-3); outline-offset: 2px; }
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--bg); font-size: 12.5px; padding: 6px 9px; border-radius: 6px; max-width: 260px; z-index: 10; }
+
+.notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.notes li { list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; font-size: 14px; color: var(--ink-2); }
+.notes ul { margin: 0; padding: 0; display: contents; }
+.notes b { color: var(--ink); }
+footer { margin-top: 40px; font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 16px; }
+
+@media (max-width: 900px) {
+  .strip { grid-template-columns: 1fr 1fr; }
+  .stage:not(:last-child)::after { display: none; }
+  .step { grid-template-columns: 1fr; }
+  .votes, .grid-2, .notes, .schedule { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+  .strip { grid-template-columns: 1fr; }
+  .bar-row { grid-template-columns: 110px minmax(0, 1fr) 56px; }
+  .meter { grid-template-columns: 70px minmax(0, 1fr) 48px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .bar-row .fill, .meter .fill { transition: filter .15s; }
+}
+</style>
+
+</head>
+<body>
+<div class="wrap">
+<header>
+  <p class="eyebrow">Uyám · thesis midterm · data gathering &amp; preprocessing</p>
+  <h1>From a Reddit thread to a labeled sarcasm example</h1>
+  <p class="lede">How Uyám collects Filipino Reddit discussions, cleans and enriches them, and labels each post or comment with a three-model LLM ensemble for context-aware sarcasm detection in Taglish. Every number on this page comes from the current pipeline database and the exported <code>dataset-v1</code> card.</p>
+  <nav aria-label="Sections">
+    <a href="#overview">Pipeline at a glance</a>
+    <a href="#flow">Gathering &amp; preprocessing</a>
+    <a href="#llm">LLM annotation workflow</a>
+    <a href="#example">One comment, end to end</a>
+    <a href="#numbers">The run in numbers</a>
+    <a href="#notes">Caveats</a>
+  </nav>
+</header>
+
+<div class="strip" role="list" aria-label="Pipeline stages with record counts">
+  <div class="stage s-collect" role="listitem"><span class="k">Collect</span><span class="v">20,573</span><span class="d">records scraped: 1,954 posts + 18,619 comments from 3 subreddits</span></div>
+  <div class="stage s-prep" role="listitem"><span class="k">Preprocess</span><span class="v">17,424</span><span class="d">eligible after filters; 3,149 dropped with a logged reason</span></div>
+  <div class="stage s-llm" role="listitem"><span class="k">Annotate</span><span class="v">15,000</span><span class="d">target items, each labeled by all 3 LLMs (44,998 votes)</span></div>
+  <div class="stage s-resolve" role="listitem"><span class="k">Resolve</span><span class="v">4,886</span><span class="d">disagreements sent to a blind 32B adjudicator</span></div>
+  <div class="stage s-export" role="listitem"><span class="k">Export</span><span class="v">1,601</span><span class="d">sarcastic of 15,000 exported rows (10.7%)</span></div>
+</div>
+<p class="source-note">Source: <code>data/db/annotation.sqlite3</code> and <code>data/annotated/dataset_card.json</code> (prompt sarc-v2, exported 2026-09-15). Exported items were posted 2026-08-01 to 2026-09-03.</p>
+
+<section id="overview" aria-labelledby="h-ov">
+  <div class="sec-head">
+    <p class="eyebrow">Overview</p>
+    <h2 id="h-ov">The whole pipeline at a glance</h2>
+    <p class="lede">Five stages, left to right. Each column runs top to bottom, then hands off to the next. The three annotators get the same prompt and answer independently.</p>
+  </div>
+  <figure>
+    <div class="svg-scroll">
+      <svg viewBox="0 0 1200 610" role="img" aria-label="Overview of the Uyám pipeline in five stages. Collect: Reddit, Chrome scraper, normalize with hashed authors, dedup and store 20,573 records. Preprocess: index, filter to 17,424 records, language ID, literal sentiment, thread context. Annotate: the sarc-v2 prompt goes to qwen3 8B, SEA-LION 9B and gemma3 27B independently, giving 3 votes on each of 15,000 items. Resolve: aggregate; 10,114 items agree and go straight to final labels, 4,886 go to a blind 32B adjudicator first; 1,601 final items are sarcastic. Validate and export: a 300-item gold sample is reviewed by a native speaker for evaluation, and 15,000 rows are exported as dataset-v1 for model training in the leische repository.">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="band band-collect" x="12" y="16" width="216" height="584" rx="14"/>
+<circle class="dot-collect" cx="26" cy="44" r="5"/>
+<text class="t-band" x="38" y="48">1 · COLLECT</text>
+<rect class="band band-prep" x="252" y="16" width="216" height="584" rx="14"/>
+<circle class="dot-prep" cx="266" cy="44" r="5"/>
+<text class="t-band" x="278" y="48">2 · PREPROCESS</text>
+<rect class="band band-llm" x="492" y="16" width="216" height="584" rx="14"/>
+<circle class="dot-llm" cx="506" cy="44" r="5"/>
+<text class="t-band" x="518" y="48">3 · ANNOTATE</text>
+<rect class="band band-resolve" x="732" y="16" width="216" height="584" rx="14"/>
+<circle class="dot-resolve" cx="746" cy="44" r="5"/>
+<text class="t-band" x="758" y="48">4 · RESOLVE</text>
+<rect class="band band-export" x="972" y="16" width="216" height="584" rx="14"/>
+<circle class="dot-export" cx="986" cy="44" r="5"/>
+<text class="t-band" x="998" y="48">5 · VALIDATE + EXPORT</text>
+<rect class="n n-collect" x="20" y="76" width="200" height="54" rx="9"/>
+<text class="t-title" x="120.0" y="100.0" text-anchor="middle">Reddit</text>
+<text class="t-sub" x="120.0" y="117.0" text-anchor="middle">3 Filipino subreddits</text>
+<path class="edge " d="M120.0 131 V154" marker-end="url(#ah)"/>
+<rect class="n n-collect" x="20" y="156" width="200" height="54" rx="9"/>
+<text class="t-title" x="120.0" y="180.0" text-anchor="middle">Chrome scraper</text>
+<text class="t-sub" x="120.0" y="197.0" text-anchor="middle">rotating proxies · human captcha</text>
+<path class="edge " d="M120.0 211 V234" marker-end="url(#ah)"/>
+<rect class="n n-collect" x="20" y="236" width="200" height="54" rx="9"/>
+<text class="t-title" x="120.0" y="260.0" text-anchor="middle">Normalize</text>
+<text class="t-sub" x="120.0" y="277.0" text-anchor="middle">authors → HMAC hash</text>
+<path class="edge " d="M120.0 291 V314" marker-end="url(#ah)"/>
+<rect class="n n-collect" x="20" y="316" width="200" height="54" rx="9"/>
+<text class="t-title" x="120.0" y="340.0" text-anchor="middle">Dedup + JSONL</text>
+<text class="t-sub" x="120.0" y="357.0" text-anchor="middle">20,573 records</text>
+<rect class="n n-prep" x="260" y="76" width="200" height="54" rx="9"/>
+<text class="t-title" x="360.0" y="100.0" text-anchor="middle">Index corpus</text>
+<text class="t-sub" x="360.0" y="117.0" text-anchor="middle">20,573 rows</text>
+<path class="edge " d="M360.0 131 V154" marker-end="url(#ah)"/>
+<rect class="n n-prep" x="260" y="156" width="200" height="54" rx="9"/>
+<text class="t-title" x="360.0" y="180.0" text-anchor="middle">Filter</text>
+<text class="t-sub" x="360.0" y="197.0" text-anchor="middle">17,424 kept · 3,149 dropped</text>
+<path class="edge " d="M360.0 211 V234" marker-end="url(#ah)"/>
+<rect class="n n-prep" x="260" y="236" width="200" height="54" rx="9"/>
+<text class="t-title" x="360.0" y="260.0" text-anchor="middle">Language ID</text>
+<text class="t-sub" x="360.0" y="277.0" text-anchor="middle">fastText · en / tl / taglish</text>
+<path class="edge " d="M360.0 291 V314" marker-end="url(#ah)"/>
+<rect class="n n-prep" x="260" y="316" width="200" height="54" rx="9"/>
+<text class="t-title" x="360.0" y="340.0" text-anchor="middle">Literal sentiment</text>
+<text class="t-sub" x="360.0" y="357.0" text-anchor="middle">XLM-RoBERTa</text>
+<path class="edge " d="M360.0 371 V394" marker-end="url(#ah)"/>
+<rect class="n n-prep" x="260" y="396" width="200" height="54" rx="9"/>
+<text class="t-title" x="360.0" y="420.0" text-anchor="middle">Thread context</text>
+<text class="t-sub" x="360.0" y="437.0" text-anchor="middle">post · parents · replies</text>
+<path class="edge " d="M221 343.0 H240 V103.0 H258" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="500" y="76" width="200" height="54" rx="9"/>
+<text class="t-title" x="600.0" y="100.0" text-anchor="middle">Prompt</text>
+<text class="t-sub" x="600.0" y="117.0" text-anchor="middle">sarc-v2 · 4 sarcasm cues</text>
+<path class="edge " d="M461 423.0 H480 V103.0 H498" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="500" y="186" width="64" height="64" rx="9"/>
+<text class="t-title-sm" x="532.0" y="215.0" text-anchor="middle">qwen3</text>
+<text class="t-sub" x="532.0" y="232.0" text-anchor="middle">8B</text>
+<path class="edge " d="M600.0 131 V158 H532.0 V184" marker-end="url(#ah)"/>
+<path class="edge " d="M532.0 251 V278 H600.0 V304" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="568" y="186" width="64" height="64" rx="9"/>
+<text class="t-title-sm" x="600.0" y="215.0" text-anchor="middle">SEA-LION</text>
+<text class="t-sub" x="600.0" y="232.0" text-anchor="middle">9B</text>
+<path class="edge " d="M600.0 131 V158 H600.0 V184" marker-end="url(#ah)"/>
+<path class="edge " d="M600.0 251 V278 H600.0 V304" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="636" y="186" width="64" height="64" rx="9"/>
+<text class="t-title-sm" x="668.0" y="215.0" text-anchor="middle">gemma3</text>
+<text class="t-sub" x="668.0" y="232.0" text-anchor="middle">27B</text>
+<path class="edge " d="M600.0 131 V158 H668.0 V184" marker-end="url(#ah)"/>
+<path class="edge " d="M668.0 251 V278 H600.0 V304" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="500" y="306" width="200" height="54" rx="9"/>
+<text class="t-title" x="600.0" y="330.0" text-anchor="middle">3 votes per item</text>
+<text class="t-sub" x="600.0" y="347.0" text-anchor="middle">15,000 items · 44,998 votes</text>
+<path class="edge " d="M701 333.0 H720 V103.0 H738" marker-end="url(#ah)"/>
+<rect class="n n-resolve" x="740" y="76" width="200" height="54" rx="9"/>
+<text class="t-title" x="840.0" y="100.0" text-anchor="middle">Aggregate</text>
+<text class="t-sub" x="840.0" y="117.0" text-anchor="middle">sarcasm must be 3–0</text>
+<path class="edge " d="M800 131 V176" marker-end="url(#ah)"/>
+<polygon class="n n-resolve" points="800,178 858,216 800,254 742,216"/>
+<text class="t-dia" x="800" y="212" text-anchor="middle">all</text>
+<text class="t-dia" x="800" y="228" text-anchor="middle">agree?</text>
+<rect class="n n-resolve" x="850" y="290" width="90" height="64" rx="9"/>
+<text class="t-title" x="895.0" y="319.0" text-anchor="middle">Adjudicator</text>
+<text class="t-sub" x="895.0" y="336.0" text-anchor="middle">32B · blind</text>
+<path class="edge " d="M858 216 H895 V288" marker-end="url(#ah)"/>
+<text class="t-edge" x="903" y="210" text-anchor="start">no</text>
+<text class="t-edge strong" x="903" y="226" text-anchor="start">4,886</text>
+<path class="edge " d="M800 254 V438" marker-end="url(#ah)"/>
+<text class="t-edge" x="792" y="330" text-anchor="end">yes</text>
+<text class="t-edge strong" x="792" y="346" text-anchor="end">10,114</text>
+<path class="edge " d="M895 355 V438" marker-end="url(#ah)"/>
+<rect class="n n-resolve" x="740" y="440" width="200" height="54" rx="9"/>
+<text class="t-title" x="840.0" y="464.0" text-anchor="middle">Final labels</text>
+<text class="t-sub" x="840.0" y="481.0" text-anchor="middle">1,601 sarcastic (10.7%)</text>
+<path class="edge " d="M941 103.0 H978" marker-end="url(#ah)"/>
+<rect class="n n-export" x="980" y="76" width="200" height="54" rx="9"/>
+<text class="t-title" x="1080.0" y="100.0" text-anchor="middle">Gold sample</text>
+<text class="t-sub" x="1080.0" y="117.0" text-anchor="middle">300 items, stratified</text>
+<path class="edge " d="M1080.0 131 V154" marker-end="url(#ah)"/>
+<rect class="n n-export" x="980" y="156" width="200" height="54" rx="9"/>
+<text class="t-title" x="1080.0" y="180.0" text-anchor="middle">Native-speaker review</text>
+<text class="t-sub" x="1080.0" y="197.0" text-anchor="middle">evaluation only</text>
+<path class="edge dashed " d="M1080.0 211 V438" marker-end="url(#ah)"/>
+<text class="t-edge" x="1088" y="330" text-anchor="start">κ vs</text>
+<text class="t-edge" x="1088" y="346" text-anchor="start">ensemble</text>
+<path class="edge " d="M941 467.0 H978" marker-end="url(#ah)"/>
+<rect class="n n-export" x="980" y="440" width="200" height="54" rx="9"/>
+<text class="t-title" x="1080.0" y="464.0" text-anchor="middle">Export dataset-v1</text>
+<text class="t-sub" x="1080.0" y="481.0" text-anchor="middle">15,000 rows · JSONL + Parquet</text>
+<path class="edge " d="M1080.0 495 V518" marker-end="url(#ah)"/>
+<rect class="n n-export" x="980" y="520" width="200" height="54" rx="9"/>
+<text class="t-title" x="1080.0" y="544.0" text-anchor="middle">Model training</text>
+<text class="t-sub" x="1080.0" y="561.0" text-anchor="middle">leische repo</text>
+      </svg>
+    </div>
+    <figcaption><b>Detail for each stage follows below:</b> Figure 1 covers collection and preprocessing, Figure 2 the LLM voting and resolution.</figcaption>
+  </figure>
+</section>
+
+<section id="flow" aria-labelledby="h-flow">
+  <div class="sec-head">
+    <p class="eyebrow">Figure 1</p>
+    <h2 id="h-flow">Data gathering and preprocessing</h2>
+    <p class="lede">A real Chrome window reads Reddit the way a logged-out visitor does, every record is normalized and pseudonymized before it touches disk, and preprocessing decides which records are worth annotating and what extra signals they carry.</p>
+  </div>
+  <figure>
+    <div class="legend" aria-hidden="true">
+      <span style="--c: var(--c-collect)"><i></i>Collect</span>
+      <span style="--c: var(--c-prep)"><i></i>Preprocess</span>
+      <span style="--c: var(--c-llm)"><i></i>LLM annotation</span>
+      <span style="--c: var(--c-resolve)"><i></i>Vote resolution</span>
+      <span style="--c: var(--c-export)"><i></i>Validation &amp; export</span>
+    </div>
+    <div class="svg-scroll">
+      <svg viewBox="0 0 1200 540" role="img" aria-label="Collection: Reddit pages are loaded in headful Chrome through rotating proxies, listings and comments are parsed, normalized with HMAC-hashed authors, deduplicated in SQLite and appended to JSONL, giving 20,573 records. Preprocessing: the corpus is indexed, filters keep 17,424 eligible records and exclude 3,149, fastText tags language per token, XLM-RoBERTa scores literal sentiment on the 15,000-item target set, and a thread-context snapshot is built for each item before LLM annotation.">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<rect class="band band-collect" x="0" y="0" width="1200" height="212" rx="14"/><text class="t-band" x="18" y="26">1 · COLLECT   (src/uyam/sources, pipeline.py)</text>
+<rect class="band band-prep" x="0" y="252" width="1200" height="280" rx="14"/><text class="t-band" x="18" y="278">2 · PREPROCESS   (src/uyam/annotate)</text>
+<rect class="n n-collect" x="30" y="44" width="176" height="124" rx="10"/>
+<text class="t-title" x="44" y="68">Reddit</text>
+<text class="t-line" x="44" y="88">logged-out web pages</text>
+<text class="t-line" x="44" y="104">r/Philippines, r/CasualPH,</text>
+<text class="t-line" x="44" y="120">r/OffMyChestPH</text>
+<rect class="n n-collect" x="271" y="44" width="176" height="124" rx="10"/>
+<text class="t-title" x="285" y="68">Headful Chrome</text>
+<text class="t-line" x="285" y="88">Patchright, saved profile</text>
+<text class="t-line" x="285" y="104">rotating proxies.txt</text>
+<text class="t-line" x="285" y="120">captcha → a human solves</text>
+<rect class="n n-collect" x="512" y="44" width="176" height="124" rx="10"/>
+<text class="t-title" x="526" y="68">Listing → threads</text>
+<text class="t-line" x="526" y="88">/new feed, newest first</text>
+<text class="t-line" x="526" y="104">comments: in-browser JSON</text>
+<text class="t-line" x="526" y="120">or &lt;shreddit-comment&gt; DOM</text>
+<rect class="n n-collect" x="753" y="44" width="176" height="124" rx="10"/>
+<text class="t-title" x="767" y="68">Normalize</text>
+<text class="t-line" x="767" y="88">one schema for all sources</text>
+<text class="t-line" x="767" y="104">author → HMAC-SHA256</text>
+<text class="t-line" x="767" y="120">usernames never stored</text>
+<rect class="n n-collect" x="994" y="44" width="176" height="124" rx="10"/>
+<text class="t-title" x="1008" y="68">Dedup + store</text>
+<text class="t-line" x="1008" y="88">SQLite UNIQUE(fullname)</text>
+<text class="t-line" x="1008" y="104">append-only JSONL</text>
+<text class="t-line" x="1008" y="120">+ one manifest per run</text>
+<line class="n-rule" x1="1008" x2="1156" y1="138" y2="138"/>
+<text class="t-count" x="1008" y="156">20,573 records</text>
+<path class="edge " d="M208 106 H268" marker-end="url(#ah)"/>
+<text class="t-edge" x="238.5" y="98" text-anchor="middle">loads</text>
+<path class="edge " d="M449 106 H509" marker-end="url(#ah)"/>
+<text class="t-edge" x="479.5" y="98" text-anchor="middle">HTML/JSON</text>
+<path class="edge " d="M690 106 H750" marker-end="url(#ah)"/>
+<text class="t-edge" x="720.5" y="98" text-anchor="middle">dicts</text>
+<path class="edge " d="M931 106 H991" marker-end="url(#ah)"/>
+<text class="t-edge" x="961.5" y="98" text-anchor="middle">records</text>
+<path class="edge " d="M1082.0 170 V232 H118.0 V293" marker-end="url(#ah)"/>
+<text class="t-edge" x="600" y="226" text-anchor="middle">data/raw/&lt;subreddit&gt;/&lt;date&gt;.jsonl</text>
+<rect class="n n-prep" x="30" y="296" width="176" height="124" rx="10"/>
+<text class="t-title" x="44" y="320">Index corpus</text>
+<text class="t-line" x="44" y="340">JSONL → corpus_index</text>
+<text class="t-line" x="44" y="356">bots flagged by their hash</text>
+<text class="t-line" x="44" y="372">comments inherit tags</text>
+<line class="n-rule" x1="44" x2="192" y1="390" y2="390"/>
+<text class="t-count" x="44" y="408">20,573 indexed</text>
+<rect class="n n-prep" x="271" y="296" width="176" height="124" rx="10"/>
+<text class="t-title" x="285" y="320">Candidate filters</text>
+<text class="t-line" x="285" y="340">drop bots, mod stickies,</text>
+<text class="t-line" x="285" y="356">deleted, link-only posts,</text>
+<text class="t-line" x="285" y="372">&lt; 12 chars or &lt; 3 words</text>
+<line class="n-rule" x1="285" x2="433" y1="390" y2="390"/>
+<text class="t-count" x="285" y="408">17,424 eligible</text>
+<rect class="n n-prep" x="512" y="296" width="176" height="124" rx="10"/>
+<text class="t-title" x="526" y="320">Language ID</text>
+<text class="t-line" x="526" y="340">fastText lid.176, per token</text>
+<text class="t-line" x="526" y="356">≥ 90% one language → en/tl</text>
+<text class="t-line" x="526" y="372">otherwise → taglish</text>
+<line class="n-rule" x1="526" x2="674" y1="390" y2="390"/>
+<text class="t-count" x="526" y="408">17,424 tagged</text>
+<rect class="n n-prep" x="753" y="296" width="176" height="124" rx="10"/>
+<text class="t-title" x="767" y="320">Literal sentiment</text>
+<text class="t-line" x="767" y="340">XLM-RoBERTa (cardiffnlp)</text>
+<text class="t-line" x="767" y="356">positive / neutral / negative</text>
+<text class="t-line" x="767" y="372">surface words only</text>
+<line class="n-rule" x1="767" x2="915" y1="390" y2="390"/>
+<text class="t-count" x="767" y="408">15,000 scored</text>
+<rect class="n n-prep" x="994" y="296" width="176" height="124" rx="10"/>
+<text class="t-title" x="1008" y="320">Thread context</text>
+<text class="t-line" x="1008" y="340">post + ≤ 6 parent comments</text>
+<text class="t-line" x="1008" y="356">+ ≤ 3 replies, ≤ 6,000 chars</text>
+<text class="t-line" x="1008" y="372">frozen snapshot per item</text>
+<line class="n-rule" x1="1008" x2="1156" y1="390" y2="390"/>
+<text class="t-count" x="1008" y="408">15,000 snapshots</text>
+<path class="edge " d="M208 358 H268" marker-end="url(#ah)"/>
+<text class="t-edge" x="238.5" y="350" text-anchor="middle">all rows</text>
+<path class="edge " d="M449 358 H509" marker-end="url(#ah)"/>
+<text class="t-edge" x="479.5" y="350" text-anchor="middle">eligible</text>
+<path class="edge " d="M690 358 H750" marker-end="url(#ah)"/>
+<text class="t-edge" x="720.5" y="350" text-anchor="middle">15k target</text>
+<path class="edge " d="M931 358 H991" marker-end="url(#ah)"/>
+<text class="t-edge" x="961.5" y="350" text-anchor="middle">per item</text>
+<path class="edge " d="M359.0 422 V459" marker-end="url(#ah)"/>
+<rect class="n n-prep dashed" x="271" y="462" width="176" height="52" rx="10"/>
+<text class="t-title" x="285" y="486">3,149 excluded</text>
+<text class="t-line" x="285" y="506">reason logged per record</text>
+<path class="edge " d="M1082.0 422 V470" marker-end="url(#ah)"/>
+<text class="t-edge strong" x="1082.0" y="490" text-anchor="middle">to LLM annotation (Figure 2)</text>
+      </svg>
+    </div>
+    <figcaption><b>Records never carry a username.</b> The mapper hashes the author with HMAC-SHA256 and drops the plaintext, and SQLite reserves each <code>reddit_fullname</code> before the JSONL line is written, so re-runs never duplicate a record. Filters log a reason for every excluded record so the dataset card can report them.</figcaption>
+  </figure>
+</section>
+
+<section id="llm" aria-labelledby="h-llm">
+  <div class="sec-head">
+    <p class="eyebrow">Figure 2</p>
+    <h2 id="h-llm">The LLM annotation workflow</h2>
+    <p class="lede">Three different open models label the same item independently, as three human annotators would. Sarcasm needs a unanimous vote. Any disagreement goes to a larger model that sees the same prompt but not the earlier votes.</p>
+  </div>
+  <figure>
+    <div class="svg-scroll">
+      <svg viewBox="0 0 1200 660" role="img" aria-label="The sarc-v2 prompt goes to three annotators: qwen3 8B and SEA-LION v3 9B on the local GPU and gemma3 27B on a remote 24 GB machine. Votes are aggregated: sarcasm must be unanimous and the other labels need two of three. 10,114 items settled directly. 4,886 were escalated to a blind qwen3 32B adjudicator; all 4,886 had confidence of at least 0.6, so none went to the human review queue. A stratified 300-item gold sample is reviewed by a native speaker for evaluation only. 15,000 resolved rows are exported as dataset-v1 for the modeling repository.">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+<path class="edge " d="M125 186 V229" marker-end="url(#ah)"/>
+<text class="t-edge" x="125" y="178" text-anchor="middle">context + target text</text>
+<rect class="n n-llm" x="30" y="232" width="190" height="150" rx="10"/>
+<text class="t-title" x="44" y="256">Prompt · sarc-v2</text>
+<text class="t-line" x="44" y="276">system: 4 sarcasm cues</text>
+<text class="t-line" x="44" y="292">6 worked examples</text>
+<text class="t-line" x="44" y="308">thread context + TARGET</text>
+<text class="t-line" x="44" y="324">JSON schema, hash-locked</text>
+<text class="t-edge strong" x="390" y="148" text-anchor="middle">3 independent annotators · temp 0 · seed 7</text>
+<rect class="n n-llm" x="290" y="163" width="200" height="88" rx="10"/>
+<text class="t-title" x="304" y="187">qwen3:8b</text>
+<text class="t-line" x="304" y="207">local GPU · 8 GB</text>
+<line class="n-rule" x1="304" x2="476" y1="221" y2="221"/>
+<text class="t-count" x="304" y="239">14,998 votes</text>
+<path class="edge " d="M222 307 H254 V207 H288" marker-end="url(#ah)"/>
+<path class="edge " d="M492 207 H524 V307 H557" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="290" y="263" width="200" height="88" rx="10"/>
+<text class="t-title" x="304" y="287">SEA-LION v3 9B</text>
+<text class="t-line" x="304" y="307">local · Filipino-tuned</text>
+<line class="n-rule" x1="304" x2="476" y1="321" y2="321"/>
+<text class="t-count" x="304" y="339">15,000 votes</text>
+<path class="edge " d="M222 307 H254 V307 H288" marker-end="url(#ah)"/>
+<path class="edge " d="M492 307 H524 V307 H557" marker-end="url(#ah)"/>
+<rect class="n n-llm" x="290" y="363" width="200" height="88" rx="10"/>
+<text class="t-title" x="304" y="387">gemma3:27b</text>
+<text class="t-line" x="304" y="407">remote 24 GB · Tailscale</text>
+<line class="n-rule" x1="304" x2="476" y1="421" y2="421"/>
+<text class="t-count" x="304" y="439">15,000 votes</text>
+<path class="edge " d="M222 307 H254 V407 H288" marker-end="url(#ah)"/>
+<path class="edge " d="M492 407 H524 V307 H557" marker-end="url(#ah)"/>
+<rect class="n n-resolve" x="560" y="252" width="180" height="110" rx="10"/>
+<text class="t-title" x="574" y="276">Aggregate votes</text>
+<text class="t-line" x="574" y="296">sarcasm: must be 3–0</text>
+<text class="t-line" x="574" y="312">other labels: ≥ 2 of 3</text>
+<text class="t-line" x="574" y="328">cues: simple majority</text>
+<path class="edge " d="M742 307 H768" marker-end="url(#ah)"/>
+<polygon class="n n-resolve" points="850,255 930,307 850,359 770,307"/>
+<text class="t-dia" x="850" y="303" text-anchor="middle">every label</text>
+<text class="t-dia" x="850" y="319" text-anchor="middle">settled?</text>
+<rect class="n n-resolve" x="1000" y="267" width="170" height="84" rx="10"/>
+<text class="t-title" x="1014" y="291">Final labels</text>
+<text class="t-line" x="1014" y="311">sarcastic · language</text>
+<text class="t-line" x="1014" y="327">literal + intended sentiment</text>
+<path class="edge " d="M932 307 H997" marker-end="url(#ah)"/>
+<text class="t-edge" x="966" y="299" text-anchor="middle">yes</text>
+<text class="t-edge strong" x="966" y="322" text-anchor="middle">10,114</text>
+<path class="edge " d="M850 361 V437" marker-end="url(#ah)"/>
+<text class="t-edge" x="838" y="386" text-anchor="end">no · 4,886 escalated</text>
+<text class="t-edge" x="838" y="401" text-anchor="end">4,544 sarcasm splits (2–1)</text>
+<text class="t-edge" x="838" y="416" text-anchor="end">341 three-way ties, 1 other</text>
+<rect class="n n-resolve" x="760" y="440" width="180" height="110" rx="10"/>
+<text class="t-title" x="774" y="464">Adjudicator</text>
+<text class="t-line" x="774" y="484">qwen3:32b, remote</text>
+<text class="t-line" x="774" y="500">blind: same prompt,</text>
+<text class="t-line" x="774" y="516">never sees the 3 votes</text>
+<path class="edge " d="M942 495 H1010" marker-end="url(#ah)"/>
+<polygon class="n n-resolve" points="1085,449 1157,495 1085,541 1013,495"/>
+<text class="t-dia" x="1085" y="491" text-anchor="middle">confidence</text>
+<text class="t-dia" x="1085" y="507" text-anchor="middle">≥ 0.6?</text>
+<path class="edge " d="M1085 449 V354" marker-end="url(#ah)"/>
+<text class="t-edge" x="1093" y="408" text-anchor="start">yes · 4,886</text>
+<path class="edge " d="M1085 541 V577" marker-end="url(#ah)"/>
+<text class="t-edge" x="1093" y="564" text-anchor="start">no · 0</text>
+<rect class="n n-resolve" x="1000" y="580" width="170" height="64" rx="10"/>
+<text class="t-title" x="1014" y="604">Human review queue</text>
+<text class="t-line" x="1014" y="624">native speaker, final say</text>
+<path class="edge " d="M1172 612 H1188 V330 H1174" marker-end="url(#ah)"/>
+<path class="edge " d="M650 250 V173" marker-end="url(#ah)"/>
+<text class="t-edge" x="642" y="214" text-anchor="end">after aggregation</text>
+<rect class="n n-export" x="560" y="50" width="180" height="120" rx="10"/>
+<text class="t-title" x="574" y="74">Gold sample · 300</text>
+<text class="t-line" x="574" y="94">stratified by final labels</text>
+<text class="t-line" x="574" y="110">split votes weighted ×2</text>
+<text class="t-line" x="574" y="126">seeded, reproducible</text>
+<line class="n-rule" x1="574" x2="726" y1="140" y2="140"/>
+<text class="t-count" x="574" y="158">300 queued</text>
+<path class="edge " d="M742 110 H777" marker-end="url(#ah)"/>
+<rect class="n n-export" x="780" y="50" width="180" height="120" rx="10"/>
+<text class="t-title" x="794" y="74">Native-speaker review</text>
+<text class="t-line" x="794" y="94">Streamlit review tab</text>
+<text class="t-line" x="794" y="110">scored against ensemble</text>
+<text class="t-line" x="794" y="126">never overrides it</text>
+<line class="n-rule" x1="794" x2="946" y1="140" y2="140"/>
+<text class="t-count" x="794" y="158">31 of 300 labeled</text>
+<path class="edge dashed " d="M962 110 H997" marker-end="url(#ah)"/>
+<rect class="n n-export" x="1000" y="50" width="170" height="120" rx="10"/>
+<text class="t-title" x="1014" y="74">Export · dataset-v1</text>
+<text class="t-line" x="1014" y="94">JSONL + Parquet + card</text>
+<text class="t-line" x="1014" y="110">SHA-256 summed zip</text>
+<text class="t-line" x="1014" y="126">→ leische (model repo)</text>
+<line class="n-rule" x1="1014" x2="1156" y1="140" y2="140"/>
+<text class="t-count" x="1014" y="158">15,000 rows</text>
+<path class="edge " d="M1085 265 V173" marker-end="url(#ah)"/>
+<text class="t-edge" x="1093" y="226" text-anchor="start">all resolved</text>
+      </svg>
+    </div>
+    <figcaption><b>The adjudicator replaces the labels; it doesn't break ties.</b> Its answer is a fourth independent opinion, and an adjudicated item goes to the human queue only if its confidence is below 0.6. Gold-sample labels are used to score the ensemble (Cohen's κ) and are never written over its labels.</figcaption>
+  </figure>
+  <ol class="schedule" aria-label="How uyam annotate pipeline schedules the work">
+    <li><span><b>Prepare.</b> Index the JSONL, apply the filters, run language ID.</span></li>
+    <li><span><b>Plan.</b> Fix one 15,000-item target set shared by every annotator. The remote gemma3 lane starts right away.</span></li>
+    <li><span><b>Sentiment.</b> XLM-R scores the target set on the local GPU after unloading any local LLM.</span></li>
+    <li><span><b>Local lane.</b> qwen3 and SEA-LION take turns on the 8 GB GPU, the least-finished model first.</span></li>
+    <li><span><b>Resolve.</b> Aggregate → adjudicate escalations → aggregate again.</span></li>
+    <li><span><b>Gold.</b> Draw the stratified 300-item sample for native-speaker review.</span></li>
+  </ol>
+  <p class="src">Order taken from <code>uyam annotate pipeline</code> (<code>src/uyam/annotate/pipeline.py</code>). Every step can be resumed: re-running it picks up where it stopped.</p>
+</section>
+
+<section id="example" aria-labelledby="h-ex">
+  <div class="sec-head">
+    <p class="eyebrow">Worked example</p>
+    <h2 id="h-ex">One comment, end to end</h2>
+  </div>
+  <p class="note-box"><b>What's real here:</b> the thread below was written for this demo and is not a real user's post. Every output shown, though, was produced by running it through Uyám's own code: the mapper, filters, fastText LID, XLM-R and context builder, plus the three annotators on the sarc-v2 prompt (on 2026-09-24). The author hash uses a throwaway demo key.</p>
+
+  <div class="steps">
+    <article class="step" style="--c: var(--c-collect)">
+      <div class="step-side">
+        <div class="step-no"><b>1</b><span>Collect · scrape</span></div>
+        <h3>Chrome renders the thread</h3>
+        <p>On r/Philippines a post complains about a third brownout this week, and a reply comments on it. Reddit's current UI renders every comment as a <code>&lt;shreddit-comment&gt;</code> element whose attributes already carry the fields we need, including its parent and depth in the thread.</p>
+      </div>
+      <div class="step-main">
+        <pre>&lt;shreddit-comment
+    thingid=&quot;t1_k02&quot;  postid=&quot;t3_1abcd23&quot;
+    parentid=&quot;t1_k01&quot; depth=&quot;1&quot;
+    author=&quot;demo_user_b&quot; score=&quot;203&quot;
+    created=&quot;2026-08-20T04:46:40+0000&quot;
+    permalink=&quot;/r/Philippines/comments/1abcd23/_/k02/&quot;&gt;
+  Ang galing naman talaga, at least consistent sila every week. Sana all ganyan ka-reliable 🙃
+&lt;/shreddit-comment&gt;</pre>
+        <p class="src">Attribute names as read by <code>sources/shreddit_parse.py</code>. When Reddit allows it, the same fields come from JSON fetched inside the browser session.</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-collect)">
+      <div class="step-side">
+        <div class="step-no"><b>2</b><span>Collect · normalize</span></div>
+        <h3>One schema, author hashed</h3>
+        <p><code>demo_user_b</code> is gone. Only an HMAC-SHA256 digest remains, so one person's comments still link together but the username can't be recovered from the digest. The id <code>t1_k02</code> is reserved in SQLite, then the line is appended to <code>data/raw/Philippines/&lt;date&gt;.jsonl</code>.</p>
+      </div>
+      <div class="step-main">
+        <pre>{
+  &quot;record_type&quot;: &quot;comment&quot;,
+  &quot;reddit_fullname&quot;: &quot;t1_k02&quot;,
+  &quot;submission_id&quot;: &quot;1abcd23&quot;,
+  &quot;parent_id&quot;: &quot;t1_k01&quot;,
+  &quot;parent_record_type&quot;: &quot;comment&quot;,
+  &quot;subreddit&quot;: &quot;Philippines&quot;,
+  &quot;body&quot;: &quot;Ang galing naman talaga, at least consistent sila every week. Sana all ganyan ka-reliable 🙃&quot;,
+  &quot;created_utc&quot;: &quot;2026-08-20T04:46:40Z&quot;,
+  &quot;score&quot;: 203,
+  &quot;depth&quot;: 1,
+  &quot;is_submitter&quot;: false,
+  &quot;author_hash&quot;: &quot;5767df07e4cbcdcd22b69c9a512e1a3b5bbe4a257207233804953eccbe19a21b&quot;,
+  &quot;author_status&quot;: &quot;pseudonymized&quot;,
+  &quot;sampling_strategy&quot;: &quot;natural&quot;
+}</pre>
+        <p class="src">Output of <code>map_comment_dict</code> (trimmed to the fields that matter here).</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-prep)">
+      <div class="step-side">
+        <div class="step-no"><b>3</b><span>Preprocess · filter</span></div>
+        <h3>Which records get annotated</h3>
+        <p>The same thread with a few extra records the filters are built to catch. URLs and markdown are stripped before the length checks, so a link padded with emoji doesn't count as text. The thresholds are 12 characters and 3 words.</p>
+      </div>
+      <div class="step-main table-scroll">
+        <table>
+          <thead><tr><th>Record</th><th>Text</th><th>Verdict</th></tr></thead>
+          <tbody>
+<tr class="keep"><td class="mono">t3_1abcd23</td><td>Brownout na naman dito sa amin, pangatlo na this week · Walang abiso, tapos 8 hours pa. Paano pa ako magwo-work from home nito?</td><td><span class="verdict">✓ kept</span></td></tr>
+<tr class="keep"><td class="mono">t1_k01</td><td>Same dito sa Cavite. &#x27;Scheduled maintenance&#x27; daw pero walang announcement kahit saan.</td><td><span class="verdict">✓ kept</span></td></tr>
+<tr class="keep"><td class="mono">t1_k02 <span class="tag">target</span></td><td>Ang galing naman talaga, at least consistent sila every week. Sana all ganyan ka-reliable 🙃</td><td><span class="verdict">✓ kept</span></td></tr>
+<tr class="keep"><td class="mono">t1_k03</td><td>HAHAHA the only thing they deliver on time is the brownout</td><td><span class="verdict">✓ kept</span></td></tr>
+<tr class="drop"><td class="mono">t1_k90</td><td>Please remember to follow the subreddit rules.</td><td><span class="verdict">✕ bot author</span></td></tr>
+<tr class="drop"><td class="mono">t1_k91</td><td>[deleted]</td><td><span class="verdict">✕ deleted author</span></td></tr>
+<tr class="drop"><td class="mono">t1_k92</td><td>lol same</td><td><span class="verdict">✕ too short</span></td></tr>
+<tr class="drop"><td class="mono">t1_k93</td><td>+1 https://imgur.com/a/xyz 😭😭<div class="norm">after cleanup: “+1 😭😭” (5 chars)</div></td><td><span class="verdict">✕ too short</span></td></tr>
+<tr class="drop"><td class="mono">t3_1abcd99</td><td>Look at this</td><td><span class="verdict">✕ link-only post</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-prep)">
+      <div class="step-side">
+        <div class="step-no"><b>4</b><span>Preprocess · language ID</span></div>
+        <h3>Token-level language share</h3>
+        <p>fastText labels each word as English or Tagalog, with a Filipino function-word list as backstop for short tokens. A message is <i>english</i> or <i>tagalog</i> only if at least 90% of its words are that language.</p>
+      </div>
+      <div class="step-main">
+        <div class="meters">
+          <div class="meter" style="--c: var(--c-collect)"><span>English</span><span class="track"><span class="fill" style="width: 53%"></span><span class="thr" title="90% threshold"></span></span><span class="val">53%</span></div>
+          <div class="meter" style="--c: var(--c-prep)"><span>Tagalog</span><span class="track"><span class="fill" style="width: 47%"></span><span class="thr"></span></span><span class="val">47%</span></div>
+        </div>
+        <p class="result">Neither share reaches the dashed 90% line, so the result is <b>taglish</b> (8 of 15 words English, 7 Tagalog; whole-message confidence 0.84).</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-prep)">
+      <div class="step-side">
+        <div class="step-no"><b>5</b><span>Preprocess · literal sentiment</span></div>
+        <h3>What the words say on the surface</h3>
+        <p>A multilingual XLM-RoBERTa classifier reads only the target text. It gives a model-independent sentiment vote that is kept alongside the LLM labels.</p>
+      </div>
+      <div class="step-main">
+        <div class="meters">
+          <div class="meter" style="--c: var(--c-llm)"><span>positive</span><span class="track"><span class="fill" style="width: 84.4%"></span></span><span class="val">0.844</span></div>
+          <div class="meter" style="--c: var(--ink-3)"><span>neutral</span><span class="track"><span class="fill" style="width: 9.8%"></span></span><span class="val">0.098</span></div>
+          <div class="meter" style="--c: var(--c-prep)"><span>negative</span><span class="track"><span class="fill" style="width: 5.9%"></span></span><span class="val">0.059</span></div>
+        </div>
+        <p class="result">“Ang galing… sana all… reliable” reads as praise, so the literal label is <b>positive</b>. That surface polarity is what sarcasm inverts, and the classifier has no way to see it.</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-prep)">
+      <div class="step-side">
+        <div class="step-no"><b>6</b><span>Preprocess · context</span></div>
+        <h3>The thread the annotators see</h3>
+        <p>The context builder walks up the <code>parent_id</code> chain to the post and adds up to three direct replies, since other users' reactions often give sarcasm away. The block is saved per item, so every annotator sees the same text and the export ships it verbatim.</p>
+      </div>
+      <div class="step-main">
+        <pre class="wrap-pre">=== THREAD CONTEXT ===
+[SUBMISSION r/Philippines] Brownout na naman dito sa amin, pangatlo na this week
+Walang abiso, tapos 8 hours pa. Paano pa ako magwo-work from home nito?
+[PARENT depth=0] Same dito sa Cavite. &#x27;Scheduled maintenance&#x27; daw pero walang announcement kahit saan.
+[REPLY 1 (OP)] HAHAHA the only thing they deliver on time is the brownout</pre>
+        <p class="src">Output of <code>build_context</code>. Limits: 6 parent comments, 3 replies, 6,000 characters.</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-llm)">
+      <div class="step-side">
+        <div class="step-no"><b>7</b><span>LLM · prompt</span></div>
+        <h3>Guideline, examples, context, target</h3>
+        <p>The system prompt defines the thesis's four sarcasm cues. Six worked examples cover hard cases, including a sincere “sana all” and a joke that is not sarcasm. The model must reply in a fixed JSON schema and name its cues <i>before</i> giving a sarcasm verdict.</p>
+      </div>
+      <div class="step-main">
+        <pre>[system]  &quot;You are an expert annotator of Philippine social media…&quot;
+          definitions: language · literal_sentiment · 4 cues
+          sarcastic · intended_sentiment · confidence      (2,176 chars)
+
+[user]    === EXAMPLES ===          6 worked examples (Taglish/EN/TL)
+          === THREAD CONTEXT ===    ← the block above
+          === TARGET (comment) ===
+          Ang galing naman talaga, at least consistent sila…
+          === TASK ===
+          Annotate the TARGET. Output JSON only.
+
+[format]  JSON schema, filled in this order:
+          language → literal_sentiment → cues → sarcastic
+          → intended_sentiment → confidence → rationale</pre>
+        <p class="src">Shape of <code>render_user_prompt</code> in <code>annotate/prompts.py</code>. The prompt text is hashed, so a reworded prompt must get a new version and can't mix with sarc-v2 results.</p>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-llm)">
+      <div class="step-side">
+        <div class="step-no"><b>8</b><span>LLM · three votes</span></div>
+        <h3>Three models, answering independently</h3>
+        <p>Each model gets the identical prompt at temperature 0, seed 7, with its output held to the schema. None sees another's answer.</p>
+      </div>
+      <div class="step-main">
+        <div class="votes">
+
+<div class="vote">
+  <div class="vote-head"><span class="mono">qwen3:8b</span><span class="where">local</span></div>
+  <div class="verdict-big">sarcastic: <b>true</b></div>
+  <dl class="kv">
+    <dt>language</dt><dd>taglish</dd>
+    <dt>literal → intended</dt><dd>positive → negative</dd>
+    <dt>confidence</dt><dd class="num">0.95</dd>
+  </dl>
+  <ul class="cues"><li class="on">✓ polarity inversion</li><li class="on">✓ rhetorical intent</li><li class="on">✓ contextual incongruity</li><li class="off">– hyperbole</li></ul>
+  <blockquote>“Praise for the brownout&#x27;s consistency contradicts the context of frustration; &#x27;sana all&#x27; is mock admiration, not genuine approval.”</blockquote>
+</div>
+
+<div class="vote">
+  <div class="vote-head"><span class="mono">SEA-LION v3 9B</span><span class="where">local</span></div>
+  <div class="verdict-big">sarcastic: <b>true</b></div>
+  <dl class="kv">
+    <dt>language</dt><dd>taglish</dd>
+    <dt>literal → intended</dt><dd>positive → negative</dd>
+    <dt>confidence</dt><dd class="num">0.90</dd>
+  </dl>
+  <ul class="cues"><li class="on">✓ polarity inversion</li><li class="on">✓ rhetorical intent</li><li class="on">✓ contextual incongruity</li><li class="off">– hyperbole</li></ul>
+  <blockquote>“Mock praise for unreliable brownouts, &#x27;sana all&#x27; used sarcastically highlights the frustration.”</blockquote>
+</div>
+
+<div class="vote">
+  <div class="vote-head"><span class="mono">gemma3:27b</span><span class="where">remote</span></div>
+  <div class="verdict-big">sarcastic: <b>true</b></div>
+  <dl class="kv">
+    <dt>language</dt><dd>taglish</dd>
+    <dt>literal → intended</dt><dd>positive → negative</dd>
+    <dt>confidence</dt><dd class="num">0.90</dd>
+  </dl>
+  <ul class="cues"><li class="on">✓ polarity inversion</li><li class="on">✓ rhetorical intent</li><li class="on">✓ contextual incongruity</li><li class="off">– hyperbole</li></ul>
+  <blockquote>“The praise is ironic given the context of frequent brownouts, and &#x27;sana all&#x27; with the upside-down face signals resentment.”</blockquote>
+</div>
+        </div>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-resolve)">
+      <div class="step-side">
+        <div class="step-no"><b>9</b><span>Resolve · aggregate</span></div>
+        <h3>Unanimous, so no adjudicator</h3>
+        <p>Sarcasm is 3–0 and every other label is unanimous, so this item is <code>resolved_by: unanimous</code>. A single dissenting sarcasm vote (2–1) would have sent it to the qwen3:32b adjudicator, as happened to 4,544 items.</p>
+      </div>
+      <div class="step-main table-scroll">
+        <table class="agg-table">
+          <thead><tr><th>Label</th><th>Votes</th><th>Rule</th><th>Final</th></tr></thead>
+          <tbody>
+            <tr><td>sarcastic</td><td class="mono">true · true · true</td><td>must be unanimous</td><td class="mono">true (3–0)</td></tr>
+            <tr><td>language</td><td class="mono">taglish ×3</td><td>≥ 2 of 3</td><td class="mono">taglish</td></tr>
+            <tr><td>literal sentiment</td><td class="mono">positive ×3</td><td>≥ 2 of 3</td><td class="mono">positive</td></tr>
+            <tr><td>intended sentiment</td><td class="mono">negative ×3</td><td>≥ 2 of 3</td><td class="mono">negative</td></tr>
+            <tr><td>cues</td><td class="mono">inversion, rhetorical, incongruity: 3/3 · hyperbole: 0/3</td><td>majority</td><td class="mono">3 of 4 cues</td></tr>
+            <tr><td>mean confidence</td><td class="mono">0.95 · 0.90 · 0.90</td><td>average of the voters</td><td class="mono">0.917</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="step" style="--c: var(--c-export)">
+      <div class="step-side">
+        <div class="step-no"><b>10</b><span>Export</span></div>
+        <h3>The row the model trains on</h3>
+        <p>Each row in <code>dataset-v1.jsonl</code> holds the final labels, how they were reached, every vote with its rationale, the LID and XLM-R outputs, and the exact context snapshot. Fields are whitelisted, so no username can leak into the export.</p>
+      </div>
+      <div class="step-main">
+        <pre>{
+  &quot;reddit_fullname&quot;: &quot;t1_k02&quot;,
+  &quot;record_type&quot;: &quot;comment&quot;,
+  &quot;subreddit&quot;: &quot;Philippines&quot;,
+  &quot;text&quot;: &quot;Ang galing naman talaga, at least consistent sila every week. Sana all ganyan ka-reliable 🙃&quot;,
+  &quot;labels&quot;: {
+    &quot;sarcastic&quot;: true,
+    &quot;language&quot;: &quot;taglish&quot;,
+    &quot;literal_sentiment&quot;: &quot;positive&quot;,
+    &quot;intended_sentiment&quot;: &quot;negative&quot;,
+    &quot;cues&quot;: {
+      &quot;polarity_inversion&quot;: true,
+      &quot;rhetorical_intent&quot;: true,
+      &quot;contextual_incongruity&quot;: true,
+      &quot;hyperbole&quot;: false
+    }
+  },
+  &quot;reliability&quot;: {
+    &quot;resolved_by&quot;: &quot;unanimous&quot;,
+    &quot;sarcasm_votes&quot;: &quot;3-0&quot;,
+    &quot;n_annotators&quot;: 3,
+    &quot;mean_confidence&quot;: 0.9167,
+    &quot;needs_human&quot;: false,
+    &quot;adjudicator&quot;: null
+  },
+  &quot;aux&quot;: {
+    &quot;lid&quot;: {
+      &quot;auto_label&quot;: &quot;taglish&quot;,
+      &quot;en_ratio&quot;: 0.5333,
+      &quot;tl_ratio&quot;: 0.4667
+    },
+    &quot;tx_sentiment&quot;: {
+      &quot;label&quot;: &quot;positive&quot;,
+      &quot;p_pos&quot;: 0.8438,
+      &quot;p_neu&quot;: 0.0975,
+      &quot;p_neg&quot;: 0.0587
+    }
+  },
+  &quot;context&quot;: {
+    &quot;source&quot;: &quot;annotator_snapshot&quot;,
+    &quot;submission&quot;: &quot;{…}&quot;,
+    &quot;parent_chain&quot;: [
+      &quot;{…}&quot;
+    ],
+    &quot;replies&quot;: [
+      &quot;{…}&quot;
+    ]
+  }
+}</pre>
+        <p class="src">Shape of <code>build_export_row</code> (trimmed: <code>{…}</code> marks nested objects left out here).</p>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section id="numbers" aria-labelledby="h-num">
+  <div class="sec-head">
+    <p class="eyebrow">Current run</p>
+    <h2 id="h-num">The run in numbers</h2>
+  </div>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Why 3,149 records were excluded</h3>
+      <p class="sub">Out of 20,573 indexed records. “Bot author” means AutoModerator, matched by its hashed name.</p>
+      <div class="bars" style="--c: var(--c-prep)" data-total="3149" data-unit="excluded records">
+        <div class="bar-row" tabindex="0" data-v="1507"><span>bot author</span><span class="track"><span class="fill"></span></span><span class="val">1,507</span></div>
+        <div class="bar-row" tabindex="0" data-v="896"><span>too short (&lt; 12 chars)</span><span class="track"><span class="fill"></span></span><span class="val">896</span></div>
+        <div class="bar-row" tabindex="0" data-v="340"><span>too few words (&lt; 3)</span><span class="track"><span class="fill"></span></span><span class="val">340</span></div>
+        <div class="bar-row" tabindex="0" data-v="278"><span>link-only post</span><span class="track"><span class="fill"></span></span><span class="val">278</span></div>
+        <div class="bar-row" tabindex="0" data-v="116"><span>deleted author</span><span class="track"><span class="fill"></span></span><span class="val">116</span></div>
+        <div class="bar-row" tabindex="0" data-v="12"><span>moderator sticky</span><span class="track"><span class="fill"></span></span><span class="val">12</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>How the 15,000 labels were settled</h3>
+      <p class="sub">“Majority” means sarcasm was unanimous and at least one other label won 2–1.</p>
+      <div class="bars" style="--c: var(--c-resolve)" data-total="15000" data-unit="items">
+        <div class="bar-row" tabindex="0" data-v="3355"><span>all 3 agree on everything</span><span class="track"><span class="fill"></span></span><span class="val">3,355</span></div>
+        <div class="bar-row" tabindex="0" data-v="6759"><span>majority</span><span class="track"><span class="fill"></span></span><span class="val">6,759</span></div>
+        <div class="bar-row" tabindex="0" data-v="4886"><span>adjudicator</span><span class="track"><span class="fill"></span></span><span class="val">4,886</span></div>
+        <div class="bar-row" tabindex="0" data-v="0"><span>human queue</span><span class="track"><span class="fill"></span></span><span class="val">0</span></div>
+      </div>
+      <p class="sub">Of the 4,886 adjudicated items, 753 came out sarcastic and 4,133 not.</p>
+    </div>
+    <div class="card">
+      <h3>Sarcasm by language (exported rows)</h3>
+      <p class="sub">The sarcasm rate is about 10–11% in every language group.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Language (LLM final)</th><th class="num">Rows</th><th class="num">Sarcastic</th><th class="num">Rate</th></tr></thead>
+          <tbody>
+            <tr><td>taglish</td><td class="num">6,751</td><td class="num">715</td><td class="num">10.6%</td></tr>
+            <tr><td>english</td><td class="num">4,171</td><td class="num">460</td><td class="num">11.0%</td></tr>
+            <tr><td>tagalog</td><td class="num">4,078</td><td class="num">426</td><td class="num">10.4%</td></tr>
+            <tr><td><b>total</b></td><td class="num"><b>15,000</b></td><td class="num"><b>1,601</b></td><td class="num"><b>10.7%</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h3>How much the three LLMs agree</h3>
+      <p class="sub">Fleiss' κ across qwen3, SEA-LION and gemma3 on 14,998 items that all three labeled (Krippendorff's α matches to 3 decimals).</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Label</th><th class="num">Fleiss' κ</th><th>Reading</th></tr></thead>
+          <tbody>
+            <tr><td>literal sentiment</td><td class="num">0.637</td><td>substantial</td></tr>
+            <tr><td>intended sentiment</td><td class="num">0.579</td><td>moderate</td></tr>
+            <tr><td>language</td><td class="num">0.439</td><td>moderate</td></tr>
+            <tr><td>sarcastic</td><td class="num">0.376</td><td>fair: why sarcasm needs 3–0 or adjudication</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="sub">fastText LID and the LLM language label agree on 62.5% of items.</p>
+    </div>
+  </div>
+</section>
+
+<section id="notes" aria-labelledby="h-notes">
+  <div class="sec-head">
+    <p class="eyebrow">Worth saying out loud</p>
+    <h2 id="h-notes">Caveats and design choices</h2>
+  </div>
+  <ul class="notes">
+    <li><b>The prompt has been revised once.</b> A 100-item pilot (sarc-v1) showed models labeling English targets “taglish” from the thread around them, and treating jokes as sarcasm. sarc-v2 judges language from the target alone and adds a jokes-are-not-sarcasm rule with an example.</li>
+    <li><b>Keyword oversampling is built but not yet used.</b> Eight Taglish markers (“edi wow”, “sana all”, “ikaw na”…) can be searched and tagged <code>keyword_oversampled</code>, but every current row is natural sampling.</li>
+    <li><b>Human validation is in progress.</b> 31 of the 300 gold items are labeled so far. Gold labels only score the ensemble and never change it.</li>
+    <li><b>fastText rarely says “tagalog”.</b> It tagged only 17 eligible items pure Tagalog, against the LLMs' 4,078, The 90%-per-token rule rarely holds on Reddit Tagalog, which mixes in English loanwords. The LLM label is the final one and LID is shipped as an auxiliary signal.</li>
+    <li><b>LLM confidence is poorly calibrated.</b> The dataset card recommends vote pattern (<code>sarcasm_votes</code>) and <code>resolved_by</code> as reliability signals instead.</li>
+    <li><b>Collection respects the platform's limits.</b> Captchas are never auto-solved; the scraper pauses until a person solves them. Records are pseudonymized, not anonymous, and the thesis methodology has to describe them that way.</li>
+  </ul>
+</section>
+
+<footer>Built from the uyam repository (collector <code>src/uyam</code>, annotation <code>src/uyam/annotate</code>, config <code>config/annotation.yaml</code>) and the sarc-v2 export card. Target set: 15,000 items (run with a <code>--target</code> override; the config default is 12,000).</footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+(function () {
+  document.querySelectorAll('.bars').forEach(function (group) {
+    var rows = group.querySelectorAll('.bar-row');
+    var max = 0;
+    rows.forEach(function (r) { max = Math.max(max, +r.dataset.v); });
+    var total = +group.dataset.total, unit = group.dataset.unit;
+    rows.forEach(function (r) {
+      var v = +r.dataset.v;
+      r.querySelector('.fill').style.width = (max ? v / max * 100 : 0) + '%';
+      var label = r.firstElementChild.textContent;
+      r.dataset.tip = label + ': ' + v.toLocaleString('en-US') + ' (' + (v / total * 100).toFixed(1) + '% of ' + total.toLocaleString('en-US') + ' ' + unit + ')';
+      r.setAttribute('aria-label', r.dataset.tip);
+    });
+  });
+  var tip = document.getElementById('tip');
+  function show(e, el) {
+    tip.textContent = el.dataset.tip; tip.hidden = false;
+    var x = e.clientX, y = e.clientY;
+    if (x === undefined) { var b = el.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
+    tip.style.left = Math.min(x + 12, window.innerWidth - tip.offsetWidth - 8) + 'px';
+    tip.style.top = (y - tip.offsetHeight - 10) + 'px';
+  }
+  document.querySelectorAll('.bar-row').forEach(function (el) {
+    el.addEventListener('mousemove', function (e) { show(e, el); });
+    el.addEventListener('mouseleave', function () { tip.hidden = true; });
+    el.addEventListener('focus', function (e) { show({}, el); });
+    el.addEventListener('blur', function () { tip.hidden = true; });
+  });
+})();
+</script>
+
+</body>
+</html>
