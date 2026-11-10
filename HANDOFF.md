@@ -82,6 +82,28 @@ records which ones are done.
 7. Thesis text: state the Arctic Shift source and its ingest-time scores in
    the methodology/ethics section, plus the real window and the phatic filter.
 
+**Shreddit is broken on Reddit's side (found 2026-11-10, trial run with the new
+DataImpulse proxies).** The proxies are fine: 9/10 reach Reddit and every
+browser launched. The run stored 63 posts / 554 comments (mostly the "edi
+wow" searches) and was then stopped. Three scraper bugs need fixing before
+the next Shreddit run (agent task):
+1. `/r/<sub>/new.json` now returns **403 even without a proxy**, so the JSON
+   listing path is dead. Sep 5 got ~1,000 posts per subreddit this way.
+   `_collect_calendar` falls back to the DOM, which found only 3 posts per sub.
+2. The DOM listing (`_collect_dom_listing_posts` / `_read_listing_cards` in
+   `sources/shreddit.py`) reads cards one by one with `locator.nth(i)`. The
+   feed is virtualised: a probe saw 27 → 52 → 77 → 50 cards as old cards were
+   removed. A card that detaches mid-read hangs 45 s and kills the worker
+   (r/Philippines). Fix: read every card in one `evaluate_all`, wait for
+   the card count to grow (~3–4 s per page on residential proxies) instead of
+   a fixed 1.5 s, and keep scrolling past recycled cards until the walk
+   reaches `--since`.
+3. Keyword-oversampling jobs for the same subreddit run in parallel on the
+   same Chrome profile (`data/.browser-profiles/<sub>`), which fails with
+   "profile already in use". Fix: give each job its own profile dir
+   (e.g. sub + worker index), or schedule per-subreddit jobs serially.
+Until then, the **archive source** covers everything up to ~2 days ago.
+
 **Open questions / ideas for agents:**
 - Records don't carry their source; it's only in the run manifest. If leische
   needs per-row provenance (e.g. to ignore archive scores), add a
