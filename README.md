@@ -373,6 +373,17 @@ http://username:password@host:port
 host:port:username:password
 ```
 
+Also accepted: `user:pass@host:port`, `user:pass:host:port`, and `https://` /
+`socks5://` URLs. Chrome cannot authenticate to SOCKS proxies, so use HTTP(S)
+endpoints when the provider requires a username and password.
+
+**Proxies tab (Streamlit).** Shows the current list by provider, with
+passwords masked. It can test a random sample against reddit.com, remove a
+provider's entries (an expired plan, for example), and replace or append a
+pasted or uploaded list. Every write first backs the file up to
+`data/proxy-backups/` (gitignored), and any backup can be restored from the
+tab.
+
 Comments (`#`) and blank lines are ignored. If the file is missing or empty, the collector uses a direct connection. Proxy credentials are never logged — only `hostname:port` appears in log output.
 
 See [`proxies.example.txt`](proxies.example.txt) for format examples.

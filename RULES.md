@@ -92,6 +92,7 @@ replacing it:
 | Gold labels are evaluation-only; gold sample is deterministic per seed | `test_annotate_review.py`, `test_annotate_export.py` |
 | Export bundle checksums match its members | `test_annotate_export.py` |
 | Reminder ids are unique, checks exist, and ticks persist across reloads | `test_reminders.py` |
+| Proxy passwords never render in the app; every proxies.txt write is backed up first | `test_proxies_admin.py` |
 
 When you add a new source, filter, or export field, add a row here.
 

@@ -225,7 +225,21 @@ def _check_export_v2(data_dir: Path) -> str | None:
     return f"dataset-v2.jsonl exported {when}"
 
 
+def _check_proxies_file(data_dir: Path) -> str | None:
+    """proxies.txt sits at the repo root, next to data/."""
+    from uyam.proxies_admin import read_file
+
+    path = data_dir.parent / "proxies.txt"
+    if not path.exists():
+        return None
+    parsed = read_file(path)
+    when = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).date().isoformat()
+    providers = ", ".join(f"{p} ({n:,})" for p, n in parsed.providers.most_common(3))
+    return f"proxies.txt: {len(parsed.urls):,} proxies — {providers or 'none'}; changed {when}"
+
+
 CHECKS: dict[str, Callable[[Path], str | None]] = {
+    "proxies_file": _check_proxies_file,
     "db_backup": _check_db_backup,
     "archive_runs": _check_archive_runs,
     "shreddit_recent": _check_shreddit_recent,

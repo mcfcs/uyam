@@ -108,6 +108,13 @@ def test_detectors_report_evidence_and_stay_quiet_without_it(tmp_path: Path) -> 
     assert run_check("gold_progress", data) == "Gold subset: 1 / 2 labeled"
     assert "dataset-v2.jsonl exported" in str(run_check("export_v2", data))
 
+    (tmp_path / "proxies.txt").write_text(
+        "a.wolveproxy.com:1:u:secretpw\ngw.newprov.io:8000:u:secretpw\n", encoding="utf-8"
+    )
+    hint = str(run_check("proxies_file", data))
+    assert hint.startswith("proxies.txt: 2 proxies — ")
+    assert "newprov.io (1)" in hint and "secretpw" not in hint
+
 
 def test_reminders_tab_ticks_persist(tmp_path: Path) -> None:
     from streamlit.testing.v1 import AppTest

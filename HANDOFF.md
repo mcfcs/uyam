@@ -141,7 +141,16 @@ records which ones are done.
 **Later in the session:** added the Streamlit **Reminders** tab (first tab,
 with the pending count in its label). It's backed by `config/reminders.yaml`
 plus `data/reminders.json`. Seven read-only detectors show "Detected:" hints.
-Gio can add their own notes. The app was relaunched detached via
+Gio can add their own notes. A **Proxies** tab followed. It lists proxies by
+provider (passwords masked) and tests a sample against reddit.com. It can also
+remove a provider, replace or append a pasted or uploaded list, and restore
+backups from `data/proxy-backups/`. The parser now also accepts
+`user:pass@host:port`, `user:pass:host:port` and `https://` / `socks5://` URLs,
+and it percent-encodes credentials. **Diagnosis:** proxies.txt held only the
+5,000 wolveproxy.com proxies (unchanged since 2026-08-15, plan expired). They
+went 0/8 in a probe while a direct connection got HTTP 200. That's why
+Shreddit had been failing; the last real run on 2026-09-05 logged 1,267 failed
+page loads. Gio has to load the new provider's list (it's a reminder). The app was relaunched detached via
 `run-app.bat` at http://100.71.83.125:8501 and logs to
 `data/.streamlit-app.log`.
 

@@ -1,6 +1,8 @@
 # Secrets — never commit
 .env
 proxies.txt
+proxies.txt.tmp
+data/proxy-backups/
 
 # Collected research data — managed outside version control
 data/raw/

@@ -19,23 +19,32 @@ import logging
 import re
 import time
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 logger = logging.getLogger(__name__)
 
 _COLON_SEP_RE = re.compile(
     r"^(?P<host>[^:]+):(?P<port>\d+):(?P<user>[^:]+):(?P<password>.+)$"
 )
-_URL_RE = re.compile(r"^https?://")
+_URL_RE = re.compile(r"^(?:https?|socks5h?|socks4)://", re.IGNORECASE)
+_AT_FORM_RE = re.compile(r"^(?P<user>[^:@]+):(?P<password>.+)@(?P<host>[^:@]+):(?P<port>\d+)$")
+
+
+def _cred_url(host: str, port: str, user: str, password: str) -> str:
+    """http URL with percent-encoded credentials (a ':' or '@' must not break it)."""
+    return f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
 
 
 def _parse_proxy_line(line: str) -> str | None:
     """Parse one proxy line and return a URL-formatted proxy string, or None if invalid.
 
     Supported formats:
-      http://host:port
+      http://host:port            (also https://, socks5://, socks5h://, socks4://)
       http://user:pass@host:port
-      host:port:user:pass     (colon-separated, wolveproxy-style)
+      user:pass@host:port         (no scheme -> http)
+      host:port:user:pass         (colon-separated, wolveproxy-style)
+      user:pass:host:port         (colon-separated, user first; port is last)
+      host:port
 
     Credentials are accepted but never logged.
     """
@@ -51,16 +60,20 @@ def _parse_proxy_line(line: str) -> str | None:
         logger.warning("proxy_parse_warning: malformed URL proxy %r (skipped)", line)
         return None
 
+    m = _AT_FORM_RE.match(line)
+    if m:
+        return _cred_url(m["host"], m["port"], m["user"], m["password"])
+
     m = _COLON_SEP_RE.match(line)
     if m:
-        host = m.group("host")
-        port = m.group("port")
-        user = m.group("user")
-        password = m.group("password")
-        return f"http://{user}:{password}@{host}:{port}"
+        return _cred_url(m["host"], m["port"], m["user"], m["password"])
+
+    parts = line.split(":")
+    # user:pass:host:port — the port is last and the second field is not a port
+    if len(parts) == 4 and parts[3].isdigit() and not parts[1].isdigit():
+        return _cred_url(parts[2], parts[3], parts[0], parts[1])
 
     # Two-part host:port (no credentials)
-    parts = line.split(":")
     if len(parts) == 2 and parts[1].isdigit():
         return f"http://{parts[0]}:{parts[1]}"
 

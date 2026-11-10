@@ -811,6 +811,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
 (
     tab_reminders,
     tab_collect,
+    tab_proxies,
     tab_data,
     tab_history,
     tab_stats,
@@ -820,6 +821,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
     [
         _reminders_label,
         "Collection",
+        "Proxies",
         "Data Browser",
         "Run History",
         "Stats",
@@ -838,6 +840,17 @@ with tab_reminders:
         render_reminders_tab(REMINDERS_CONFIG, REMINDERS_STATE, DATA_DIR)
     except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
         st.error(f"Reminders unavailable: {exc}")
+
+# ===========================================================================
+# Proxies (view / test / replace proxies.txt; backups in data/proxy-backups/)
+# ===========================================================================
+with tab_proxies:
+    try:
+        from uyam.proxies_ui import render_proxies_tab
+
+        render_proxies_tab(PROXIES_PATH, DATA_DIR / "proxy-backups")
+    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+        st.error(f"Proxy manager unavailable: {exc}")
 
 # ===========================================================================
 # Tab 1: Collection

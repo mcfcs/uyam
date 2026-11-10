@@ -7,7 +7,7 @@
 # Fields: id, section, title, details (markdown), command (optional, shown as a
 # copyable block), check (optional built-in detector that shows a hint — it
 # never ticks the box for you):
-#   db_backup | archive_runs | shreddit_recent | phatic_selected
+#   db_backup | proxies_file | archive_runs | shreddit_recent | phatic_selected
 #   low_conf_queue | gold_progress | export_v2
 
 reminders:
@@ -31,6 +31,18 @@ reminders:
       keyword oversampling searches run afterwards automatically.
     command: uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40
     check: archive_runs
+
+  - id: proxies-new-provider-2026-11
+    section: Data collection
+    title: Load the new provider's proxies (Wolves plan expired)
+    details: >
+      proxies.txt still held only the 5,000 wolveproxy.com proxies (unchanged
+      since 2026-08-15), so Shreddit runs were going through dead proxies — the
+      last real run (2026-09-05) logged 1,267 failed page loads. Proxies tab →
+      paste or upload the new provider's list → "Test the new list first" →
+      Replace the whole list (a backup is kept). The archive backfill does not
+      need proxies.
+    check: proxies_file
 
   - id: shreddit-latest-days-nov
     section: Data collection
