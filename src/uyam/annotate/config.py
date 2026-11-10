@@ -51,6 +51,9 @@ class CandidateFiltersConfig:
     exclude_authors: list[str] = field(default_factory=lambda: ["AutoModerator"])
     exclude_distinguished_moderator: bool = True
     include_link_posts: bool = False
+    exclude_phatic: bool = True
+    phatic_max_tokens: int = 10
+    phatic_max_leftover: int = 2
 
 
 @dataclass
@@ -191,6 +194,9 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
             filt_raw.get("exclude_distinguished_moderator", True)
         ),
         include_link_posts=bool(filt_raw.get("include_link_posts", False)),
+        exclude_phatic=bool(filt_raw.get("exclude_phatic", True)),
+        phatic_max_tokens=int(filt_raw.get("phatic_max_tokens", 10)),
+        phatic_max_leftover=int(filt_raw.get("phatic_max_leftover", 2)),
     )
 
     lid_raw: dict[str, Any] = raw.get("lid") or {}

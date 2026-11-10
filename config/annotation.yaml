@@ -60,6 +60,12 @@ candidate_filters:
   exclude_authors: [AutoModerator]
   exclude_distinguished_moderator: true
   include_link_posts: false
+  # Short social-ritual text (happy birthday / thanks / congrats / greetings)
+  # with nothing else in it -> exclusion_reason "phatic". Items an annotator
+  # already voted sarcastic stay eligible and go to the low_confidence queue.
+  exclude_phatic: true
+  phatic_max_tokens: 10      # longer items are never phatic
+  phatic_max_leftover: 2     # content tokens allowed besides phrases/fillers
 
 lid:
   model_path: data/models/lid.176.bin   # auto-downloaded on first `annotate lid`

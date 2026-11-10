@@ -75,13 +75,13 @@ def select(
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
-    """Apply candidate filters (bots, deleted, link posts, too short)."""
+    """Apply candidate filters (bots, deleted, link posts, too short, phatic)."""
     configure_logging(log_level)
     cfg = load_annotation_config(config_path)
     from uyam.annotate.candidates import select_candidates
 
     with AnnotationDatabase(cfg.db_path) as db:
-        select_candidates(db, cfg.candidate_filters)
+        stats = select_candidates(db, cfg.candidate_filters)
         counts = db.candidate_counts()
     table = Table(title="Candidate selection", show_header=True, header_style="bold")
     table.add_column("Outcome")
@@ -89,6 +89,11 @@ def select(
     for reason, n in counts.items():
         table.add_row(reason, str(n))
     console.print(table)
+    if stats["phatic_to_review"]:
+        console.print(
+            f"{stats['phatic_to_review']} phatic items already voted sarcastic were kept "
+            "and sent to the low_confidence review queue"
+        )
 
 
 @annotate_app.command()

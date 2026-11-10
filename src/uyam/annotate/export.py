@@ -412,9 +412,17 @@ def run_export(
 
     with AnnotationDatabase(cfg.db_path) as db:
         aggregates = db.all_aggregates(prompt_version)
+        # Aggregates outlive eligibility: an item annotated before a filter was
+        # added (e.g. `phatic`) keeps its aggregate row, so the export applies
+        # the candidate filters as they stand now.
+        eligible = set(db.eligible_fullnames())
         rows: list[dict[str, Any]] = []
         skipped_unresolved = 0
+        skipped_ineligible = 0
         for agg in aggregates:
+            if agg["reddit_fullname"] not in eligible:
+                skipped_ineligible += 1
+                continue
             if not include_unresolved and agg.get("resolved_by") is None:
                 skipped_unresolved += 1
                 continue
@@ -488,6 +496,7 @@ def run_export(
             "candidates": candidate_counts,
             "exported_rows": len(rows),
             "skipped_unresolved": skipped_unresolved,
+            "skipped_ineligible": skipped_ineligible,
         },
         "label_distributions": _label_distributions(rows) if rows else {},
         "agreement": agreement,
@@ -500,6 +509,9 @@ def run_export(
             "min_tokens": cfg.candidate_filters.min_tokens,
             "exclude_authors": cfg.candidate_filters.exclude_authors,
             "include_link_posts": cfg.candidate_filters.include_link_posts,
+            "exclude_phatic": cfg.candidate_filters.exclude_phatic,
+            "phatic_max_tokens": cfg.candidate_filters.phatic_max_tokens,
+            "phatic_max_leftover": cfg.candidate_filters.phatic_max_leftover,
         },
         "notes": [
             "Labels are LLM-ensemble annotations (3 annotators, unanimity-or-escalate on "
@@ -533,6 +545,7 @@ def run_export(
     return {
         "rows": len(rows),
         "skipped_unresolved": skipped_unresolved,
+        "skipped_ineligible": skipped_ineligible,
         "jsonl": str(jsonl_path),
         "parquet": str(parquet_path) if parquet_path else None,
         "corpus": str(corpus_path),

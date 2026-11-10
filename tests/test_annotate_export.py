@@ -157,3 +157,25 @@ def test_export_bundle_can_be_skipped(tmp_path: Path) -> None:
     )
     assert result["zip"] is None
     assert not (cfg.export.out_dir / "uyam-dataset-vtest.zip").exists()
+
+
+def test_export_skips_items_no_longer_eligible(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.conn.execute(
+            "UPDATE candidates SET eligible = 0, exclusion_reason = 'phatic' "
+            "WHERE reddit_fullname = 't1_c1'"
+        )
+        db.commit()
+    result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
+
+    fullnames = {
+        json.loads(line)["reddit_fullname"]
+        for line in Path(result["jsonl"]).read_text(encoding="utf-8").splitlines()
+    }
+    assert "t1_c1" not in fullnames
+    assert result["skipped_ineligible"] == 1
+    card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))
+    assert card["counts"]["skipped_ineligible"] == 1
+    assert card["counts"]["candidates"]["phatic"] == 1
+    assert card["candidate_filters"]["exclude_phatic"] is True

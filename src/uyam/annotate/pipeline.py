@@ -144,8 +144,15 @@ def run_pipeline(
                 db, cfg.data_dir, extra_bot_authors=cfg.candidate_filters.exclude_authors
             )
             console.print(f"indexed {stats['records']} records from {stats['files']} files")
-            select_candidates(db, cfg.candidate_filters)
-            console.print(f"eligible candidates: {db.eligible_count()}")
+            sel = select_candidates(db, cfg.candidate_filters)
+            console.print(
+                f"eligible candidates: {db.eligible_count()}"
+                + (
+                    f" ({sel['phatic_to_review']} phatic-but-voted-sarcastic sent to review)"
+                    if sel["phatic_to_review"]
+                    else ""
+                )
+            )
             lid_stats = run_lid(db, cfg.lid)
             console.print(f"language ID: {lid_stats['processed']} new items")
 
