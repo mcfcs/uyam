@@ -33,6 +33,7 @@ Reddit API (PRAW)    Shreddit HTML (Chrome)    Fixture JSON
 | `shreddit` | none (proxies.txt required) | Headful Chrome, Shreddit HTML | Live collection without a Reddit API app |
 | `public` | none (proxies.txt required) | Alias of `shreddit` | Same as shreddit |
 | `reddit` | API app | PRAW | Optional official API path |
+| `archive` | none | Arctic Shift archive API | Date-range backfill (months back); needs `--since` |
 
 Reddit's unauthenticated `.json` endpoints are blocked. `shreddit` reads the same custom elements a logged-out browser sees (`<shreddit-post>`, `<shreddit-comment>`).
 
@@ -142,6 +143,36 @@ On first run, if `AUTHOR_HMAC_KEY` is missing it is **auto-generated and saved t
 A Chrome window will open. That is intentional: headful Patchright + system Chrome is how the collector gets past Reddit's logged-out bot checks. Use `--headless` only if you know your proxies already pass.
 
 **Needs:** Google Chrome installed, and at least one working HTTP proxy in `proxies.txt`. Dead proxies are marked unhealthy and the browser is relaunched on the next one.
+
+---
+
+## Historical backfill (`--source archive`)
+
+Reddit's `/new` listing only reaches a few days back, so a multi-month window
+comes from the [Arctic Shift](https://arctic-shift.photon-reddit.com) archive,
+which serves Reddit-shaped JSON by subreddit and date:
+
+```bash
+# every post (and up to max_comments_per_submission comments each) in the window
+uyam collect --source archive --since 2026-06-01 --until 2026-11-10
+
+# bounded: a deterministic sample of 40 posts per subreddit per UTC day
+uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40
+```
+
+- No credentials, proxies or Chrome. Requests are paced
+  (`collection.yaml` → `archive.min_interval_seconds`), and throttle answers
+  wait out the server's `x-ratelimit-reset`.
+- Authors are hashed with the same `AUTHOR_HMAC_KEY`, so archive and Shreddit
+  records of one author share an `author_hash`. That linkage is what
+  thickens the temporal-context channel.
+- `--per-day` keeps a hash-ranked sample, not the first N posts of the day.
+  `limit_per_subreddit` does not apply to archive runs.
+- Keyword oversampling runs as archive full-text search over the same window.
+- The archive lags Reddit by about 2 days. Fill the last days with
+  `--source shreddit`, which also stands in if the archive is unavailable.
+- Archive scores are snapshots from when the archive ingested the item.
+  Manifests record `source_type: archive`.
 
 ---
 
@@ -455,7 +486,7 @@ uyam annotate status                   # progress dashboard at any point
 
 # ...or pass by pass:
 uyam annotate index                    # raw JSONL -> annotation DB
-uyam annotate select                   # candidate filters (bots, deleted, too short)
+uyam annotate select                   # candidate filters (bots, deleted, too short, phatic)
 uyam annotate lid                      # fastText language ID (english/tagalog/taglish)
 uyam annotate sentiment --target 0     # transformer literal sentiment (before local Ollama!)
 uyam annotate run --annotator gemma3 --target 0   # remote 24GB box   (concurrently with...)
@@ -504,6 +535,13 @@ Every pass is also available individually in the Streamlit app: the
 runs/adjudication/export (long passes run as detached background jobs with
 live log tails, surviving app restarts), and the **Annotation Review** tab is
 where the gold subset and low-confidence queue are human-labeled.
+
+**Phatic filter.** `select` excludes short social-ritual items (happy
+birthday, thanks, congrats, greetings, follow-bait) as `phatic`. Irony
+markers ("edi congrats", "thanks for nothing", "ikaw na" …) veto the rule.
+A phatic item that any annotator already voted sarcastic stays eligible and
+goes to the low_confidence review queue. Export skips items that are no
+longer eligible. Tune it under `candidate_filters` in `config/annotation.yaml`.
 
 Configuration lives in `config/annotation.yaml` (endpoints, models, prompt
 version, filters, thresholds). All passes are resumable and idempotent. The

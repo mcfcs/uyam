@@ -194,10 +194,13 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
   the actual span explicit so the limitation is stated with the data.
 - `temporal_context_coverage` — under the thesis §3.4 rule (≤5 same-author
   posts within 48 h before the target, from the collected corpus): share of
-  exported rows with ≥1, ≥3 and the full 5 history posts. Two thirds of rows
-  currently have none; a wider *subreddit* crawl is the only way to raise it
-  — per-author history cannot be back-filled because usernames are hashed
-  before storage (§3.1), by design.
+  exported rows with ≥1, ≥3 and the full 5 history posts. Two thirds of v1
+  rows have none; a wider *subreddit* crawl is the only way to raise it —
+  per-author history cannot be back-filled because usernames are hashed
+  before storage (§3.1), by design. From v2 the corpus is widened to
+  2026-06-01 → 2026-11 with the Arctic Shift archive (`--source archive`),
+  hashed with the same key, so labeled Aug–Sep rows gain author history from
+  the surrounding months without any re-annotation.
 - `label_distributions.is_text_only`, `sarcastic_per_label_resolution`.
 
 ## 7. Recommended evaluation protocol
@@ -225,10 +228,20 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
    label is primary, `aux.lid` is a cross-check.
 4. Three Filipino subreddits only; findings may not transfer to other
    platforms/communities.
-5. Deleted/removed content and link-only posts were excluded at candidate
-   selection (`dataset_card.json` → `counts.candidates` lists every exclusion
-   reason and count).
+5. Deleted/removed content, link-only posts and (from v2) `phatic` items —
+   short happy-birthday / thanks / congrats / greeting text with nothing else
+   in it — were excluded at candidate selection (`dataset_card.json` →
+   `counts.candidates` lists every exclusion reason and count;
+   `counts.skipped_ineligible` counts annotated rows a later filter removed).
+   Phatic items the ensemble had voted sarcastic were not dropped but sent to
+   human review.
 6. Sarcasm class imbalance is expected; do not rebalance the test folds.
+7. Mixed collection sources (from v2): the Aug–Sep 2026 core was scraped live
+   from Reddit (Shreddit), the rest of 2026-06-01 → 2026-11 comes from the
+   Arctic Shift archive. Archive `score` / `num_comments` are snapshots from
+   when the archive ingested the item (often minutes after posting), so do
+   not use `score` as a feature across sources. A row's source is recorded in
+   its collection run manifest (`collection_run_id` → `source_type`).
 
 ## 9. Re-running / extending
 
@@ -238,6 +251,7 @@ progress):
 ```
 uyam scrub-authors                          # once: strip legacy plaintext usernames
 uyam collect --source shreddit --oversample-only   # keyword_oversampled threads
+uyam collect --source archive --since 2026-06-01 --until 2026-11-10   # historical backfill
 uyam annotate pipeline                      # everything below, to pipeline.target_items
 uyam annotate gold-sample                   # (pipeline draws it) then label in the Streamlit tab
 uyam annotate aggregate && uyam annotate export --version vN

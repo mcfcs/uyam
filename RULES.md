@@ -52,6 +52,10 @@ ruff check src tests         # lint clean
 mypy src/uyam/               # strict; no new errors
 ```
 
+mypy baseline: **50 pre-existing errors in 12 files** as of 2026-11-10 (mostly
+missing type args in `cli.py`, untyped third-party calls, no pandas stubs).
+The count must not grow. Fixing them is welcome as a separate commit.
+
 If a check fails for a reason unrelated to your change, say so in the commit
 body and in HANDOFF.md. Don't silently skip it.
 
