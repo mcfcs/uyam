@@ -80,6 +80,8 @@ replacing it:
 | Comments inherit `sampling_strategy` from their submission | `test_sampling_inheritance.py` |
 | Calendar windows are inclusive UTC days | `test_calendar_window.py`, `test_archive_source.py` |
 | Candidate exclusions always record a reason | `test_annotate_candidates.py` |
+| The phatic filter never drops an item an annotator voted sarcastic (it goes to review) | `test_annotate_candidates.py` |
+| Archive throttle answers are retried; real 4xx fail fast | `test_archive_source.py` |
 | Ineligible items never reach the export | `test_annotate_export.py` |
 | Every annotator labels the same target set | `test_annotate_target.py` |
 | Gold labels are evaluation-only; gold sample is deterministic per seed | `test_annotate_review.py`, `test_annotate_export.py` |
@@ -128,8 +130,8 @@ These protect the thesis. Breaking one silently can invalidate results.
   Tailscale) is at `http://100.102.10.69:11434`. Streamlit is launched with
   `run-app.bat` on port 8501 and is used remotely over Tailscale. From a tool
   shell: `cmd /c <absolute path>\run-app.bat` with PowerShell redirects.
-- The local C: drive is tight on space (~35 GB free as of 2026-08). Check
-  before large model pulls or archive crawls.
+- Local C: drive had ~109 GB free on 2026-11-10 (it was down to ~35 GB in
+  2026-08). Check before large model pulls or archive crawls.
 
 ## 7. Subagents
 
