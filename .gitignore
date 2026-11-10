@@ -12,6 +12,9 @@ data/.scrape-status/
 data/.annotate-status/
 data/models/
 data/annotated/
+data/reminders.json
+data/reminders.json.tmp
+data/.streamlit-app*.log
 .probe-profile/
 
 # Python
