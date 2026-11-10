@@ -57,6 +57,16 @@ public:
   min_interval_seconds: 6
   timeout_seconds: 30
 
+archive:
+  # Arctic Shift archive API (--source archive): date-bounded historical
+  # backfill, since Reddit's /new reaches only days back. Needs --since; no
+  # per-day cap unless --per-day is given. Lags live Reddit by ~2 days — fill
+  # the most recent days with --source shreddit. Scores are archive-time snapshots.
+  base_url: https://arctic-shift.photon-reddit.com/api
+  min_interval_seconds: 1.0   # pause between requests (the API throttles bursts)
+  timeout_seconds: 60
+  max_retries: 8              # throttle answers wait out x-ratelimit-reset
+
 shreddit:
   # Headful Chrome scrape of www.reddit.com (Shreddit custom elements).
   # Requires proxies.txt. Headful + system Chrome is the anti-bot baseline.

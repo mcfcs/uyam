@@ -77,6 +77,16 @@ class ShredditConfig:
 
 
 @dataclass
+class ArchiveConfig:
+    """Settings for the Arctic Shift archive source (date-bounded backfill)."""
+
+    base_url: str = "https://arctic-shift.photon-reddit.com/api"
+    min_interval_seconds: float = 1.0
+    timeout_seconds: float = 60.0
+    max_retries: int = 8
+
+
+@dataclass
 class CollectionConfig:
     listing: str = "new"
     limit_per_subreddit: int | None = 100
@@ -95,6 +105,7 @@ class AppConfig:
     retry: RetryConfig
     public: PublicConfig
     shreddit: ShredditConfig
+    archive: ArchiveConfig = field(default_factory=ArchiveConfig)
 
 
 def _get(d: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -167,6 +178,14 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         captcha_wait_seconds=float(sh_raw.get("captcha_wait_seconds", 300.0)),
     )
 
+    ar_raw: dict[str, Any] = raw.get("archive", {}) or {}
+    archive = ArchiveConfig(
+        base_url=str(ar_raw.get("base_url", ArchiveConfig.base_url)),
+        min_interval_seconds=float(ar_raw.get("min_interval_seconds", 1.0)),
+        timeout_seconds=float(ar_raw.get("timeout_seconds", 60.0)),
+        max_retries=int(ar_raw.get("max_retries", 8)),
+    )
+
     return AppConfig(
         data_dir=data_dir,
         subreddits=subreddits,
@@ -177,4 +196,5 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         retry=retry,
         public=public,
         shreddit=shreddit,
+        archive=archive,
     )

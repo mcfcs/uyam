@@ -63,7 +63,8 @@ def _resolve_proxies_path(proxies: Path | None) -> Path:
 def collect(
     source: str = typer.Option(
         "fixture",
-        help="'fixture', 'shreddit' (live HTML), 'public' (alias of shreddit), or 'reddit'",
+        help="'fixture', 'shreddit' (live HTML), 'public' (alias of shreddit), 'reddit' (PRAW), "
+        "or 'archive' (Arctic Shift date-range backfill; needs --since)",
     ),
     subreddit: str | None = typer.Option(None, help="Subreddit name (overrides config)"),
     subreddits: str | None = typer.Option(
@@ -106,7 +107,7 @@ def collect(
     ),
     per_day: int | None = typer.Option(
         None,
-        help="Max new posts per UTC day (default 15 when --since is set).",
+        help="Max posts per UTC day (default 15 with --since; archive: no cap unless set).",
     ),
     oversample_only: bool = typer.Option(
         False,
@@ -134,12 +135,15 @@ def collect(
         else f"Collection started (time limit {effective_max_seconds:.0f}s)",
     )
 
-    if source not in ("fixture", "public", "shreddit", "reddit"):
+    if source not in ("fixture", "public", "shreddit", "reddit", "archive"):
         typer.echo(
-            "Error: --source must be 'fixture', 'shreddit', 'public', or 'reddit', "
+            "Error: --source must be 'fixture', 'shreddit', 'public', 'reddit', or 'archive', "
             f"got {source!r}",
             err=True,
         )
+        raise typer.Exit(1)
+    if source == "archive" and not since:
+        typer.echo("Error: --source archive needs --since YYYY-MM-DD", err=True)
         raise typer.Exit(1)
 
     if subreddits:
@@ -156,8 +160,18 @@ def collect(
         )
         raise typer.Exit(1)
 
-    listing_type = "search" if search else listing
-    effective_limit = limit if limit is not None else cfg.collection.limit_per_subreddit
+    if search:
+        listing_type = "search"
+    elif source == "archive":
+        listing_type = "archive"  # date-window walk; recorded as such in manifests
+    else:
+        listing_type = listing
+    if limit is not None:
+        effective_limit: int | None = limit
+    elif source == "archive":
+        effective_limit = None  # the date window (and --per-day) bound an archive run
+    else:
+        effective_limit = cfg.collection.limit_per_subreddit
     calendar_since = since.strip() if since else None
     calendar_until = until.strip() if until else None
     posts_per_day: int | None = None
@@ -171,7 +185,10 @@ def collect(
         except ValueError as exc:
             typer.echo(f"Error: dates must be YYYY-MM-DD ({exc})", err=True)
             raise typer.Exit(1) from exc
-        posts_per_day = per_day if per_day and per_day > 0 else 15
+        if per_day and per_day > 0:
+            posts_per_day = per_day
+        elif source != "archive":
+            posts_per_day = 15
     elif per_day or calendar_until:
         typer.echo("Error: --per-day / --until require --since YYYY-MM-DD", err=True)
         raise typer.Exit(1)

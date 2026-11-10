@@ -176,6 +176,18 @@ def _build_source(job: dict[str, Any], cfg: Any) -> Any:
             profile_dir=profile_dir,
         )
 
+    if source == "archive":
+        from uyam.privacy import ensure_hmac_key
+        from uyam.sources.arctic_shift import ArcticShiftSource
+
+        ensure_hmac_key()
+        return ArcticShiftSource(
+            base_url=cfg.archive.base_url,
+            min_interval_seconds=cfg.archive.min_interval_seconds,
+            timeout_seconds=cfg.archive.timeout_seconds,
+            max_retries=cfg.archive.max_retries,
+        )
+
     from uyam.privacy import ensure_hmac_key
     from uyam.sources.praw_source import PrawRedditSource
     from uyam.sources.proxy_pool import ProxyPool
