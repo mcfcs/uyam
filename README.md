@@ -530,6 +530,10 @@ Everything is idempotent: run it again to resume. Options: `--target N`,
 `--retry-failed` (same checkboxes in the UI). `--target 0` on `run` /
 `sentiment` means "use `pipeline.target_items`".
 
+The Streamlit app opens on a **Reminders** tab: Gio's to-do list from
+`config/reminders.yaml`. Ticks and personal notes are saved to
+`data/reminders.json` on the server, so they show the same on every device.
+
 Every pass is also available individually in the Streamlit app: the
 **Annotation** tab runs and monitors index/select/LID/sentiment/LLM
 runs/adjudication/export (long passes run as detached background jobs with

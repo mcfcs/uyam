@@ -22,6 +22,11 @@ defaults. If a rule blocks the task, stop and ask Gio. Don't work around it.
    at the bottom of that file), update its *Current state* and *Next steps*,
    and commit and push it. Every chat that changes anything ends with a
    handoff commit.
+4. **Gio's to-dos go in [config/reminders.yaml](config/reminders.yaml).** When
+   you leave Gio a step to do (a real run, a review, thesis text), append a
+   reminder with a new unique `id` and never rename an existing one. It shows
+   up in the Streamlit **Reminders** tab, where Gio ticks it off (ticks live
+   in `data/reminders.json`). Read that file to see what Gio has already done.
 
 ## 2. Git
 
@@ -86,6 +91,7 @@ replacing it:
 | Every annotator labels the same target set | `test_annotate_target.py` |
 | Gold labels are evaluation-only; gold sample is deterministic per seed | `test_annotate_review.py`, `test_annotate_export.py` |
 | Export bundle checksums match its members | `test_annotate_export.py` |
+| Reminder ids are unique, checks exist, and ticks persist across reloads | `test_reminders.py` |
 
 When you add a new source, filter, or export field, add a row here.
 

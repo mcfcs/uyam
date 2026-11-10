@@ -798,9 +798,46 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_collect, tab_data, tab_history, tab_stats, tab_annotate, tab_review = st.tabs(
-    ["Collection", "Data Browser", "Run History", "Stats", "Annotation", "Annotation Review"]
+REMINDERS_CONFIG: Path = _REPO_ROOT / "config" / "reminders.yaml"
+REMINDERS_STATE: Path = DATA_DIR / "reminders.json"
+try:
+    from uyam.reminders_ui import pending_count
+
+    _pending = pending_count(REMINDERS_CONFIG, REMINDERS_STATE)
+    _reminders_label = f"Reminders ({_pending})" if _pending else "Reminders ✓"
+except Exception:  # noqa: BLE001 - a broken reminders file must not take the app down
+    _reminders_label = "Reminders"
+
+(
+    tab_reminders,
+    tab_collect,
+    tab_data,
+    tab_history,
+    tab_stats,
+    tab_annotate,
+    tab_review,
+) = st.tabs(
+    [
+        _reminders_label,
+        "Collection",
+        "Data Browser",
+        "Run History",
+        "Stats",
+        "Annotation",
+        "Annotation Review",
+    ]
 )
+
+# ===========================================================================
+# Tab 0: Reminders (Gio's to-do list; ticks persist in data/reminders.json)
+# ===========================================================================
+with tab_reminders:
+    try:
+        from uyam.reminders_ui import render_reminders_tab
+
+        render_reminders_tab(REMINDERS_CONFIG, REMINDERS_STATE, DATA_DIR)
+    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+        st.error(f"Reminders unavailable: {exc}")
 
 # ===========================================================================
 # Tab 1: Collection

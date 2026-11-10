@@ -50,6 +50,10 @@ are Gio's (see *Next steps*).
 
 ## Next steps (for Gio unless marked)
 
+These are also the to-dos in the Streamlit **Reminders** tab
+(`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
+records which ones are done.
+
 1. **Back up the annotation DB** (RULES §5.3), e.g.
    `copy data\db\annotation.sqlite3 data\db\annotation-2026-11-10.bak.sqlite3`.
 2. **Archive backfill.** Pick a size: r/Philippines ~115 posts/day,
@@ -133,6 +137,13 @@ are Gio's (see *Next steps*).
   "welcome to …" is excluded from the phatic phrases.
 
 **Left open / blocked:** nothing is blocked. See *Next steps* and the open questions.
+
+**Later in the session:** added the Streamlit **Reminders** tab (first tab,
+with the pending count in its label). It's backed by `config/reminders.yaml`
+plus `data/reminders.json`. Seven read-only detectors show "Detected:" hints.
+Gio can add their own notes. The app was relaunched detached via
+`run-app.bat` at http://100.71.83.125:8501 and logs to
+`data/.streamlit-app.log`.
 
 ---
 

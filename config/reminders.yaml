@@ -1,0 +1,111 @@
+# To-dos for Gio, shown in the Streamlit "Reminders" tab.
+#
+# Agents: when you leave Gio a step to do (a real run, a review, thesis text),
+# append it here with a new unique `id` — never reuse or rename an id, the
+# done-state in data/reminders.json is keyed by it. Mirror it in HANDOFF.md.
+#
+# Fields: id, section, title, details (markdown), command (optional, shown as a
+# copyable block), check (optional built-in detector that shows a hint — it
+# never ticks the box for you):
+#   db_backup | archive_runs | shreddit_recent | phatic_selected
+#   low_conf_queue | gold_progress | export_v2
+
+reminders:
+  - id: backup-annotation-db-2026-11
+    section: Before any real run
+    title: Back up the annotation database
+    details: >
+      RULES §5.3: copy `data/db/annotation.sqlite3` before re-indexing or
+      re-selecting. Close the Streamlit app or stop annotation jobs first so
+      the copy is consistent.
+    command: copy data\db\annotation.sqlite3 data\db\annotation-2026-11-10.bak.sqlite3
+    check: db_backup
+
+  - id: archive-backfill-jun-nov
+    section: Data collection
+    title: Run the archive backfill (2026-06-01 → 2026-11-10)
+    details: >
+      Arctic Shift archive, all three subreddits. Full window is roughly
+      40–55k posts / 12–20 h; `--per-day 40` caps it at ~19k posts / 6–8 h.
+      Safe to stop and re-run — dedup skips what is already stored. The
+      keyword oversampling searches run afterwards automatically.
+    command: uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40
+    check: archive_runs
+
+  - id: shreddit-latest-days-nov
+    section: Data collection
+    title: Fill the latest days with Shreddit (archive lags ~2 days)
+    details: >
+      Also the fallback if the archive is down. Needs Chrome + proxies.txt;
+      solve the captcha in the Chrome window if one appears.
+    command: uyam collect --source shreddit --since 2026-11-08 --per-day 40
+    check: shreddit_recent
+
+  - id: reindex-reselect-phatic
+    section: Annotation
+    title: Re-index the corpus and re-run candidate selection
+    details: >
+      Indexes the new archive data and applies the new `phatic` filter.
+      Dry run predicted 107 items excluded and 21 phatic-but-voted-sarcastic
+      items sent to the review queue.
+    command: uyam annotate index && uyam annotate select
+    check: phatic_selected
+
+  - id: review-phatic-low-confidence
+    section: Annotation
+    title: Label the low-confidence review queue
+    details: >
+      "Annotation Review" tab → low_confidence queue. Mostly happy-birthday
+      / congrats comments one model called sarcastic — your label is final.
+    check: low_conf_queue
+
+  - id: gold-subset-300
+    section: Annotation
+    title: Finish the gold subset (300 items)
+    details: >
+      "Annotation Review" tab → gold queue, labeled blind. Needed for the
+      human-vs-ensemble Cohen's κ (leische H1). Was 31 / 300 on 2026-11-10.
+    check: gold_progress
+
+  - id: export-dataset-v2
+    section: Handoff to leische
+    title: Aggregate and export dataset v2
+    details: >
+      Compare `temporal_context_coverage` and `collection_window` in the new
+      dataset_card.json against v1 (35% of rows with ≥1 history post;
+      2026-08-01 → 09-04).
+    command: uyam annotate aggregate && uyam annotate export --version v2
+    check: export_v2
+
+  - id: send-v2-to-leische
+    section: Handoff to leische
+    title: Send the v2 bundle to the leische machine
+    details: >
+      Open this app at http://<tailscale-ip>:8501 from the leische device →
+      Annotation tab → Download bundle (.zip), then
+      `sha256sum -c SHA256SUMS.txt`. Tell leische the version changed.
+
+  - id: thesis-arctic-shift-method
+    section: Thesis manuscript
+    title: State the Arctic Shift archive in methodology + ethics
+    details: >
+      Chapter III: historical posts come from a third-party Reddit archive
+      (Arctic Shift); Aug–Sep core scraped live. Archive scores are
+      ingest-time snapshots, so score is not compared across sources.
+      Authors hashed with the same HMAC key before storage.
+
+  - id: thesis-window-and-phatic
+    section: Thesis manuscript
+    title: Update the collection window and preprocessing filters
+    details: >
+      Real span after the backfill (from dataset_card `collection_window`),
+      and add the `phatic` exclusion (birthday / thanks / congrats-only text)
+      to the preprocessing list with its count from the card.
+
+  - id: optional-annotate-new-items
+    section: Optional
+    title: Annotate new Jun–Nov items (raise the target above 12,000)
+    details: >
+      Only if you want more labels, not just more temporal context. Raise
+      `pipeline.target_items` in config/annotation.yaml, then Start ALL.
+    command: uyam annotate pipeline
