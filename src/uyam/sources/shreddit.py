@@ -163,7 +163,7 @@ _MORE_COMMENTS_SELECTOR = "faceplate-partial.more-comments-partial"
 _RATE_LIMIT_TOAST_SELECTOR = "text=/request has been rate limited/i"
 _RATE_LIMIT_TOAST_RE = re.compile(r"(\d+)\s*seconds", re.IGNORECASE)
 _RATE_LIMIT_TOAST_DEFAULT_S = 60.0
-_RATE_LIMIT_TOAST_CAP_S = 180.0
+_RATE_LIMIT_TOAST_CAP_S = 360.0  # Reddit has asked for 209 s; a shorter wait re-triggers it
 
 _EXTRACT_POST_JS = """
 (el) => {
