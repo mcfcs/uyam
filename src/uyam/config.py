@@ -84,6 +84,8 @@ class ArchiveConfig:
     min_interval_seconds: float = 1.0
     timeout_seconds: float = 60.0
     max_retries: int = 8
+    max_throttle_waits: int = 60
+    page_size: str = "auto"
 
 
 @dataclass
@@ -184,6 +186,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         min_interval_seconds=float(ar_raw.get("min_interval_seconds", 1.0)),
         timeout_seconds=float(ar_raw.get("timeout_seconds", 60.0)),
         max_retries=int(ar_raw.get("max_retries", 8)),
+        max_throttle_waits=int(ar_raw.get("max_throttle_waits", 60)),
+        page_size=str(ar_raw.get("page_size", "auto")),
     )
 
     return AppConfig(

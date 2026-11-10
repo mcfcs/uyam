@@ -168,6 +168,12 @@ uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40
   thickens the temporal-context channel.
 - `--per-day` keeps a hash-ranked sample, not the first N posts of the day.
   `limit_per_subreddit` does not apply to archive runs.
+- Comments come from one subreddit-wide stream per window (100–1,000 rows a
+  request with `page_size: auto`), not one request per post. Each post gets
+  at least `comment_horizon_days` (3) of replies; later replies may be missed.
+- Throttling (dynamic, by server load) is waited out with adaptive pacing, for
+  up to `max_throttle_waits` in a row. Stop in the app takes effect between
+  waits. At busy hours a run can crawl, so start long backfills off-peak.
 - Keyword oversampling runs as archive full-text search over the same window.
 - The archive lags Reddit by about 2 days. Fill the last days with
   `--source shreddit`, which also stands in if the archive is unavailable.

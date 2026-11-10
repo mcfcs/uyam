@@ -80,8 +80,10 @@ class FakeArchive:
                 if p["subreddit"] == params["subreddit"]
                 and (not params.get("query") or params["query"] in p["title"])
             ]
-        else:
+        elif "link_id" in params:  # per-post comments
             pool = [c for c in self.comments if c["link_id"] == f"t3_{params['link_id']}"]
+        else:  # subreddit-wide comment stream (bulk mode)
+            pool = [c for c in self.comments if c["subreddit"] == params["subreddit"]]
         lo = after + 1 if self.after_exclusive else after
         rows = sorted(
             (r for r in pool if lo <= r["created_utc"] < before),
@@ -136,9 +138,9 @@ def _comment(
 def _source(
     archive: FakeArchive, sleeps: list[float] | None = None, **kw: Any
 ) -> ArcticShiftSource:
+    kw.setdefault("min_interval_seconds", 0)
     return ArcticShiftSource(
         session=archive,  # type: ignore[arg-type]
-        min_interval_seconds=0,
         sleep=(sleeps.append if sleeps is not None else (lambda _s: None)),
         **kw,
     )
@@ -268,7 +270,9 @@ def test_throttle_answer_is_retried_after_the_advertised_reset() -> None:
 
     assert [s.reddit_id for s in subs] == ["p1"]
     assert sleeps[0] >= 31  # waited out the 30 s reset
-    assert len(sleeps) == 2
+    # Two retry waits (the 30 s reset, then the 503 backoff); anything shorter
+    # is the adaptive pacing gap that grew after the throttle.
+    assert len([s for s in sleeps if s >= 2]) == 2
 
 
 def test_throttle_body_on_http_422_is_retried_not_fatal() -> None:
@@ -288,9 +292,57 @@ def test_bad_request_fails_fast_and_exhausted_retries_raise() -> None:
         list(_source(archive).iter_submissions(_request()))
 
     archive = FakeArchive([], [])
-    archive.scripted = [FakeResponse({"data": None, "error": "Timeout"})] * 3
+    archive.scripted = [FakeResponse({"data": []}, status=503)] * 3
     with pytest.raises(ArchiveApiError, match="after 3 attempts"):
         list(_source(archive, max_retries=3).iter_submissions(_request()))
+
+
+def test_throttling_has_its_own_budget_and_does_not_end_the_run() -> None:
+    """A busy hour throttles for many minutes; that must not kill a backfill."""
+    archive = FakeArchive(posts=[_post("p1", JUN1 + 5)], comments=[])
+    archive.scripted = [FakeResponse({"data": None, "error": "Timeout. Maybe slow down"})] * 10
+    src = _source(archive, max_retries=2, max_throttle_waits=60)
+    subs = list(src.iter_submissions(_request(calendar_until="2026-06-01")))
+    assert [s.reddit_id for s in subs] == ["p1"]  # 10 throttles > max_retries, still fine
+
+    archive = FakeArchive([], [])
+    archive.scripted = [FakeResponse({"data": None}, status=429)] * 4
+    with pytest.raises(ArchiveApiError, match="still throttled after 3 waits"):
+        list(_source(archive, max_throttle_waits=3).iter_submissions(_request()))
+
+
+def test_stop_is_honoured_between_throttle_waits() -> None:
+    from uyam.scrape_status import ScrapeStopRequested, set_control
+
+    archive = FakeArchive([], [])
+    archive.scripted = [FakeResponse({"data": None, "error": "Timeout"})] * 5
+
+    def _sleep(_s: float) -> None:
+        set_control("stop")  # operator hits Stop while the source waits
+
+    src = ArcticShiftSource(session=archive, min_interval_seconds=0, sleep=_sleep)  # type: ignore[arg-type]
+    with pytest.raises(ScrapeStopRequested):
+        list(src.iter_submissions(_request()))
+    assert len(archive.calls) == 1  # no further request after Stop
+
+
+def test_limit_auto_is_sent_and_short_pages_end_the_walk() -> None:
+    posts = [_post(f"p{i:03d}", JUN1 + 1 + i) for i in range(150)]
+    archive = FakeArchive(posts=posts, comments=[])
+    src = _source(archive, page_size="auto")
+    original = archive.get  # the fake needs a number: serve "auto" as 1000 rows
+
+    def get(url: str, params: dict[str, Any], timeout: float) -> FakeResponse:
+        assert params["limit"] == "auto"
+        return original(url, {**params, "limit": 1000}, timeout)
+
+    archive.get = get  # type: ignore[method-assign]
+    subs = list(src.iter_submissions(_request(calendar_until="2026-06-01")))
+    assert len(subs) == 150
+    post_calls = [c for c in archive.calls if c[0] == "/posts/search"]
+    # 150 rows in the first call (not short, so ask again); the second returns
+    # fewer than 100 (only the overlap second), which ends the walk.
+    assert len(post_calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -311,20 +363,29 @@ def _thread() -> FakeArchive:
     )
 
 
-def test_comments_keep_tree_and_inherit_sampling() -> None:
+@pytest.mark.parametrize("bulk", [True, False])
+def test_comments_keep_tree_and_inherit_sampling(bulk: bool) -> None:
     archive = _thread()
-    src = _source(archive)
+    src = _source(archive, bulk_comments=bulk)
     req = _request(
         calendar_until="2026-06-01",
         sampling_strategy="keyword_oversampled",
         matched_query_or_keyword="sana all",
     )
-    sub = next(iter(src.iter_submissions(req)))
+    subs = iter(src.iter_submissions(req))  # keep it alive, as the pipeline does
+    sub = next(subs)
     comments = list(src.iter_comments(sub, req))
 
     comment_calls = [p for path, p in archive.calls if path == "/comments/search"]
-    assert comment_calls[0]["after"] == JUN1 + 10 - 1  # from the post's own time, never 0
-    assert comment_calls[0]["link_id"] == "p1"
+    if bulk:
+        # One subreddit-wide stream: through the day, then on to the reply horizon.
+        assert all(c["subreddit"] == "CasualPH" and "link_id" not in c for c in comment_calls)
+        assert comment_calls[0]["after"] == JUN1 - 1
+        assert comment_calls[0]["before"] == JUN2
+        assert comment_calls[-1]["before"] == JUN2 + 3 * 86400
+    else:
+        assert comment_calls[0]["after"] == JUN1 + 10 - 1  # from the post's own time, never 0
+        assert comment_calls[0]["link_id"] == "p1"
 
     by_id = {c.reddit_id: c for c in comments}
     assert list(by_id) == ["c1", "c2", "c3"]  # placeholder body + other thread dropped
@@ -340,7 +401,8 @@ def test_comment_cap_keeps_earliest_so_no_reply_is_orphaned() -> None:
     archive = _thread()
     src = _source(archive)
     req = _request(calendar_until="2026-06-01", max_comments_per_submission=2)
-    sub = next(iter(src.iter_submissions(req)))
+    subs = iter(src.iter_submissions(req))  # keep it alive, as the pipeline does
+    sub = next(subs)
     assert [c.reddit_id for c in src.iter_comments(sub, req)] == ["c1", "c2"]
 
 
@@ -381,3 +443,100 @@ def test_run_collection_writes_hashed_jsonl_and_dedups(tmp_path: Path) -> None:
         assert again.duplicates_skipped == 1
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Bulk comments (one subreddit-wide stream) and adaptive pacing
+# ---------------------------------------------------------------------------
+
+DAY = 86400
+
+
+def _bulk_archive() -> FakeArchive:
+    """Three days of posts, comments spread across the reply horizon."""
+    posts = [_post(f"d1p{i}", JUN1 + 100 + i) for i in range(30)]
+    posts += [_post(f"d2p{i}", JUN2 + 100 + i) for i in range(30)]
+    posts += [_post(f"d3p{i}", JUN3 + 100 + i) for i in range(30)]
+    comments = [
+        _comment(f"c{p['id']}", str(p["id"]), f"t3_{p['id']}", int(p["created_utc"]) + 60)
+        for p in posts
+    ]
+    comments += [
+        _comment("late_ok", "d1p0", "t3_d1p0", JUN1 + 2 * DAY + 5),  # day 3: inside 3-day horizon
+        # The last day (Jun 3) streams to Jun 7, so day 1 gets at least its
+        # 3 days; a reply on Jun 9 is past every horizon in this window.
+        _comment("too_late", "d1p0", "t3_d1p0", JUN1 + 8 * DAY),
+        _comment("before_window", "may31", "t3_may31", JUN1 + 30),  # post not in the window
+    ]
+    return FakeArchive(posts=posts, comments=comments)
+
+
+def _collect(src: ArcticShiftSource, req: CollectionRequest) -> dict[str, list[str]]:
+    """What the pipeline would store: each post, then its comments."""
+    out: dict[str, list[str]] = {}
+    for sub in src.iter_submissions(req):
+        out[sub.reddit_id] = [c.reddit_id for c in src.iter_comments(sub, req)]
+    return out
+
+
+def test_bulk_comments_need_far_fewer_requests_than_one_per_post() -> None:
+    req = _request(calendar_until="2026-06-03")
+    bulk_archive, per_post_archive = _bulk_archive(), _bulk_archive()
+    bulk = _collect(_source(bulk_archive), req)
+    per_post = _collect(_source(per_post_archive, bulk_comments=False), req)
+
+    def comment_requests(archive: FakeArchive) -> int:
+        return len([c for c in archive.calls if c[0] == "/comments/search"])
+
+    assert len(bulk) == len(per_post) == 90
+    assert comment_requests(per_post_archive) == 90  # one per post
+    assert comment_requests(bulk_archive) <= 6  # ~100 comments per request
+    # Same comments per post either way, within the horizon.
+    for post_id, ids in bulk.items():
+        assert ids == [i for i in per_post[post_id] if i != "too_late"]
+
+
+def test_bulk_reply_horizon_and_window_edges() -> None:
+    got = _collect(_source(_bulk_archive()), _request(calendar_until="2026-06-03"))
+    assert got["d1p0"] == ["cd1p0", "late_ok"]  # a day-3 reply to a day-1 post is kept
+    assert "too_late" not in got["d1p0"]  # beyond the 3-day horizon
+    assert all("before_window" not in ids for ids in got.values())
+    assert list(got)[:2] == ["d1p0", "d1p1"]  # posts still come out in time order
+
+
+def test_bulk_never_streams_past_now() -> None:
+    archive = _bulk_archive()
+    src = _source(archive, now=lambda: JUN3 + 3600)  # "today" is 2026-06-03 01:00
+    _collect(src, _request(calendar_until="2026-06-03"))
+    befores = [c[1]["before"] for c in archive.calls if c[0] == "/comments/search"]
+    assert max(befores) == JUN3 + 3600
+
+
+def test_skipped_posts_leave_no_comment_buckets_behind() -> None:
+    src = _source(_bulk_archive())
+    # The pipeline skips duplicates without ever calling iter_comments.
+    assert len(list(src.iter_submissions(_request(calendar_until="2026-06-03")))) == 90
+    assert src._buckets == {}
+
+
+def test_keyword_search_fetches_comments_per_post() -> None:
+    archive = _thread()
+    src = _source(archive)
+    req = _request(calendar_until="2026-06-01", search_query="Title")
+    subs = iter(src.iter_submissions(req))  # keep it alive, as the pipeline does
+    sub = next(subs)
+    list(src.iter_comments(sub, req))
+    comment_calls = [p for path, p in archive.calls if path == "/comments/search"]
+    assert comment_calls and all(c.get("link_id") == "p1" for c in comment_calls)
+
+
+def test_pacing_widens_after_a_throttle_and_eases_back() -> None:
+    archive = FakeArchive(posts=[_post("p1", JUN1 + 5)], comments=[])
+    archive.scripted = [FakeResponse({"data": None, "error": "Timeout. Maybe slow down"})]
+    src = _source(archive, min_interval_seconds=1.0)
+    list(src.iter_submissions(_request(calendar_until="2026-06-01")))
+    after_throttle_and_one_success = src._interval
+    assert after_throttle_and_one_success > 1.0  # 1.0 * 1.5 + 0.5, then eased once
+    for _ in range(40):
+        src._get("/posts/search", {"subreddit": "CasualPH", "after": JUN1, "limit": 100})
+    assert src._interval == pytest.approx(1.0)  # back at the configured base

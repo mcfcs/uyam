@@ -242,6 +242,9 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
    when the archive ingested the item (often minutes after posting), so do
    not use `score` as a feature across sources. A row's source is recorded in
    its collection run manifest (`collection_run_id` → `source_type`).
+   Archive comments are collected for at least 3 days after each post
+   (`comment_horizon_days`). Later replies to archive-sourced posts may be
+   missing, so a thread's late tail is thinner than in live-scraped ones.
 
 ## 9. Re-running / extending
 

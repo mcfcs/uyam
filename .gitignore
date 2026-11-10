@@ -17,6 +17,7 @@ data/annotated/
 data/reminders.json
 data/reminders.json.tmp
 data/.streamlit-app*.log
+data/.archive-backfill*.log
 .probe-profile/
 
 # Python

@@ -228,6 +228,8 @@ def _build_source(job: dict[str, Any], cfg: Any) -> Any:
             min_interval_seconds=cfg.archive.min_interval_seconds,
             timeout_seconds=cfg.archive.timeout_seconds,
             max_retries=cfg.archive.max_retries,
+            max_throttle_waits=cfg.archive.max_throttle_waits,
+            page_size=cfg.archive.page_size,
         )
 
     from uyam.privacy import ensure_hmac_key

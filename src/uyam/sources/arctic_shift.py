@@ -15,14 +15,25 @@ paginating on created_utc. With `posts_per_day` set, each day keeps a
 deterministic hash-ranked sample instead of the first N posts, so the cap
 does not bias toward early-morning (UTC) threads.
 
+Comments come in bulk: one subreddit-wide `/api/comments/search?subreddit=S`
+stream in time order (100-1000 rows per request with limit=auto, whatever
+the thread), bucketed by post.
+Per-post requests (one per submission, most returning a handful of comments)
+made a 2026-11-11 run crawl at ~1-4 posts/min. A day's posts are released
+once comments are streamed `comment_horizon_days` past that day (at least
+that; the last days of a window share the final stream), so a reply later
+than that may not be collected (state this as a limitation). Keyword
+searches still fetch comments per post: their posts are scattered in time.
+
 Records are mapped through sources/mapping.py, the one place a raw username is
 read (to derive author_hash with the same AUTHOR_HMAC_KEY as every other
 source). Archive scores and comment counts are snapshots taken when the
 archive ingested the item, not current values.
 
 The API throttles bursts by answering {"data": null, "error": "Timeout. Maybe
-slow down a bit"} with an `x-ratelimit-reset` header (seconds); requests are
-paced and such answers are retried after the advertised reset.
+slow down a bit"} with an `x-ratelimit-reset` header (seconds). Such answers
+are retried after the advertised reset, and pacing adapts: each throttle
+widens the gap between requests, each success narrows it back to the base.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ import hashlib
 import logging
 import random
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -39,6 +51,7 @@ import requests
 
 from uyam.calendar_window import day_bounds_unix, iter_utc_days, parse_iso_date
 from uyam.models import CommentRecord, SubmissionRecord
+from uyam.scrape_status import check_control
 from uyam.sources.base import CollectionRequest
 from uyam.sources.mapping import map_comment_dict, map_submission_dict
 
@@ -47,6 +60,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "https://arctic-shift.photon-reddit.com/api"
 _PLACEHOLDER_TEXT = {"[deleted]", "[removed]", "[deleted by user]"}
 _RETRY_STATUS = {429, 500, 502, 503, 504}
+_MAX_INTERVAL_S = 15.0  # adaptive pacing ceiling
 # The archive reports throttling and server-side query timeouts in the JSON
 # error body, on HTTP 200 *or* 4xx (seen: 422) — never fail fast on these.
 _THROTTLE_MARKERS = ("timeout", "slow down", "rate limit")
@@ -67,9 +81,13 @@ class ArcticShiftSource:
         min_interval_seconds: float = 1.0,
         timeout_seconds: float = 60.0,
         max_retries: int = 8,
-        page_size: int = 100,
+        max_throttle_waits: int = 60,
+        page_size: int | str = 100,
+        bulk_comments: bool = True,
+        comment_horizon_days: float = 3.0,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        now: Callable[[], float] = time.time,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._session = session or requests.Session()
@@ -77,12 +95,28 @@ class ArcticShiftSource:
             "User-Agent", "uyam-collector (thesis research; Taglish sarcasm dataset)"
         )
         self._min_interval = max(0.0, float(min_interval_seconds))
+        self._interval = self._min_interval  # adaptive; see _get
         self._timeout = float(timeout_seconds)
         self._max_retries = max(1, int(max_retries))
-        self._page_size = max(1, min(100, int(page_size)))
+        self._max_throttle_waits = max(1, int(max_throttle_waits))
+        # limit=auto returns 100-1000 rows per call, depending on server
+        # capacity, so a page shorter than 100 is the last one.
+        if str(page_size).lower() == "auto":
+            self._limit_param: int | str = "auto"
+            self._full_page = 100
+        else:
+            self._full_page = max(1, min(100, int(page_size)))
+            self._limit_param = self._full_page
         self._sleep = sleep
         self._clock = clock
+        self._now = now
         self._last_request: float | None = None
+        self._bulk_comments = bool(bulk_comments)
+        self._horizon_s = max(0, int(float(comment_horizon_days) * 86400))
+        # Bulk-comment state: post id -> its comments (created_utc order), and
+        # how far the subreddit-wide comment stream has been read.
+        self._buckets: dict[str, list[dict[str, Any]]] = {}
+        self._comments_until: int | None = None
 
     def close(self) -> None:
         self._session.close()
@@ -93,7 +127,7 @@ class ArcticShiftSource:
 
     def _pace(self) -> None:
         if self._last_request is not None:
-            wait = self._min_interval - (self._clock() - self._last_request)
+            wait = self._interval - (self._clock() - self._last_request)
             if wait > 0:
                 self._sleep(wait)
         self._last_request = self._clock()
@@ -107,11 +141,23 @@ class ArcticShiftSource:
             return None
 
     def _get(self, path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """One API call. Throttling is waited out; real failures are retried a few times.
+
+        The archive throttles dynamically by server load and query cost
+        (its docs), and at busy hours most requests come back throttled for
+        many minutes. That is not a failure: it gets its own, much larger
+        budget (`max_throttle_waits`), so a slow hour cannot end a multi-day
+        backfill the way 8 retries did on 2026-11-11.
+        """
         url = f"{self._base_url}{path}"
-        for attempt in range(self._max_retries):
+        failures = 0
+        throttles = 0
+        while True:
+            check_control()  # Stop works between waits, not only between records
             self._pace()
             reason: str
             reset: float | None = None
+            throttled = False
             try:
                 resp = self._session.get(url, params=params, timeout=self._timeout)
             except (requests.ConnectionError, requests.Timeout) as exc:
@@ -123,32 +169,53 @@ class ArcticShiftSource:
                 except ValueError:
                     payload = None
                 error = str(payload.get("error") or "") if isinstance(payload, dict) else ""
-                throttled = any(m in error.lower() for m in _THROTTLE_MARKERS)
-                if resp.status_code in _RETRY_STATUS or throttled:
+                throttled = resp.status_code == 429 or any(
+                    m in error.lower() for m in _THROTTLE_MARKERS
+                )
+                if throttled or resp.status_code in _RETRY_STATUS:
                     reason = error[:80] or f"http_{resp.status_code}"
                 elif resp.status_code >= 400:
                     raise ArchiveApiError(
                         f"archive {path} returned HTTP {resp.status_code}: {resp.text[:200]}"
                     )
                 elif isinstance(payload, dict) and isinstance(payload.get("data"), list):
+                    # Success eases the pace back toward the configured base.
+                    self._interval = max(self._min_interval, self._interval * 0.9)
                     return list(payload["data"])
                 else:
                     reason = error[:80] or "invalid_json"
-            if attempt == self._max_retries - 1:
-                break
-            backoff = min(120.0, (2**attempt) + random.uniform(0, 1))
-            delay = max(backoff, (reset or 0.0) + 1.0)
+
+            if throttled:
+                throttles += 1
+                if throttles > self._max_throttle_waits:
+                    raise ArchiveApiError(
+                        f"archive {path} still throttled after {throttles - 1} waits"
+                    )
+                delay = max(5.0, (reset if reset is not None else 30.0) + 1.0)
+                delay += random.uniform(0, 2)
+                # Fixed 1 s pacing re-tripped the limiter every minute; back off.
+                self._interval = min(_MAX_INTERVAL_S, self._interval * 1.5 + 0.5)
+            else:
+                failures += 1
+                if failures >= self._max_retries:
+                    raise ArchiveApiError(
+                        f"archive {path} failed after {self._max_retries} attempts ({reason})"
+                    )
+                delay = max(
+                    min(120.0, (2**failures) + random.uniform(0, 1)), (reset or 0.0) + 1.0
+                )
             logger.info(
                 "archive_retry",
                 extra={
                     "path": path,
-                    "attempt": attempt + 1,
+                    "throttled": throttled,
+                    "attempt": throttles if throttled else failures,
                     "reason": reason,
                     "delay_seconds": round(delay, 1),
+                    "interval_seconds": round(self._interval, 2),
                 },
             )
             self._sleep(delay)
-        raise ArchiveApiError(f"archive {path} failed after {self._max_retries} attempts")
 
     def _paginate(
         self, path: str, params: dict[str, Any], *, after: int, before: int | None = None
@@ -163,7 +230,7 @@ class ArcticShiftSource:
         cursor = after
         seen: set[str] = set()
         while before is None or cursor < before:
-            query = {**params, "after": cursor, "limit": self._page_size, "sort": "asc"}
+            query = {**params, "after": cursor, "limit": self._limit_param, "sort": "asc"}
             if before is not None:
                 query["before"] = before
             page = self._get(path, query)
@@ -171,7 +238,7 @@ class ArcticShiftSource:
             for item in fresh:
                 seen.add(str(item.get("id")))
                 yield item
-            if len(page) < self._page_size:
+            if len(page) < self._full_page:
                 return
             last = int(page[-1]["created_utc"])
             cursor = max(cursor, last - 1) if fresh else last + 1
@@ -191,8 +258,16 @@ class ArcticShiftSource:
         params: dict[str, Any] = {"subreddit": request.subreddit}
         if request.search_query:
             params["query"] = request.search_query
+        bulk = self._bulk_comments and not request.search_query
+        window_start, _ = day_bounds_unix(since)
+        self._buckets = {}
+        self._comments_until = None
 
+        # Days fetched but not yet handed on, as (day_end_unix, posts). In bulk
+        # mode a day waits until its comments are streamed `horizon` past it.
+        pending: deque[tuple[int, list[dict[str, Any]]]] = deque()
         yielded = 0
+
         for day in iter_utc_days(since, until):
             start, end = day_bounds_unix(day)
             # Start one second early so a post at exactly 00:00:00 survives an
@@ -209,6 +284,36 @@ class ArcticShiftSource:
                 "archive_day",
                 extra={"subreddit": request.subreddit, "day": day.isoformat(), "posts": len(posts)},
             )
+            pending.append((end, posts))
+            if bulk:
+                for raw in posts:
+                    self._buckets.setdefault(str(raw["id"]), [])
+                # Never ask for comments from the future (--until can be today).
+                upto = min(end, int(self._now()))
+                self._stream_comments(request.subreddit, upto=upto, window_start=window_start)
+            while pending and (not bulk or pending[0][0] + self._horizon_s <= end):
+                for record in self._release(pending.popleft()[1], request):
+                    yield record
+                    yielded += 1
+                    if request.limit and yielded >= request.limit:
+                        return
+
+        if bulk and pending:
+            # Finish the reply window for the last days, but never past "now".
+            upto = min(pending[-1][0] + self._horizon_s, int(self._now()))
+            self._stream_comments(request.subreddit, upto=upto, window_start=window_start)
+        while pending:
+            for record in self._release(pending.popleft()[1], request):
+                yield record
+                yielded += 1
+                if request.limit and yielded >= request.limit:
+                    return
+
+    def _release(
+        self, posts: list[dict[str, Any]], request: CollectionRequest
+    ) -> Iterator[SubmissionRecord]:
+        """Hand one day's posts to the pipeline, then drop their unclaimed buckets."""
+        try:
             for raw in posts:
                 yield map_submission_dict(
                     _submission_defaults(raw, request.subreddit),
@@ -216,20 +321,58 @@ class ArcticShiftSource:
                     sampling_strategy=request.sampling_strategy,
                     matched_query_or_keyword=request.matched_query_or_keyword,
                 )
-                yielded += 1
-                if request.limit and yielded >= request.limit:
-                    return
+        finally:
+            # Posts the pipeline skipped as duplicates never ask for comments.
+            for raw in posts:
+                self._buckets.pop(str(raw["id"]), None)
+
+    def _stream_comments(self, subreddit: str, *, upto: int, window_start: int) -> None:
+        """Read the subreddit's comments in time order up to `upto` (exclusive).
+
+        Only comments on posts awaiting release are kept. A comment always
+        comes after its post, and a day's posts are registered before the
+        stream passes that day, so no wanted comment goes by unseen.
+        """
+        start = self._comments_until if self._comments_until is not None else window_start
+        if upto <= start:
+            return
+        kept = 0
+        for raw in self._paginate(
+            "/comments/search", {"subreddit": subreddit}, after=start - 1, before=upto
+        ):
+            created = int(raw.get("created_utc") or 0)
+            if not start <= created < upto:
+                continue  # the one-second overlap with the previous stream
+            link = str(raw.get("link_id") or "")
+            bucket = self._buckets.get(link[3:] if link.startswith("t3_") else link)
+            if bucket is not None:
+                bucket.append(raw)
+                kept += 1
+        self._comments_until = upto
+        logger.info(
+            "archive_comments_streamed",
+            extra={
+                "subreddit": subreddit,
+                "upto": datetime.fromtimestamp(upto, tz=UTC).isoformat(),
+                "kept": kept,
+            },
+        )
 
     def iter_comments(
         self, submission: SubmissionRecord, request: CollectionRequest
     ) -> Iterable[CommentRecord]:
-        # A reply cannot predate its post (and the API rejects after=0).
-        post_created = int(submission.created_utc.timestamp())
-        raw_comments = list(
-            self._paginate(
-                "/comments/search", {"link_id": submission.reddit_id}, after=post_created - 1
+        bucket = self._buckets.pop(submission.reddit_id, None)
+        if bucket is not None:
+            raw_comments = bucket
+        else:
+            # Keyword-search posts (or bulk mode off): one request per post.
+            # A reply cannot predate its post (and the API rejects after=0).
+            post_created = int(submission.created_utc.timestamp())
+            raw_comments = list(
+                self._paginate(
+                    "/comments/search", {"link_id": submission.reddit_id}, after=post_created - 1
+                )
             )
-        )
         depths = _depths(raw_comments)
         kept = 0
         cap = request.max_comments_per_submission
