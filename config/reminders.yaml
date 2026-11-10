@@ -48,13 +48,24 @@ reminders:
     section: Data collection
     title: Fill the latest days with Shreddit (archive lags ~2 days)
     details: >
-      Also the fallback if the archive is down. The 2026-11-10 listing bugs
-      (JSON 403, virtualised feed, shared Chrome profile) are fixed in code.
-      Needs Chrome + proxies.txt; solve the captcha in the Chrome window if
-      one appears. Keyword searches run afterwards and are live searches,
-      not a second /new walk.
+      Ran 2026-11-11 (walk only): Nov 8–10 is collected for all three
+      subreddits, so tick this once you've glanced at the Detected line. Use
+      the same command with a later --since for top-ups, or as a fallback if
+      the archive is down. Needs Chrome + proxies.txt; solve any captcha in
+      the Chrome window.
     command: uyam collect --source shreddit --since 2026-11-08 --per-day 40
     check: shreddit_recent
+
+  - id: shreddit-keyword-searches-2026-11
+    section: Data collection
+    title: Run the Shreddit keyword-oversampling searches
+    details: >
+      The 2026-11-11 walk ran with oversampling switched off, so the eight
+      sarcasm-marker searches ("edi wow", "sana all", …) have not run on the
+      fixed scraper yet. These rows are tagged keyword_oversampled and are
+      kept out of natural-distribution metrics. Takes a while (8 keywords ×
+      3 subreddits). Reddit may rate-limit; the scraper waits it out.
+    command: uyam collect --source shreddit --oversample-only
 
   - id: retag-shreddit-trial-2026-11-10
     section: Data collection

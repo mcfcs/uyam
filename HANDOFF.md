@@ -67,12 +67,12 @@ records which ones are done.
    It resumes safely: dedup skips already-stored posts. The run also does the
    8 oversampling keywords as archive searches over the window afterwards.
    Run `--oversample-only` separately if the natural pass gets stopped.
-3. **Latest days** (the archive lags ~2 days), or a fallback if the archive
-   is down. The listing bugs from the 2026-11-10 trial are fixed; this is
-   ready to run:
-   `uyam collect --source shreddit --since 2026-11-08 --per-day 40`.
-   Keyword searches run afterwards (live Reddit search, not a second /new
-   walk). Dedup will skip the mis-tagged trial rows.
+3. **Latest days: done 2026-11-11 (walk only).** Nov 8–10 is collected for
+   all three subreddits. The **Shreddit keyword searches** were switched off
+   for that test and are still to run:
+   `uyam collect --source shreddit --oversample-only`.
+   For later top-ups, or as a fallback if the archive is down:
+   `uyam collect --source shreddit --since <YYYY-MM-DD> --per-day 40`.
 4. **Re-select + review.** `uyam annotate index && uyam annotate select`. The
    dry run predicts 107 `phatic` exclusions and 21 phatic items with a
    sarcastic vote sent to review (20 new `low_confidence` items; 1 is already
@@ -87,13 +87,20 @@ records which ones are done.
 7. Thesis text: state the Arctic Shift source and its ingest-time scores in
    the methodology/ethics section, plus the real window and the phatic filter.
 
-**Shreddit listing walk is fixed in code (2026-11-10).** `/r/<sub>/new.json`
-still returns 403, so calendar mode scrolls the DOM: one `evaluate_all`
-snapshot per page, ~4s for the feed to paint, stop once a card is older
-than `--since`. Each job has its own Chrome profile
-(`data/.browser-profiles/<sub>-<worker>`). Keyword jobs are searches again;
-they no longer inherit `--since` and walk `/new`. Gio still has to run it
-(next step 3). The archive source covers everything up to ~2 days ago.
+**Shreddit walk works live (verified 2026-11-11).** `/r/<sub>/new.json`
+still returns 403, so calendar mode scrolls the page itself. That needed
+`cb0dc37` (one `evaluate_all` snapshot per page, feed-page waits, stop at
+`--since`, keyword jobs really search, one Chrome profile per job) plus three
+fixes found by live runs. `a63687c`: a step that finds nothing jumps to the
+page bottom so the next feed page loads (without it every walk stopped at 27
+cards), the rate-limit toast is waited out, and comment expansion uses 2 s
+timeouts. `0e53b76`: Reddit's "blocked by network security" page is detected
+and that proxy is dropped. `5c76e83`: the toast wait is capped at 360 s.
+Live: all three walks reached Nov 8 (52 / 102 / 102 cards). The final
+r/Philippines run stored 58 posts and 1,649 comments, waited out a 209 s
+rate limit, and switched past 2 IP bans. `fe55611` also stops tests from
+sharing the live scrape's control file and `collect.log`. The archive source
+still covers everything up to ~2 days ago.
 
 The stopped trial's 63 posts / 554 comments are already in `data/raw/`.
 **57 posts are mis-tagged** `keyword_oversampled` (the keyword was replaced
@@ -115,6 +122,32 @@ will skip those ids as duplicates. See the Reminders tab.
 ---
 
 ## Session log
+
+### 2026-11-11 — live Shreddit walks; three more scraper fixes
+
+**Decisions (Gio):** asked to commit the other chat's work (already committed
+and pushed as `cb0dc37`) and to run the walk again.
+
+**Done:** `fe55611` tests isolate the scrape status files (via
+`UYAM_SCRAPE_STATUS_DIR` for worker processes). `a63687c` bottom-jump
+scrolling, rate-limit toast handling, short expansion timeouts. `0e53b76`
+network-security IP-ban detection. `5c76e83` 360 s toast cap. (Its commit
+message also says HANDOFF was updated; that edit failed, and this entry is
+the real update.) Tests: 259 → 265, all offline. ruff clean; mypy stays at
+50.
+
+**Findings:**
+- Walk 1 (`cb0dc37` only): every listing stopped at 27 cards (`idle`), and
+  a megathread hit "rate limited, take a break for 96 seconds" while the
+  scraper kept clicking "more comments".
+- Walk 2: listings reached `--since`. r/Philippines then hit "You've been
+  blocked by network security" and spent ~30 s per post on the banned IP.
+- Walk 3 (r/Philippines only): 58 posts / 1,649 comments, clean.
+- Runs used a walk-only config (keyword oversampling off) pointed at the
+  real `data/`. Nov 8–10 is now covered for every subreddit.
+
+**Left open:** Shreddit keyword searches (`--oversample-only`). The 57
+mis-tagged trial posts are waiting on Gio's call.
 
 ### 2026-11-10 — fix Shreddit listing walk after Reddit's JSON 403
 
