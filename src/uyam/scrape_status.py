@@ -19,7 +19,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-STATUS_DIR = _REPO_ROOT / "data" / ".scrape-status"
+# UYAM_SCRAPE_STATUS_DIR relocates the status/control files. The test suite
+# sets it so its collection workers (child processes, which re-import this
+# module) never read or write a live scrape's control file.
+STATUS_DIR = Path(
+    os.environ.get("UYAM_SCRAPE_STATUS_DIR") or _REPO_ROOT / "data" / ".scrape-status"
+)
 STATUS_FILE = STATUS_DIR / "status.json"
 SCREENSHOT_FILE = STATUS_DIR / "captcha.png"
 CONTROL_FILE = STATUS_DIR / "control.json"
