@@ -57,16 +57,27 @@ records which ones are done.
 
 1. **Back up the annotation DB** (RULES §5.3), e.g.
    `copy data\db\annotation.sqlite3 data\db\annotation-2026-11-10.bak.sqlite3`.
-2. **Archive backfill.** Pick a size: r/Philippines ~115 posts/day,
-   r/CasualPH ~27/day, r/OffMyChestPH unmeasured (assume ~100). The API
-   allows about 1 request/s, plus one comment request per post.
-   - full window, every post: roughly 40–55k posts, ~12–20 h
-     `uyam collect --source archive --since 2026-06-01 --until 2026-11-10`
-   - bounded: ≤40 posts/sub/day ≈ 19k posts, ~6–8 h
-     `uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40`
-   It resumes safely: dedup skips already-stored posts. The run also does the
-   8 oversampling keywords as archive searches over the window afterwards.
-   Run `--oversample-only` separately if the natural pass gets stopped.
+2. **Archive backfill: RUNNING since 2026-11-11 03:13 (PHT).** Detached
+   process (pid 107900 at start). Command:
+   `uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 300`.
+   Per-day 300 means every post (r/Philippines has ~250–270/day). Measured
+   pace at a busy hour: ~12 min per r/Philippines day (268 posts, ~4.8k
+   comments), so r/Philippines alone is ~30 h, and all three subreddits are
+   likely **2–3 days** unless the archive is quieter off-peak. Subreddits run
+   one after another: Philippines, then CasualPH, then OffMyChestPH. The
+   keyword searches run at the end.
+   - Progress: `data/.archive-backfill.err.log` (`archive_day`,
+     `archive_comments_streamed`, `archive_retry`). Manifests (and the
+     Reminders "Detected" line) appear only when each subreddit's run
+     finishes. A day's posts are stored once comments are streamed 3 days
+     past it.
+   - Stop: the app's Stop button (checked before every request). Resume: run
+     the same command again. Dedup skips stored posts, but a post that was
+     mid-way when stopped keeps only the comments stored so far.
+   - The machine has to stay on and awake (Windows sleep would pause it).
+   - The first attempt (02:31–02:42, per-post comments) stored 20 posts / 211
+     comments before it was stopped for being too slow (1–4 posts/min).
+     Fixed in `6a64caf`.
 3. **Latest days: done 2026-11-11 (walk only).** Nov 8–10 is collected for
    all three subreddits. The **Shreddit keyword searches** were switched off
    for that test and are still to run:
@@ -122,6 +133,28 @@ will skip those ids as duplicates. See the Reminders tab.
 ---
 
 ## Session log
+
+### 2026-11-11 — archive backfill started; archive throughput fixes
+
+**Decisions (Gio):** run the archive backfill Jun 1 → Nov 10 at 300 posts per
+day, after asking whether Shreddit could walk back that far. It can't: `/new`
+stops after ~1,000 posts, which is about 8–10 days on the busy subreddits.
+
+**Done:** backed up `data/db/collection.sqlite3` →
+`collection-2026-11-11.bak.sqlite3`. First run crawled (1–4 posts/min). The
+Arctic Shift docs say limits are dynamic, by server load and query cost, and
+point to monthly dumps for bulk use (all of Reddit, impractical here).
+`6a64caf`: a subreddit-wide comment stream with a ≥3-day reply horizon
+(state it as a limitation), `limit=auto`, adaptive pacing, and throttling with
+its own ~1 h budget plus Stop checks. Tests: 265 → 275. Restarted 03:13. It
+stays throttled most of the time, but ~1 request/min gets through.
+
+**Findings:** my own test requests share the same IP allowance, so don't
+probe the API while a run is going. r/Philippines is ~250–270 posts/day,
+more than double the earlier estimate.
+
+**Left open:** watch the run (2–3 days). Then `uyam annotate index && select`
+and the v2 export.
 
 ### 2026-11-11 — live Shreddit walks; three more scraper fixes
 
