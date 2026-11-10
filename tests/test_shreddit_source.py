@@ -23,6 +23,7 @@ from uyam.sources.shreddit import (
     listing_reached_since,
     page_text_is_captcha,
     page_text_is_whoa,
+    rate_limit_toast_seconds,
     submission_already_seen,
 )
 
@@ -313,8 +314,9 @@ def test_dom_listing_scrolls_until_since(monkeypatch: pytest.MonkeyPatch) -> Non
         return batch
 
     monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
-    def _scroll() -> None:
+    def _scroll(*, to_bottom: bool = False) -> bool:
         state["scrolls"] += 1
+        return False
 
     monkeypatch.setattr(src, "_await_listing_cards", _await)
     monkeypatch.setattr(src, "_scroll_feed", _scroll)
@@ -337,8 +339,9 @@ def test_dom_listing_idles_when_the_feed_does_not_grow(
     state = {"scrolls": 0}
 
     monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
-    def _scroll() -> None:
+    def _scroll(*, to_bottom: bool = False) -> bool:
         state["scrolls"] += 1
+        return True  # already at the page bottom: a static feed is genuinely idle
 
     monkeypatch.setattr(
         src,
@@ -410,3 +413,98 @@ def test_keyword_job_does_not_walk_the_calendar(monkeypatch: pytest.MonkeyPatch)
         posts_per_day=40,
     )
     assert list(src.iter_submissions(req)) == ["edi wow"]
+
+
+def test_dom_listing_jumps_to_the_bottom_instead_of_idling_mid_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first page is several screens tall; viewport steps over it are not idle.
+
+    Seen 2026-11-11: three viewport steps never reached the feed loader, so
+    every walk stopped at the first 27 cards with reason 'idle'.
+    """
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    first = [_card(f"p{i:02d}", "2026-11-10T12:00:00+0000") for i in range(27)]
+    second = first[2:] + [_card(f"q{i:02d}", "2026-11-09T12:00:00+0000") for i in range(25)]
+    state: dict[str, object] = {"page": first, "calls": []}
+
+    def _scroll(*, to_bottom: bool = False) -> bool:
+        calls = state["calls"]
+        assert isinstance(calls, list)
+        calls.append(to_bottom)
+        if to_bottom:
+            state["page"] = second  # the loader only fires at the bottom
+            return True
+        return False  # a viewport step over cards already read
+
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
+    monkeypatch.setattr(src, "_await_listing_cards", lambda *_a, **_k: state["page"])
+    monkeypatch.setattr(src, "_scroll_feed", _scroll)
+    req = CollectionRequest(
+        subreddit="CasualPH", listing_type="new", collection_run_id="run-1"
+    )
+    posts = src._collect_dom_listing_posts(req, max_posts=200, max_scrolls=12)
+
+    assert len(posts) == 52  # both pages, no duplicates
+    calls = state["calls"]
+    assert isinstance(calls, list)
+    assert calls[:2] == [False, True]  # a step that finds nothing becomes a jump
+
+
+def test_rate_limit_toast_seconds() -> None:
+    toast = "Your request has been rate limited, please take a break for 96 seconds and try again."
+    assert rate_limit_toast_seconds(toast) == 96.0
+    assert rate_limit_toast_seconds("You've been rate limited") == 60.0
+    assert rate_limit_toast_seconds("Load more comments") is None
+
+
+class _ToastLocator:
+    def __init__(self, text: str | None) -> None:
+        self._text = text
+
+    def count(self) -> int:
+        return 0 if self._text is None else 1
+
+    @property
+    def first(self) -> _ToastLocator:
+        return self
+
+    def inner_text(self, timeout: float = 0) -> str:
+        return self._text or ""
+
+
+class _ToastPage:
+    def __init__(self, text: str | None) -> None:
+        self.text = text
+
+    def locator(self, _selector: str) -> _ToastLocator:
+        return _ToastLocator(self.text)
+
+
+def test_rate_limit_toast_is_waited_out_and_stop_still_works(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    clock = {"t": 1000.0, "slept": 0.0, "checks": 0}
+
+    def _sleep(seconds: float) -> None:
+        clock["t"] += seconds
+        clock["slept"] += seconds
+
+    def _check() -> None:
+        clock["checks"] += 1
+
+    monkeypatch.setattr("uyam.sources.shreddit.time.monotonic", lambda: clock["t"])
+    monkeypatch.setattr("uyam.sources.shreddit.time.sleep", _sleep)
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", _check)
+    monkeypatch.setattr("uyam.sources.shreddit.write_status", lambda *_a, **_k: None)
+
+    monkeypatch.setattr(src, "_require_page", lambda: _ToastPage(None))
+    assert src._wait_out_rate_limit_toast() is False
+    assert clock["slept"] == 0
+
+    toast = "Your request has been rate limited, please take a break for 96 seconds."
+    monkeypatch.setattr(src, "_require_page", lambda: _ToastPage(toast))
+    assert src._wait_out_rate_limit_toast() is True
+    assert clock["slept"] == pytest.approx(99.0)  # the stated 96 s plus a margin
+    assert clock["checks"] >= 19  # polled Stop at least every 5 s

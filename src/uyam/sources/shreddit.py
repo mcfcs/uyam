@@ -27,6 +27,7 @@ import importlib
 import json
 import logging
 import random
+import re
 import shutil
 import time
 from collections.abc import Iterable, Iterator
@@ -148,6 +149,13 @@ _PROFILE_DIR = _REPO_ROOT / "data" / ".browser-profile"
 _POST_SELECTOR = "shreddit-post"
 _COMMENT_SELECTOR = "shreddit-comment"
 _MORE_COMMENTS_SELECTOR = "faceplate-partial.more-comments-partial"
+# Reddit's in-page toast: "Your request has been rate limited, please take a
+# break for 96 seconds and try again." It is not a failed navigation, so
+# nothing else notices it; clicking on through it only extends the block.
+_RATE_LIMIT_TOAST_SELECTOR = "text=/request has been rate limited/i"
+_RATE_LIMIT_TOAST_RE = re.compile(r"(\d+)\s*seconds", re.IGNORECASE)
+_RATE_LIMIT_TOAST_DEFAULT_S = 60.0
+_RATE_LIMIT_TOAST_CAP_S = 180.0
 
 _EXTRACT_POST_JS = """
 (el) => {
@@ -364,6 +372,14 @@ def _json_created_in_window(raw: dict[str, Any], start: int, end: int) -> bool:
     if ts > 1e12:
         ts = ts / 1000.0
     return start <= ts < end
+
+
+def rate_limit_toast_seconds(text: str) -> float | None:
+    """Seconds Reddit's rate-limit toast asks for, or None if it is not one."""
+    if "rate limited" not in text.lower():
+        return None
+    m = _RATE_LIMIT_TOAST_RE.search(text)
+    return float(m.group(1)) if m else _RATE_LIMIT_TOAST_DEFAULT_S
 
 
 def listing_card_ids(cards: list[dict[str, Any]]) -> set[str]:
@@ -1179,25 +1195,42 @@ class ShredditBrowserSource:
                 cards = nxt
         return cards
 
-    def _scroll_feed(self) -> None:
-        """Move about one viewport and poke the feed partial.
+    def _scroll_feed(self, *, to_bottom: bool = False) -> bool:
+        """Scroll the feed and poke its loader. Returns True at the page bottom.
 
-        Jumping straight to ``scrollHeight`` recycles the virtual list
-        before the next page's cards can be snapshotted.
+        Normally one viewport at a time, so cards are snapshotted before the
+        virtual list recycles them. A first page of ~27 cards is several
+        screens tall, though, and the next page only loads at the bottom: a
+        step that found nothing new asks for ``to_bottom`` (seen 2026-11-11:
+        three viewport steps never reached the loader, so every walk stopped
+        at 27 posts).
         """
         page = self._require_page()
+        at_bottom = False
         try:
-            page.evaluate(
-                """() => {
-                  const step = Math.max((window.innerHeight || 800) * 0.95, 700);
-                  window.scrollBy(0, step);
-                }"""
+            at_bottom = bool(
+                page.evaluate(
+                    """(toBottom) => {
+                      const h = () => Math.max(
+                        document.body.scrollHeight, document.documentElement.scrollHeight);
+                      if (toBottom) {
+                        window.scrollTo(0, h());
+                      } else {
+                        window.scrollBy(0, Math.max((window.innerHeight || 800) * 0.95, 700));
+                      }
+                      return window.scrollY + (window.innerHeight || 800) >= h() - 80;
+                    }""",
+                    to_bottom,
+                )
             )
+            if to_bottom:
+                page.mouse.wheel(0, 2400)  # a real wheel event wakes the feed sentinel
         except ScrapeStopRequested:
             raise
         except Exception:
             logger.info("shreddit_listing_scroll_failed", extra={"reason": "evaluate"})
         self._click_feed_loader()
+        return at_bottom
 
     def _json_listing(
         self, request: CollectionRequest, *, fetch_limit: int | None = None
@@ -1505,6 +1538,33 @@ class ShredditBrowserSource:
         )
         return posts[0] if posts else None
 
+    def _wait_out_rate_limit_toast(self) -> bool:
+        """If Reddit shows its rate-limit toast, wait the stated time. True if it did."""
+        page = self._require_page()
+        try:
+            loc = page.locator(_RATE_LIMIT_TOAST_SELECTOR)
+            if loc.count() == 0:
+                return False
+            text = loc.first.inner_text(timeout=1000)
+        except ScrapeStopRequested:
+            raise
+        except Exception:
+            return False
+        seconds = rate_limit_toast_seconds(text)
+        if seconds is None:
+            return False
+        wait = min(_RATE_LIMIT_TOAST_CAP_S, seconds + 3.0)
+        logger.warning(
+            "shreddit_rate_limited_toast",
+            extra={"seconds": seconds, "wait_seconds": wait},
+        )
+        write_status("running", f"Reddit rate limit — waiting {wait:.0f}s")
+        deadline = time.monotonic() + wait
+        while (left := deadline - time.monotonic()) > 0:
+            check_control()  # Stop still works during the wait
+            time.sleep(min(5.0, left))
+        return True
+
     def _expand_more_comments(self, request: CollectionRequest) -> None:
         # replace_more_limit is a PRAW knob. 0 still means "do not expand".
         if self._more_comments_clicks <= 0 or request.replace_more_limit == 0:
@@ -1543,13 +1603,22 @@ class ShredditBrowserSource:
                     page.wait_for_timeout(self._expand_wait_ms)
                 except Exception:
                     return
+                if self._wait_out_rate_limit_toast():
+                    return  # keep what is loaded; more clicks would extend the block
                 continue
 
             clicked = 0
             batch = min(count, 6)
             for i in range(batch):
                 el = loc.nth(i)
-                src = el.get_attribute("src") or ""
+                try:
+                    # Short timeout: an expanded partial detaches, and the
+                    # default 45s wait stalled whole threads (seen 2026-11-11).
+                    src = el.get_attribute("src", timeout=2000) or ""
+                except ScrapeStopRequested:
+                    raise
+                except Exception:
+                    continue
                 if request.max_depth is not None and "startingDepth=" in src:
                     try:
                         depth = int(src.split("startingDepth=", 1)[1].split("&", 1)[0])
@@ -1573,6 +1642,8 @@ class ShredditBrowserSource:
             else:
                 idle = 0
             page.wait_for_timeout(self._expand_wait_ms)
+            if self._wait_out_rate_limit_toast():
+                return  # keep what is loaded; more clicks would extend the block
 
     def _extract_comments(self, request: CollectionRequest) -> list[dict[str, Any]]:
         page = self._require_page()
@@ -1791,6 +1862,8 @@ class ShredditBrowserSource:
         before_ids: set[str] = set()
         before_count = 0
         first_page = True
+        at_bottom = False  # did the last scroll end at the page bottom?
+        jump = False  # next scroll goes to the bottom (the last step found nothing)
         reason = "idle"
         for _scroll in range(max_scrolls):
             check_control()
@@ -1807,9 +1880,14 @@ class ShredditBrowserSource:
                 reason = "since"
                 break
             if added == 0 and not advanced:
-                idle += 1
+                # Only a page-bottom wait that loaded nothing counts as idle;
+                # mid-page steps over already-read cards are just travel.
+                if at_bottom:
+                    idle += 1
+                jump = True
             else:
                 idle = 0
+                jump = False
             if idle >= _LISTING_IDLE_LIMIT:
                 reason = "idle"
                 break
@@ -1818,7 +1896,7 @@ class ShredditBrowserSource:
                 break
             before_ids = listing_card_ids(cards)
             before_count = len(cards)
-            self._scroll_feed()
+            at_bottom = self._scroll_feed(to_bottom=jump)
         logger.info(
             "shreddit_listing_collected",
             extra={
