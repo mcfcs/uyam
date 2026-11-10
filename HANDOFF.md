@@ -37,8 +37,9 @@ annotation rows. Gold review: 31 of 300 queued items labeled by Gio.
 
 ## In progress
 
-Nothing is running. The code for both workstreams is merged. The real runs
-are Gio's (see *Next steps*).
+**The archive backfill is running** (started 2026-11-11 03:13 PHT, expected
+to take 2–3 days; see *Next steps* 2). Don't send test requests to the archive
+API while it runs, because they share its rate-limit allowance.
 
 - **Temporal extension, 2026-06-01 → 2026-11-10.** `uyam collect --source
   archive` pulls the window from the Arctic Shift archive. Authors are hashed
