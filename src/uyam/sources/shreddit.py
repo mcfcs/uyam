@@ -137,6 +137,11 @@ _HTTP_STATUS_SNIPPETS = (
 _JSON_UNAVAILABLE_STATUS = frozenset({401, 403, 429})
 _JSON_429_RETRY_S = 2.0
 _RATE_LIMIT_COOLDOWN_S = 45.0
+# A Shreddit feed page takes about 3–4s to paint through a residential proxy.
+# A fixed 1.5s sleep returns the first stub and the walk looks idle.
+_FEED_PAGE_WAIT_MS = 4000
+_FEED_POLL_MS = 300
+_LISTING_IDLE_LIMIT = 3
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PROFILE_DIR = _REPO_ROOT / "data" / ".browser-profile"
 
@@ -234,21 +239,22 @@ _EXTRACT_COMMENTS_JS = """
 }
 """
 
+# evaluate_all callback: the locator already pierced shadow roots, so this
+# must map the element list. A document.querySelectorAll walk misses cards
+# inside a closed shadow root and races the virtualised feed.
 _LISTING_CARDS_JS = """
-() => {
-  return Array.from(document.querySelectorAll("shreddit-post")).map((el) => {
-    const cls = (el.getAttribute("class") || "").toLowerCase();
-    const promoted = el.hasAttribute("promoted") || cls.includes("promoted")
-      || !!el.getAttribute("ad-type");
-    return {
-      id: el.getAttribute("id") || "",
-      permalink: el.getAttribute("permalink") || "",
-      created: el.getAttribute("created-timestamp")
-        || el.getAttribute("created") || "",
-      promoted,
-    };
-  });
-}
+(els) => els.map((el) => {
+  const cls = (el.getAttribute("class") || "").toLowerCase();
+  const promoted = el.hasAttribute("promoted") || cls.includes("promoted")
+    || !!el.getAttribute("ad-type");
+  return {
+    id: el.getAttribute("id") || "",
+    permalink: el.getAttribute("permalink") || "",
+    created: el.getAttribute("created-timestamp")
+      || el.getAttribute("created") || "",
+    promoted,
+  };
+})
 """
 
 _FETCH_JSON_JS = """
@@ -358,6 +364,64 @@ def _json_created_in_window(raw: dict[str, Any], start: int, end: int) -> bool:
     if ts > 1e12:
         ts = ts / 1000.0
     return start <= ts < end
+
+
+def listing_card_ids(cards: list[dict[str, Any]]) -> set[str]:
+    return {str(card.get("id") or "") for card in cards if card.get("id")}
+
+
+def feed_advanced(
+    before_ids: set[str], before_count: int, cards: list[dict[str, Any]]
+) -> bool:
+    """True when this snapshot has cards the previous one did not.
+
+    The virtualised feed grows and then recycles (a probe saw 27 → 52 → 77 →
+    50). A higher count or any new id means the next page arrived. A smaller
+    set of the same ids does not.
+    """
+    if len(cards) > before_count:
+        return True
+    return bool(listing_card_ids(cards) - before_ids)
+
+
+def absorb_listing_cards(
+    cards: list[dict[str, Any]],
+    *,
+    seen: set[str],
+    ordered: list[dict[str, Any]],
+) -> int:
+    """Append unseen, non-promoted cards. Returns how many were new."""
+    added = 0
+    for card in cards:
+        raw = listing_card_to_raw(card)
+        if raw is None:
+            continue
+        pid = f"t3_{raw['id']}"
+        if pid in seen:
+            continue
+        seen.add(pid)
+        ordered.append(raw)
+        added += 1
+    return added
+
+
+def listing_reached_since(
+    ordered: list[dict[str, Any]], stop_before_unix: float | None
+) -> bool:
+    """True once a newest-first walk has included a post older than From."""
+    if stop_before_unix is None:
+        return False
+    oldest: float | None = None
+    for raw in ordered:
+        created = raw.get("created_utc")
+        if isinstance(created, bool) or not isinstance(created, (int, float)):
+            continue
+        ts = float(created)
+        if ts > 1e12:
+            ts = ts / 1000.0
+        if oldest is None or ts < oldest:
+            oldest = ts
+    return oldest is not None and oldest < stop_before_unix
 
 
 def listing_card_to_raw(card: dict[str, Any]) -> dict[str, Any] | None:
@@ -1049,26 +1113,91 @@ class ShredditBrowserSource:
             },
         )
 
-    def _read_listing_cards(self) -> list[dict[str, str | bool]]:
-        """Read listing cards via locators (pierces closed shadow roots)."""
-        loc = self._require_page().locator(_POST_SELECTOR)
-        cards: list[dict[str, str | bool]] = []
-        for i in range(loc.count()):
-            el = loc.nth(i)
-            cls = (el.get_attribute("class") or "").lower()
-            cards.append(
-                {
-                    "id": el.get_attribute("id") or "",
-                    "permalink": el.get_attribute("permalink") or "",
-                    "created": el.get_attribute("created-timestamp")
-                    or el.get_attribute("created")
-                    or "",
-                    "promoted": bool(
-                        el.get_attribute("promoted") is not None or "promoted" in cls
-                    ),
-                }
+    def _listing_page_wait_ms(self) -> int:
+        return max(int(self._scroll_wait_ms), _FEED_PAGE_WAIT_MS)
+
+    def _read_listing_cards(self) -> list[dict[str, Any]]:
+        """Snapshot every visible shreddit-post in one call.
+
+        Reading ``locator.nth(i)`` one card at a time hangs for the full
+        navigation timeout when the virtualised feed detaches a card
+        mid-loop (seen: ``shreddit-post.nth(17)`` on r/Philippines).
+        """
+        try:
+            raw = self._require_page().locator(_POST_SELECTOR).evaluate_all(
+                _LISTING_CARDS_JS
             )
+        except ScrapeStopRequested:
+            raise
+        except Exception as exc:
+            logger.info(
+                "shreddit_listing_cards_failed",
+                extra={"reason": type(exc).__name__},
+            )
+            return []
+        if not isinstance(raw, list):
+            return []
+        return [card for card in raw if isinstance(card, dict)]
+
+    def _await_listing_cards(
+        self,
+        before_ids: set[str],
+        before_count: int,
+        *,
+        first_page: bool,
+    ) -> list[dict[str, Any]]:
+        """Poll until the feed settles, or the page budget (~4s) runs out.
+
+        The first paint is often a stub of a few cards, so the first page
+        always uses the whole budget. A later page may return once new ids
+        have shown up and then stayed put, but not before ~2.5s: a partial
+        that arrives at 1s is not the full page on a residential proxy.
+        """
+        page = self._require_page()
+        budget_s = self._listing_page_wait_ms() / 1000.0
+        deadline = time.monotonic() + budget_s
+        started = time.monotonic()
+        cards = self._read_listing_cards()
+        quiet = 0
+        while time.monotonic() < deadline:
+            check_control()
+            grown = feed_advanced(before_ids, before_count, cards)
+            elapsed = time.monotonic() - started
+            min_dwell = budget_s if first_page else min(2.5, budget_s)
+            if grown and quiet >= 2 and elapsed >= min_dwell:
+                return cards
+            remaining_ms = int((deadline - time.monotonic()) * 1000)
+            if remaining_ms <= 0:
+                break
+            page.wait_for_timeout(min(_FEED_POLL_MS, remaining_ms))
+            nxt = self._read_listing_cards()
+            if feed_advanced(listing_card_ids(cards), len(cards), nxt):
+                quiet = 0
+            else:
+                quiet += 1
+            if nxt:
+                cards = nxt
         return cards
+
+    def _scroll_feed(self) -> None:
+        """Move about one viewport and poke the feed partial.
+
+        Jumping straight to ``scrollHeight`` recycles the virtual list
+        before the next page's cards can be snapshotted.
+        """
+        page = self._require_page()
+        try:
+            page.evaluate(
+                """() => {
+                  const step = Math.max((window.innerHeight || 800) * 0.95, 700);
+                  window.scrollBy(0, step);
+                }"""
+            )
+        except ScrapeStopRequested:
+            raise
+        except Exception:
+            logger.info("shreddit_listing_scroll_failed", extra={"reason": "evaluate"})
+        self._click_feed_loader()
 
     def _json_listing(
         self, request: CollectionRequest, *, fetch_limit: int | None = None
@@ -1200,63 +1329,13 @@ class ShredditBrowserSource:
         if not self._listing_tab_ready(url):
             self._goto(url, wait_selector=_POST_SELECTOR)
 
-        limit = fetch_limit
-        ordered: list[str] = []
-        seen: set[str] = set()
-        idle = 0
-
-        for _scroll in range(self._max_scrolls):
-            check_control()
-            page = self._require_page()
-            cards = self._read_listing_cards()
-            added = 0
-            for card in cards:
-                raw = listing_card_to_raw(card)
-                if raw is None:
-                    continue
-                pid = f"t3_{raw['id']}"
-                permalink = str(raw["permalink"])
-                if pid in seen:
-                    continue
-                seen.add(pid)
-                ordered.append(permalink)
-                added += 1
-                if len(ordered) >= limit:
-                    logger.info(
-                        "shreddit_listing_collected",
-                        extra={
-                            "subreddit": request.subreddit,
-                            "count": len(ordered),
-                            "collection_run_id": request.collection_run_id,
-                        },
-                    )
-                    return ordered[:limit]
-
-            if added == 0:
-                idle += 1
-            else:
-                idle = 0
-
-            if idle >= 3:
-                break
-
-            try:
-                page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
-            except Exception:
-                break
-            page.wait_for_timeout(self._scroll_wait_ms)
-            self._click_feed_loader()
-
-        logger.info(
-            "shreddit_listing_collected",
-            extra={
-                "subreddit": request.subreddit,
-                "count": len(ordered),
-                "collection_run_id": request.collection_run_id,
-            },
+        posts = self._collect_dom_listing_posts(
+            request,
+            max_posts=fetch_limit,
+            max_scrolls=self._max_scrolls,
         )
+        ordered = [str(post["permalink"]) for post in posts if post.get("permalink")]
         if not ordered:
-            self._dom_snapshot(request)
             if request.listing_type == "search":
                 logger.info(
                     "shreddit_listing_empty",
@@ -1271,7 +1350,7 @@ class ShredditBrowserSource:
                 f"No shreddit-post cards found for r/{request.subreddit}. "
                 "The listing page was empty or blocked."
             )
-        return ordered[:limit]
+        return ordered[:fetch_limit]
 
     def _click_feed_loader(self) -> None:
         page = self._require_page()
@@ -1534,7 +1613,10 @@ class ShredditBrowserSource:
         self,
         request: CollectionRequest,
     ) -> Iterable[SubmissionRecord]:
-        if calendar_mode(request):
+        # Keyword jobs must search. Calendar mode ignores listing_type, so a
+        # job that still carries --since would walk /new and store those
+        # posts as keyword_oversampled.
+        if calendar_mode(request) and request.sampling_strategy != "keyword_oversampled":
             yield from self._iter_calendar_listing(request)
             return
         yield from self._iter_listing(request)
@@ -1605,7 +1687,9 @@ class ShredditBrowserSource:
             if not self._listing_tab_ready(url):
                 self._goto(url, wait_selector=_POST_SELECTOR)
             posts = self._collect_dom_listing_posts(
-                listing_req, max_posts=window.scan_cap()
+                listing_req,
+                max_posts=window.scan_cap(),
+                stop_before_unix=float(window.start_unix),
             )
 
         taken: dict[str, int] = {}
@@ -1684,56 +1768,63 @@ class ShredditBrowserSource:
         )
 
     def _collect_dom_listing_posts(
-        self, request: CollectionRequest, *, max_posts: int
+        self,
+        request: CollectionRequest,
+        *,
+        max_posts: int,
+        stop_before_unix: float | None = None,
+        max_scrolls: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Scroll /new and read shreddit-post cards (id, permalink, created)."""
+        """Scroll the current listing and snapshot shreddit-post cards.
+
+        ``stop_before_unix`` is the calendar From day. The walk keeps going
+        through recycled cards until a post older than that day is in hand,
+        the cap is hit, or several full page-waits add nothing.
+        """
+        if max_scrolls is None:
+            max_scrolls = max(
+                self._max_scrolls, min(500, max(40, (max_posts // 3) + 10))
+            )
         ordered: list[dict[str, Any]] = []
         seen: set[str] = set()
         idle = 0
-        max_scrolls = max(
-            self._max_scrolls, min(500, max(40, (max_posts // 3) + 10))
-        )
+        before_ids: set[str] = set()
+        before_count = 0
+        first_page = True
+        reason = "idle"
         for _scroll in range(max_scrolls):
             check_control()
-            page = self._require_page()
-            added = 0
-            for card in self._read_listing_cards():
-                raw = listing_card_to_raw(card)
-                if raw is None:
-                    continue
-                pid = f"t3_{raw['id']}"
-                if pid in seen:
-                    continue
-                seen.add(pid)
-                ordered.append(raw)
-                added += 1
-                if len(ordered) >= max_posts:
-                    logger.info(
-                        "shreddit_listing_collected",
-                        extra={
-                            "subreddit": request.subreddit,
-                            "count": len(ordered),
-                            "collection_run_id": request.collection_run_id,
-                        },
-                    )
-                    return ordered[:max_posts]
-            if added == 0:
+            cards = self._await_listing_cards(
+                before_ids, before_count, first_page=first_page
+            )
+            first_page = False
+            advanced = feed_advanced(before_ids, before_count, cards)
+            added = absorb_listing_cards(cards, seen=seen, ordered=ordered)
+            if len(ordered) >= max_posts:
+                reason = "cap"
+                break
+            if listing_reached_since(ordered, stop_before_unix):
+                reason = "since"
+                break
+            if added == 0 and not advanced:
                 idle += 1
             else:
                 idle = 0
-            if idle >= 3:
+            if idle >= _LISTING_IDLE_LIMIT:
+                reason = "idle"
                 break
-            try:
-                page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
-            except Exception:
+            if _scroll + 1 >= max_scrolls:
+                reason = "scroll_cap"
                 break
-            page.wait_for_timeout(self._scroll_wait_ms)
-            self._click_feed_loader()
+            before_ids = listing_card_ids(cards)
+            before_count = len(cards)
+            self._scroll_feed()
         logger.info(
             "shreddit_listing_collected",
             extra={
                 "subreddit": request.subreddit,
                 "count": len(ordered),
+                "reason": reason,
                 "collection_run_id": request.collection_run_id,
             },
         )

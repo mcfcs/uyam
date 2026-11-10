@@ -87,7 +87,7 @@ The pool wraps. After cooldown, an IP can be used again. Parallel workers start 
 
 ### 3.4 JSON “in the browser”
 
-Listing and comments JSON (`/r/{sub}/new.json`, `/comments/{id}.json`) are requested with Playwright’s `page.request.get` — **same cookies, proxy, and TLS session as the visible tab**. A standalone `requests` call would 403; the browser context often succeeds after the challenge is passed.
+Listing and comments JSON (`/r/{sub}/new.json`, `/comments/{id}.json`) are requested inside the browser session — **same cookies, proxy, and TLS session as the visible tab**. A standalone `requests` call would 403. As of 2026-11-10, `/new.json` returns **403 inside the browser too**, so calendar walks fall through to the DOM. Comment JSON may still work; when it does not, the comments page is parsed instead.
 
 If comments JSON returns 429, the HTML comments page on that same IP will too. The harvester then **skips DOM** for that post and stores whatever listing JSON already has, instead of burning proxies on one URL.
 
@@ -98,7 +98,7 @@ If comments JSON returns 429, the HTML comments page on that same IP will too. T
 ### 4.1 Launch
 
 1. CLI / Streamlit starts `uyam collect --source shreddit …`.
-2. For several subreddits, **one process per subreddit** (default up to 3 browsers).
+2. For several subreddits, **one process per job** (default up to 3 browsers). Each job gets its own Chrome profile (`data/.browser-profiles/<sub>-<worker>`), including keyword searches on the same subreddit.
 3. Each process: load proxies → Patchright → persistent Chrome → first `page.goto` of the listing.
 
 ### 4.2 Listing (normal mode)
@@ -106,15 +106,15 @@ If comments JSON returns 429, the HTML comments page on that same IP will too. T
 Listing type is `/new`, `/hot`, `/top`, or search.
 
 1. Navigate to the listing URL; wait for `<shreddit-post>` or a captcha pause.
-2. Prefer **JSON pagination** (`after=` tokens, up to the limit).
-3. If JSON is empty, **scroll the feed** and read `<shreddit-post>` `id` / `permalink`.
+2. Prefer **JSON pagination** (`after=` tokens, up to the limit). A 401/403/429 turns JSON off for the rest of the job.
+3. If JSON is empty, **scroll the feed** about one viewport at a time. Every visible `<shreddit-post>` is read in one `evaluate_all` snapshot (the feed is virtualised; reading cards one by one detaches them and hangs). Each page waits up to ~4s for new card ids. The walk stops after three pages that add nothing.
 4. For each permalink, skip `t3_{id}` already in SQLite **before** opening comments.
 
 ### 4.3 Calendar mode (From date → Until, N posts/day)
 
 Reddit **search `timestamp:unix..unix` is dead** on the current UI (it searches the literal string and returns no results). Calendar mode does **not** use search.
 
-It walks **`/r/{sub}/new/` newest-first**, buckets `created_utc` into UTC days, keeps up to N **new** posts per day, and **stops** once posts are older than From.
+It walks **`/r/{sub}/new/` newest-first**, buckets `created_utc` into UTC days, keeps up to N **new** posts per day, and **stops scrolling once a card is older than From**. Keyword oversampling does not use this walk: those jobs are searches, each with its own Chrome profile.
 
 Example: From `2026-08-01`, 15/day, until today → 15 newest unseen posts per UTC day, then halt at 1 Aug.
 
@@ -154,7 +154,7 @@ data/
   manifests/<uuid>.json               # per-run counts and errors
   db/collection.sqlite3               # dedup + run history
   .browser-profile/                   # default Chrome profile
-  .browser-profiles/<Subreddit>/      # parallel workers
+  .browser-profiles/<Subreddit>-<n>/  # one profile per job (worker index)
   .scrape-status/                     # log, control, captcha.png
 ```
 

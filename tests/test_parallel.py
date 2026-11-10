@@ -79,6 +79,51 @@ def test_run_jobs_all_three_subreddits(tmp_path: Path) -> None:
     assert {r.get("subreddit") for r in recs} == set(subs)
 
 
+def test_browser_profile_is_per_job(tmp_path: Path) -> None:
+    from uyam.parallel import browser_profile_dir
+
+    first = browser_profile_dir("Philippines", 0, root=tmp_path)
+    second = browser_profile_dir("Philippines", 1, root=tmp_path)
+    other = browser_profile_dir("CasualPH", 0, root=tmp_path)
+    assert first != second
+    assert first.name == "Philippines-0"
+    assert second.name == "Philippines-1"
+    assert other.name == "CasualPH-0"
+
+
+def test_oversample_job_is_a_search_not_a_calendar_walk() -> None:
+    from uyam.parallel import make_oversample_job
+
+    base = {
+        "subreddit": "Philippines",
+        "listing_type": "new",
+        "calendar_since": "2026-11-08",
+        "calendar_until": "2026-11-10",
+        "posts_per_day": 40,
+        "sampling_strategy": "natural",
+        "worker_index": 0,
+        "limit": 100,
+    }
+    job = make_oversample_job(
+        base,
+        subreddit="CasualPH",
+        keyword="edi wow",
+        worker_index=4,
+        collection_run_id="run-over",
+    )
+    assert job["subreddit"] == "CasualPH"
+    assert job["listing_type"] == "search"
+    assert job["search_query"] == "edi wow"
+    assert job["sampling_strategy"] == "keyword_oversampled"
+    assert job["matched_query_or_keyword"] == "edi wow"
+    assert job["worker_index"] == 4
+    assert job["collection_run_id"] == "run-over"
+    assert job["calendar_since"] is None
+    assert job["calendar_until"] is None
+    assert job["posts_per_day"] is None
+    assert job["limit"] == 100
+
+
 def test_second_pass_skips_duplicates(tmp_path: Path) -> None:
     from uyam.parallel import collect_one_job
 

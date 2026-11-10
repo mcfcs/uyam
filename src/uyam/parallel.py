@@ -1,4 +1,4 @@
-"""Fan-out collection: one process (and Chrome profile) per subreddit."""
+"""Fan-out collection: one process (and Chrome profile) per job."""
 
 from __future__ import annotations
 
@@ -30,6 +30,48 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 def _safe_profile_name(subreddit: str) -> str:
     cleaned = "".join(c for c in subreddit if c.isalnum() or c in "-_")
     return cleaned or "subreddit"
+
+
+def browser_profile_dir(
+    subreddit: str, worker_index: int, *, root: Path | None = None
+) -> Path:
+    """Chrome user-data dir for one collection job.
+
+    Keyword searches for the same subreddit run side by side. Chrome refuses
+    a second process on ``data/.browser-profiles/<sub>`` ("profile already
+    in use"), so the directory includes the worker index.
+    """
+    base = root if root is not None else _REPO_ROOT / "data" / ".browser-profiles"
+    return base / f"{_safe_profile_name(subreddit)}-{int(worker_index)}"
+
+
+def make_oversample_job(
+    base: dict[str, Any],
+    *,
+    subreddit: str,
+    keyword: str,
+    worker_index: int,
+    collection_run_id: str,
+) -> dict[str, Any]:
+    """One keyword search. Does not inherit a /new calendar walk.
+
+    Copying the natural job left ``calendar_since`` set. Shreddit then
+    ignored ``listing_type=search`` and stored /new posts as
+    ``keyword_oversampled``.
+    """
+    return {
+        **base,
+        "subreddit": subreddit,
+        "listing_type": "search",
+        "collection_run_id": collection_run_id,
+        "search_query": keyword,
+        "sampling_strategy": "keyword_oversampled",
+        "matched_query_or_keyword": keyword,
+        "worker_index": worker_index,
+        "calendar_since": None,
+        "calendar_until": None,
+        "posts_per_day": None,
+    }
 
 
 def collect_one_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -153,8 +195,8 @@ def _build_source(job: dict[str, Any], cfg: Any) -> Any:
         if pool.is_empty():
             raise RuntimeError(f"shreddit requires proxies in {proxies_path}")
         sub = str(job.get("subreddit") or "sub")
-        profile_dir = (
-            _REPO_ROOT / "data" / ".browser-profiles" / _safe_profile_name(sub)
+        profile_dir = browser_profile_dir(
+            sub, int(job.get("worker_index") or 0)
         )
         headless = job.get("headless")
         captcha_wait = job.get("captcha_wait")

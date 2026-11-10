@@ -70,7 +70,7 @@ class ShredditConfig:
     min_interval_seconds: float = 1.5
     max_scrolls: int = 40
     more_comments_clicks: int = 40
-    scroll_wait_ms: int = 1500
+    scroll_wait_ms: int = 4000
     expand_wait_ms: int = 1200
     use_system_chrome: bool = True
     captcha_wait_seconds: float = 300.0
@@ -172,7 +172,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         min_interval_seconds=float(sh_raw.get("min_interval_seconds", 1.5)),
         max_scrolls=int(sh_raw.get("max_scrolls", 40)),
         more_comments_clicks=int(sh_raw.get("more_comments_clicks", 40)),
-        scroll_wait_ms=int(sh_raw.get("scroll_wait_ms", 1500)),
+        scroll_wait_ms=int(sh_raw.get("scroll_wait_ms", 4000)),
         expand_wait_ms=int(sh_raw.get("expand_wait_ms", 1200)),
         use_system_chrome=bool(sh_raw.get("use_system_chrome", True)),
         captcha_wait_seconds=float(sh_raw.get("captcha_wait_seconds", 300.0)),

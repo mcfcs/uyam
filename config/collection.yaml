@@ -75,7 +75,7 @@ shreddit:
   min_interval_seconds: 1.5   # pause between navigations
   max_scrolls: 40             # listing infinite-scroll rounds
   more_comments_clicks: 250   # "more comments" expansions per post (all-replies mode uses max(this, 400))
-  scroll_wait_ms: 1500
+  scroll_wait_ms: 4000        # feed page budget; a residential proxy paints the next page in ~3–4s
   expand_wait_ms: 1200
   use_system_chrome: true     # channel="chrome"; falls back to bundled Chromium
   captcha_wait_seconds: 300   # pause so you can solve the Chrome captcha; 0 = don't wait

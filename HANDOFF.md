@@ -11,11 +11,12 @@ a chat (see [RULES.md §1](RULES.md)).
 
 ## Current state (as of 2026-11-10, end of session)
 
-**Corpus (raw JSONL, `data/raw/`)**: 20,573 records (1,954 submissions,
-18,619 comments) from r/Philippines, r/CasualPH and r/OffMyChestPH, collected
-with the Shreddit browser scraper. Span: **2026-08-01 → 2026-09-04**, plus one
-stray 2025-07 post. All records are natural-sampled. Plaintext authors were
-scrubbed on 2026-09-08.
+**Corpus (raw JSONL, `data/raw/`)**: 21,190 records (2,017 submissions,
+19,173 comments). The Aug–Sep core is 1,954 submissions / 18,619 comments
+from r/Philippines, r/CasualPH and r/OffMyChestPH, span **2026-08-01 →
+2026-09-04**, plus one stray 2025-07 post, all natural-sampled. Plaintext
+authors were scrubbed on 2026-09-08. The 2026-11-10 Shreddit trial appended
+63 posts and 554 comments; 57 of those posts are mis-tagged (see below).
 
 **Annotation (`data/db/annotation.sqlite3`, prompt `sarc-v2`)**: 17,424
 eligible candidates; 15,000 items aggregated, all resolved (unanimous 3,355 /
@@ -67,7 +68,11 @@ records which ones are done.
    8 oversampling keywords as archive searches over the window afterwards.
    Run `--oversample-only` separately if the natural pass gets stopped.
 3. **Latest days** (the archive lags ~2 days), or a fallback if the archive
-   is down: `uyam collect --source shreddit --since 2026-11-08 --per-day 40`.
+   is down. The listing bugs from the 2026-11-10 trial are fixed; this is
+   ready to run:
+   `uyam collect --source shreddit --since 2026-11-08 --per-day 40`.
+   Keyword searches run afterwards (live Reddit search, not a second /new
+   walk). Dedup will skip the mis-tagged trial rows.
 4. **Re-select + review.** `uyam annotate index && uyam annotate select`. The
    dry run predicts 107 `phatic` exclusions and 21 phatic items with a
    sarcastic vote sent to review (20 new `low_confidence` items; 1 is already
@@ -82,27 +87,19 @@ records which ones are done.
 7. Thesis text: state the Arctic Shift source and its ingest-time scores in
    the methodology/ethics section, plus the real window and the phatic filter.
 
-**Shreddit is broken on Reddit's side (found 2026-11-10, trial run with the new
-DataImpulse proxies).** The proxies are fine: 9/10 reach Reddit and every
-browser launched. The run stored 63 posts / 554 comments (mostly the "edi
-wow" searches) and was then stopped. Three scraper bugs need fixing before
-the next Shreddit run (agent task):
-1. `/r/<sub>/new.json` now returns **403 even without a proxy**, so the JSON
-   listing path is dead. Sep 5 got ~1,000 posts per subreddit this way.
-   `_collect_calendar` falls back to the DOM, which found only 3 posts per sub.
-2. The DOM listing (`_collect_dom_listing_posts` / `_read_listing_cards` in
-   `sources/shreddit.py`) reads cards one by one with `locator.nth(i)`. The
-   feed is virtualised: a probe saw 27 → 52 → 77 → 50 cards as old cards were
-   removed. A card that detaches mid-read hangs 45 s and kills the worker
-   (r/Philippines). Fix: read every card in one `evaluate_all`, wait for
-   the card count to grow (~3–4 s per page on residential proxies) instead of
-   a fixed 1.5 s, and keep scrolling past recycled cards until the walk
-   reaches `--since`.
-3. Keyword-oversampling jobs for the same subreddit run in parallel on the
-   same Chrome profile (`data/.browser-profiles/<sub>`), which fails with
-   "profile already in use". Fix: give each job its own profile dir
-   (e.g. sub + worker index), or schedule per-subreddit jobs serially.
-Until then, the **archive source** covers everything up to ~2 days ago.
+**Shreddit listing walk is fixed in code (2026-11-10).** `/r/<sub>/new.json`
+still returns 403, so calendar mode scrolls the DOM: one `evaluate_all`
+snapshot per page, ~4s for the feed to paint, stop once a card is older
+than `--since`. Each job has its own Chrome profile
+(`data/.browser-profiles/<sub>-<worker>`). Keyword jobs are searches again;
+they no longer inherit `--since` and walk `/new`. Gio still has to run it
+(next step 3). The archive source covers everything up to ~2 days ago.
+
+The stopped trial's 63 posts / 554 comments are already in `data/raw/`.
+**57 posts are mis-tagged** `keyword_oversampled` (the keyword was replaced
+by the UTC day, e.g. `2026-11-10`) because those jobs walked `/new`. Six
+posts are correctly `natural`. Raw JSONL was not rewritten. A later run
+will skip those ids as duplicates. See the Reminders tab.
 
 **Open questions / ideas for agents:**
 - Records don't carry their source; it's only in the run manifest. If leische
@@ -118,6 +115,32 @@ Until then, the **archive source** covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-10 — fix Shreddit listing walk after Reddit's JSON 403
+
+**Decisions (Gio):** none this session. The trial rows were left as stored.
+Retagging them rewrites `data/raw/` and needs an explicit yes.
+
+**Done:** Shreddit calendar mode no longer depends on `/new.json`. Listing
+cards are snapshotted in one `evaluate_all`, each feed page waits ~4s, and
+the walk stops once a card is older than `--since`. Keyword jobs search,
+and each job gets its own Chrome profile. A throwaway smoke (temp profile,
+nothing written to `data/raw/`) read 25 CasualPH cards spanning 2026-11-08
+→ 2026-11-10. Tests: 249 → 259, all offline. ruff clean; mypy stays at 50.
+
+**Findings:**
+- Trial log: `new.json` 403 on all three subs; r/Philippines died on
+  `shreddit-post.nth(17)` (45s); the other two DOM walks stored 3 posts
+  each; the oversample batch walked `/new` again (not search) and then
+  failed with "profile already in use".
+- Of the 63 stored posts, 57 are `keyword_oversampled` with the UTC day in
+  `matched_query_or_keyword`. Six are natural. Comments follow the parent.
+
+**Left open / blocked:** Gio runs the latest-days command. The mis-tagged
+trial rows stay until Gio asks for a retag.
+
+**Commands for Gio:**
+`uyam collect --source shreddit --since 2026-11-08 --per-day 40`
 
 ### 2026-11-10 — rules/agents/handoff docs; archive backfill source; phatic cleaning
 

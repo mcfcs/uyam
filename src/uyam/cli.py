@@ -247,7 +247,7 @@ def collect(
             }
         )
 
-    from uyam.parallel import run_jobs
+    from uyam.parallel import make_oversample_job, run_jobs
 
     stopped = False
     try:
@@ -300,16 +300,13 @@ def collect(
             for keyword in cfg.oversampling.keywords:
                 for sub_name in subreddits_to_collect:
                     over_jobs.append(
-                        {
-                            **jobs[0],
-                            "subreddit": sub_name,
-                            "listing_type": "search",
-                            "collection_run_id": make_collection_run_id(),
-                            "search_query": keyword,
-                            "sampling_strategy": "keyword_oversampled",
-                            "matched_query_or_keyword": keyword,
-                            "worker_index": idx,
-                        }
+                        make_oversample_job(
+                            jobs[0],
+                            subreddit=sub_name,
+                            keyword=keyword,
+                            worker_index=idx,
+                            collection_run_id=make_collection_run_id(),
+                        )
                     )
                     idx += 1
             over_results = run_jobs(over_jobs, max_workers=effective_workers)

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
+from uyam.calendar_window import day_bounds_unix
 from uyam.sources.base import CollectionRequest
 from uyam.sources.proxy_pool import ProxyPool
 from uyam.sources.shreddit import (
@@ -14,7 +17,10 @@ from uyam.sources.shreddit import (
     _merge_comment_dicts,
     _nav_error_kind,
     _reddit_id_from_permalink,
+    absorb_listing_cards,
+    feed_advanced,
     listing_card_to_raw,
+    listing_reached_since,
     page_text_is_captcha,
     page_text_is_whoa,
     submission_already_seen,
@@ -207,3 +213,200 @@ def test_calendar_falls_back_to_dom_when_json_empty(
     assert out == [record]
     assert harvested == ["/r/Philippines/comments/abc123/x/"]
     assert "abc123" not in src._json_post_cache
+
+
+def _card(reddit_id: str, created: str, *, promoted: bool = False) -> dict[str, object]:
+    return {
+        "id": f"t3_{reddit_id}",
+        "permalink": f"/r/Philippines/comments/{reddit_id}/t/",
+        "created": created,
+        "promoted": promoted,
+    }
+
+
+def test_feed_advanced_accepts_new_ids_when_the_count_shrinks() -> None:
+    before = {"t3_a", "t3_b", "t3_c"}
+    recycled = [_card("c", "2026-11-10T00:00:00+0000"), _card("d", "2026-11-09T00:00:00+0000")]
+    assert feed_advanced(before, 3, recycled) is True
+    same = [_card("a", "2026-11-10T00:00:00+0000")]
+    assert feed_advanced({"t3_a"}, 2, same) is False
+    assert feed_advanced(set(), 0, same) is True
+
+
+def test_listing_reached_since_uses_the_oldest_card() -> None:
+    start, _ = day_bounds_unix(date(2026, 11, 8))
+    newer = listing_card_to_raw(_card("a", "2026-11-10T00:00:00.000000+0000"))
+    older = listing_card_to_raw(_card("b", "2026-11-07T00:00:00.000000+0000"))
+    assert newer is not None and older is not None
+    assert listing_reached_since([newer], float(start)) is False
+    assert listing_reached_since([newer, older], float(start)) is True
+    assert listing_reached_since([older], None) is False
+
+
+def test_absorb_listing_cards_skips_promoted_and_duplicates() -> None:
+    seen: set[str] = set()
+    ordered: list[dict[str, object]] = []
+    cards = [
+        _card("a", "2026-11-10T00:00:00+0000"),
+        _card("ad", "2026-11-10T00:00:00+0000", promoted=True),
+        _card("a", "2026-11-10T00:00:00+0000"),
+        _card("b", "2026-11-09T00:00:00+0000"),
+    ]
+    added = absorb_listing_cards(cards, seen=seen, ordered=ordered)  # type: ignore[arg-type]
+    assert added == 2
+    assert [row["id"] for row in ordered] == ["a", "b"]
+
+
+def test_read_listing_cards_is_one_evaluate_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+
+    class _Locator:
+        def evaluate_all(self, script: str) -> list[dict[str, object]]:
+            assert script.lstrip().startswith("(els)")
+            return [_card("abc", "2026-11-10T00:00:00+0000")]
+
+        def nth(self, _index: int) -> None:
+            raise AssertionError("per-card nth() hangs when a card detaches")
+
+    class _Page:
+        def locator(self, selector: str) -> _Locator:
+            assert selector == "shreddit-post"
+            return _Locator()
+
+    monkeypatch.setattr(src, "_require_page", lambda: _Page())
+    cards = src._read_listing_cards()
+    assert cards[0]["id"] == "t3_abc"
+
+    class _Detached:
+        def evaluate_all(self, _script: str) -> list[dict[str, object]]:
+            raise TimeoutError("element detached")
+
+    class _DeadPage:
+        def locator(self, _selector: str) -> _Detached:
+            return _Detached()
+
+    monkeypatch.setattr(src, "_require_page", lambda: _DeadPage())
+    assert src._read_listing_cards() == []
+
+
+def test_dom_listing_scrolls_until_since(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    batches = [
+        [
+            _card("aaa", "2026-11-10T12:00:00.000000+0000"),
+            _card("bbb", "2026-11-09T12:00:00.000000+0000"),
+        ],
+        [
+            _card("bbb", "2026-11-09T12:00:00.000000+0000"),
+            _card("ccc", "2026-11-07T12:00:00.000000+0000"),
+        ],
+    ]
+    state = {"i": 0, "scrolls": 0, "first": []}
+
+    def _await(
+        before_ids: set[str], before_count: int, *, first_page: bool
+    ) -> list[dict[str, object]]:
+        del before_ids, before_count
+        state["first"].append(first_page)
+        batch = batches[min(state["i"], len(batches) - 1)]
+        state["i"] += 1
+        return batch
+
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
+    def _scroll() -> None:
+        state["scrolls"] += 1
+
+    monkeypatch.setattr(src, "_await_listing_cards", _await)
+    monkeypatch.setattr(src, "_scroll_feed", _scroll)
+    start, _ = day_bounds_unix(date(2026, 11, 8))
+    req = CollectionRequest(
+        subreddit="Philippines", listing_type="new", collection_run_id="run-1"
+    )
+    posts = src._collect_dom_listing_posts(
+        req, max_posts=50, stop_before_unix=float(start)
+    )
+    assert [post["id"] for post in posts] == ["aaa", "bbb", "ccc"]
+    assert state["scrolls"] == 1
+    assert state["first"] == [True, False]
+
+
+def test_dom_listing_idles_when_the_feed_does_not_grow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    state = {"scrolls": 0}
+
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
+    def _scroll() -> None:
+        state["scrolls"] += 1
+
+    monkeypatch.setattr(
+        src,
+        "_await_listing_cards",
+        lambda *_a, **_k: [_card("aaa", "2026-11-10T00:00:00+0000")],
+    )
+    monkeypatch.setattr(src, "_scroll_feed", _scroll)
+    req = CollectionRequest(
+        subreddit="CasualPH", listing_type="new", collection_run_id="run-1"
+    )
+    posts = src._collect_dom_listing_posts(req, max_posts=50, max_scrolls=10)
+    assert [post["id"] for post in posts] == ["aaa"]
+    assert state["scrolls"] == 3
+
+
+def test_calendar_passes_since_to_the_dom_walk(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    captured: dict[str, object] = {}
+
+    def _collect(
+        _request: CollectionRequest,
+        *,
+        max_posts: int,
+        stop_before_unix: float | None = None,
+        max_scrolls: int | None = None,
+    ) -> list[dict[str, object]]:
+        del max_scrolls
+        captured["max_posts"] = max_posts
+        captured["stop"] = stop_before_unix
+        return []
+
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
+    monkeypatch.setattr("uyam.sources.shreddit.write_status", lambda *a, **k: None)
+    monkeypatch.setattr(src, "_goto", lambda *a, **k: None)
+    monkeypatch.setattr(src, "_listing_tab_ready", lambda _url: True)
+    monkeypatch.setattr(src, "_iter_json_listing_posts", lambda *a, **k: iter(()))
+    monkeypatch.setattr(src, "_collect_dom_listing_posts", _collect)
+    req = CollectionRequest(
+        subreddit="Philippines",
+        listing_type="new",
+        collection_run_id="run-1",
+        calendar_since="2026-11-08",
+        calendar_until="2026-11-10",
+        posts_per_day=40,
+    )
+    assert list(src._iter_calendar_listing(req)) == []
+    start, _ = day_bounds_unix(date(2026, 11, 8))
+    assert captured["stop"] == float(start)
+    assert captured["max_posts"] == 300
+
+
+def test_keyword_job_does_not_walk_the_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+
+    def _calendar(_request: CollectionRequest) -> None:
+        raise AssertionError("keyword job must not walk /new")
+
+    monkeypatch.setattr(src, "_iter_calendar_listing", _calendar)
+    monkeypatch.setattr(src, "_iter_listing", lambda request: iter([request.search_query]))
+    req = CollectionRequest(
+        subreddit="Philippines",
+        listing_type="search",
+        collection_run_id="run-1",
+        search_query="edi wow",
+        sampling_strategy="keyword_oversampled",
+        matched_query_or_keyword="edi wow",
+        calendar_since="2026-11-08",
+        calendar_until="2026-11-10",
+        posts_per_day=40,
+    )
+    assert list(src.iter_submissions(req)) == ["edi wow"]

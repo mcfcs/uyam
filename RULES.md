@@ -83,6 +83,8 @@ replacing it:
 | Dedup by `reddit_fullname` survives crashes and re-runs | `test_dedup.py`, `test_storage_recovery.py` |
 | Comment tree relationships (`parent_id`, `depth`, `submission_id`) are preserved | `test_comment_tree.py`, `test_archive_source.py` |
 | Comments inherit `sampling_strategy` from their submission | `test_sampling_inheritance.py` |
+| A keyword-oversampled job searches; it does not walk `/new` or share a Chrome profile | `test_shreddit_source.py`, `test_parallel.py` |
+| A Shreddit calendar walk reads listing cards in one snapshot and stops once it passes `--since` | `test_shreddit_source.py` |
 | Calendar windows are inclusive UTC days | `test_calendar_window.py`, `test_archive_source.py` |
 | Candidate exclusions always record a reason | `test_annotate_candidates.py` |
 | The phatic filter never drops an item an annotator voted sarcastic (it goes to review) | `test_annotate_candidates.py` |
