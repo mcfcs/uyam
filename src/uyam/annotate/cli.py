@@ -422,6 +422,9 @@ def export(
     include_unresolved: bool = typer.Option(
         False, help="Also export items still awaiting adjudication/review"
     ),
+    bundle: bool = typer.Option(
+        True, help="Also write uyam-dataset-<version>.zip with every artifact + SHA256SUMS"
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
@@ -436,6 +439,7 @@ def export(
         dataset_version=version,
         formats=tuple(f.strip() for f in formats.split(",") if f.strip()),
         include_unresolved=include_unresolved,
+        bundle=bundle,
     )
     console.print(
         f"[green]Exported[/green] {result['rows']} rows "
@@ -443,4 +447,5 @@ def export(
         f"  dataset: {result['jsonl']}\n"
         + (f"  parquet: {result['parquet']}\n" if result["parquet"] else "")
         + f"  corpus:  {result['corpus']}\n  card:    {result['card']}"
+        + (f"\n  bundle:  {result['zip']}" if result.get("zip") else "")
     )

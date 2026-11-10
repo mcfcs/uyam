@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -123,3 +125,35 @@ def test_gold_sample_fills_review_queue(tmp_path: Path) -> None:
     # Deterministic under the same seed.
     stats2 = sample_gold_subset(cfg, PROMPT_VERSION, size=3, seed=7)
     assert stats2["sampled"] == 3
+
+
+def test_export_bundle_zip(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
+
+    zip_path = Path(result["zip"])
+    assert zip_path.exists()
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(zf.namelist())
+        assert {
+            "dataset-vtest.jsonl",
+            "corpus-vtest.jsonl",
+            "dataset_card.json",
+            "SHA256SUMS.txt",
+        } <= names
+        assert not any(n.endswith(".tmp") for n in names)
+        sums = zf.read("SHA256SUMS.txt").decode("utf-8").splitlines()
+        digests = {line.split("  ")[1]: line.split("  ")[0] for line in sums}
+        for name, digest in digests.items():
+            assert digest == hashlib.sha256(zf.read(name)).hexdigest()
+        # The bundle carries the same bytes leische would read off disk.
+        assert zf.read("dataset-vtest.jsonl") == Path(result["jsonl"]).read_bytes()
+
+
+def test_export_bundle_can_be_skipped(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    result = run_export(
+        cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",), bundle=False
+    )
+    assert result["zip"] is None
+    assert not (cfg.export.out_dir / "uyam-dataset-vtest.zip").exists()

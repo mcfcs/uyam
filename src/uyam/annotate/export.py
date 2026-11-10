@@ -5,6 +5,7 @@ Produces, under data/annotated/:
   dataset-<version>.parquet  same rows (needs pandas+pyarrow; skipped otherwise)
   corpus-<version>.jsonl     pseudonymized corpus dump (temporal-context source)
   dataset_card.json          counts, distributions, agreement stats, provenance
+  uyam-dataset-<version>.zip all of the above + SHA256SUMS.txt, one download
 
 Every row is built from an explicit whitelist — the raw JSONL contains real
 usernames in `author`, which must never reach an export artifact. Only
@@ -13,9 +14,12 @@ usernames in `author`, which must never reach an export artifact. Only
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
+import zipfile
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -362,6 +366,38 @@ def _readiness(rows: list[dict[str, Any]], agreement: dict[str, Any]) -> dict[st
     }
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_bundle(out_dir: Path, dataset_version: str, members: Sequence[Path]) -> Path:
+    """Zip every export artifact into one file for transfer to the leische device.
+
+    The bundle is the unit of handoff: one download instead of four, with
+    SHA256SUMS.txt so the receiving machine can verify the copy arrived intact.
+    """
+    zip_path = out_dir / f"uyam-dataset-{dataset_version}.zip"
+    present = [m for m in members if m.exists()]
+    sums = "".join(f"{_sha256(m)}  {m.name}\n" for m in present)
+    tmp_path = zip_path.with_suffix(".zip.tmp")
+    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        for member in present:
+            zf.write(member, arcname=member.name)
+        zf.writestr("SHA256SUMS.txt", sums)
+    tmp_path.replace(zip_path)
+    logger.info(
+        "export_bundle_written path=%s members=%d bytes=%d",
+        zip_path,
+        len(present),
+        zip_path.stat().st_size,
+    )
+    return zip_path
+
+
 def run_export(
     cfg: AnnotationConfig,
     prompt_version: str,
@@ -369,6 +405,7 @@ def run_export(
     dataset_version: str = "v1",
     formats: tuple[str, ...] = ("jsonl", "parquet"),
     include_unresolved: bool = False,
+    bundle: bool = True,
 ) -> dict[str, Any]:
     out_dir = cfg.export.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -485,6 +522,14 @@ def run_export(
     card_path = out_dir / "dataset_card.json"
     card_path.write_text(json.dumps(card, indent=2, ensure_ascii=False), encoding="utf-8")
 
+    zip_path: Path | None = None
+    if bundle:
+        zip_path = write_bundle(
+            out_dir,
+            dataset_version,
+            [p for p in (jsonl_path, parquet_path, corpus_path, card_path) if p is not None],
+        )
+
     return {
         "rows": len(rows),
         "skipped_unresolved": skipped_unresolved,
@@ -492,4 +537,5 @@ def run_export(
         "parquet": str(parquet_path) if parquet_path else None,
         "corpus": str(corpus_path),
         "card": str(card_path),
+        "zip": str(zip_path) if zip_path else None,
     }

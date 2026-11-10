@@ -346,6 +346,45 @@ def _render_annotated_data(cfg: AnnotationConfig, snap: dict[str, Any]) -> None:
         )
 
 
+@st.cache_data(show_spinner=False, max_entries=1)
+def _bundle_bytes(path: str, size: int, mtime: float) -> bytes:
+    """Read the export bundle once per (path, size, mtime) — Streamlit reruns often."""
+    return Path(path).read_bytes()
+
+
+def _render_export_download() -> None:
+    """Offer the last export as one .zip download.
+
+    Streamlit serves the bytes to whichever browser is viewing the app, so
+    opening the app at http://<tailscale-ip>:8501 from the training machine
+    downloads the bundle straight onto that device — nothing has to be copied
+    off this box by hand.
+    """
+    result = st.session_state.get("export_result")
+    if not result:
+        return
+    st.json(result, expanded=False)
+    zip_str = result.get("zip")
+    zip_path = Path(zip_str) if zip_str else None
+    if zip_path is None or not zip_path.exists():
+        st.warning("Bundle missing — re-run the export.")
+        return
+    stat = zip_path.stat()
+    st.download_button(
+        f"Download bundle (.zip, {stat.st_size / 1e6:.1f} MB)",
+        data=_bundle_bytes(str(zip_path), stat.st_size, stat.st_mtime),
+        file_name=zip_path.name,
+        mime="application/zip",
+        type="primary",
+        key="export_bundle_download",
+    )
+    st.caption(
+        "Saves to the device viewing this page — open the app at "
+        "http://<tailscale-ip>:8501 from the leische machine to land it there. "
+        f"Also on disk at {zip_path}. Verify after transfer with `sha256sum -c SHA256SUMS.txt`."
+    )
+
+
 def render_annotation_tab(config_path: Path | None = None) -> None:
     try:
         cfg = load_annotation_config(config_path)
@@ -696,13 +735,17 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
         )
     with col_3:
         version = st.text_input("Dataset version", value="v1", key="export_version")
-        if st.button("Export dataset", help="dataset.jsonl + parquet + corpus dump + card."):
+        if st.button(
+            "Export dataset",
+            help="dataset.jsonl + parquet + corpus dump + card, bundled into one .zip.",
+        ):
             from uyam.annotate.export import run_export
 
             with st.spinner("Exporting…"):
                 result = run_export(cfg, cfg.prompt_version, dataset_version=version)
+            st.session_state["export_result"] = result
             st.success(f"Exported {result['rows']} rows")
-            st.json(result)
+        _render_export_download()
 
     st.divider()
 

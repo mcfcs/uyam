@@ -20,6 +20,12 @@ Produced by `uyam annotate export --version v1` under `data/annotated/`:
 | `dataset-v1.parquet` | Same rows, flattened (nested objects as `*_json` string columns) |
 | `corpus-v1.jsonl` | Pseudonymized dump of the FULL collected corpus — source for temporal context |
 | `dataset_card.json` | Counts, label distributions, agreement statistics, model provenance, filter settings |
+| `uyam-dataset-v1.zip` | All of the above plus `SHA256SUMS.txt` — the transfer bundle |
+
+Transfer: the Annotation tab's **Download bundle (.zip)** button serves the zip
+to whichever browser is viewing the app, so opening the app at
+`http://<tailscale-ip>:8501` from the leische machine downloads it there
+directly. Unzip and verify with `sha256sum -c SHA256SUMS.txt`.
 
 Versioning: the dataset version (`v1`) is bumped for any re-export with
 different labels; `dataset_card.json` records the `prompt_version`
