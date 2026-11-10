@@ -22,6 +22,7 @@ from uyam.sources.shreddit import (
     listing_card_to_raw,
     listing_reached_since,
     page_text_is_captcha,
+    page_text_is_network_block,
     page_text_is_whoa,
     rate_limit_toast_seconds,
     submission_already_seen,
@@ -508,3 +509,78 @@ def test_rate_limit_toast_is_waited_out_and_stop_still_works(
     assert src._wait_out_rate_limit_toast() is True
     assert clock["slept"] == pytest.approx(99.0)  # the stated 96 s plus a margin
     assert clock["checks"] >= 19  # polled Stop at least every 5 s
+
+
+# Text of Reddit's IP-ban page, as seen on r/Philippines on 2026-11-11.
+_NETWORK_BLOCK_TEXT = (
+    "You've been blocked by network security. "
+    "To continue, log in to your Reddit account or use your developer token. "
+    "If you think you've been blocked by mistake, file a ticket below and we'll look into it."
+)
+
+
+def test_page_text_is_network_block() -> None:
+    assert page_text_is_network_block(_NETWORK_BLOCK_TEXT)
+    assert not page_text_is_network_block("verify you are human")
+    assert not page_text_is_network_block("r/Philippines - former anticorruption chief")
+    assert _nav_error_kind(RuntimeError("reddit_network_block")) == "network_block"
+
+
+class _BlockPage:
+    def __init__(self, *, posts: int, text: str) -> None:
+        self.posts = posts
+        self.text = text
+        self.url = "https://www.reddit.com/r/Philippines/comments/1xr1gan/x/"
+
+    def locator(self, _selector: str) -> _BlockPage:
+        return self
+
+    def count(self) -> int:
+        return self.posts
+
+    def title(self) -> str:
+        return "Reddit"
+
+    def inner_text(self, _selector: str, timeout: float = 0) -> str:
+        return self.text
+
+
+def test_network_block_page_is_detected_even_inside_the_app_shell() -> None:
+    src = ShredditBrowserSource(proxy_pool=ProxyPool(["http://127.0.0.1:9"]))
+    src._page = _BlockPage(posts=0, text=_NETWORK_BLOCK_TEXT)  # type: ignore[assignment]
+    assert src._is_network_blocked() is True
+    # A real post rendered: never mistaken for the block page.
+    src._page = _BlockPage(posts=1, text=_NETWORK_BLOCK_TEXT)  # type: ignore[assignment]
+    assert src._is_network_blocked() is False
+
+
+def test_goto_drops_a_network_blocked_proxy_for_good(monkeypatch: pytest.MonkeyPatch) -> None:
+    src = ShredditBrowserSource(
+        proxy_pool=ProxyPool(["http://127.0.0.1:9", "http://127.0.0.1:10"])
+    )
+
+    class _Nav:
+        def goto(self, *_a: object, **_k: object) -> None:
+            return None
+
+        def wait_for_timeout(self, _ms: float) -> None:
+            return None
+
+    blocked = iter([True, False])
+    rotations: list[tuple[str, bool]] = []
+    monkeypatch.setattr("uyam.sources.shreddit.check_control", lambda: None)
+    monkeypatch.setattr("uyam.sources.shreddit.write_status", lambda *_a, **_k: None)
+    monkeypatch.setattr(src, "_require_page", lambda: _Nav())
+    monkeypatch.setattr(src, "_throttle", lambda: None)
+    monkeypatch.setattr(src, "_dismiss_chrome", lambda: None)
+    monkeypatch.setattr(src, "_is_whoa", lambda: False)
+    monkeypatch.setattr(src, "_is_blocked", lambda: False)
+    monkeypatch.setattr(src, "_is_network_blocked", lambda: next(blocked))
+    monkeypatch.setattr(
+        src,
+        "_rotate_proxy",
+        lambda *, reason, fatal: rotations.append((reason, fatal)),
+    )
+
+    src._goto("https://www.reddit.com/r/Philippines/comments/1xr1gan/x/")
+    assert rotations == [("network_block", True)]

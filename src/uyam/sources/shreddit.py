@@ -86,6 +86,14 @@ _BLOCK_SNIPPETS = (
     "unusual traffic",
     "access denied",
 ) + _WHOA_SNIPPETS + _CAPTCHA_SNIPPETS
+# Reddit's hard IP block: "You've been blocked by network security. To
+# continue, log in to your Reddit account or use your developer token." It
+# renders inside the Shreddit app shell, so the shell check below must not
+# hide it, and it does not clear by waiting — drop that proxy for the run.
+_NETWORK_BLOCK_SNIPPETS = (
+    "blocked by network security",
+    "use your developer token",
+)
 _MAX_PROXY_TRIES = 8
 _SAME_PROXY_RETRIES = 3
 _HYDRATE_WAIT_S = 20.0
@@ -320,6 +328,12 @@ def page_text_is_whoa(hay: str) -> bool:
     return any(s in h for s in _WHOA_SNIPPETS)
 
 
+def page_text_is_network_block(hay: str) -> bool:
+    """True for Reddit's "blocked by network security" IP-ban page."""
+    h = hay.lower()
+    return any(s in h for s in _NETWORK_BLOCK_SNIPPETS)
+
+
 def page_text_is_captcha(hay: str) -> bool:
     """True for a human-challenge page. Whoa-there is not a captcha."""
     h = hay.lower()
@@ -337,6 +351,8 @@ def _nav_error_kind(exc: BaseException) -> str:
     blob = _exc_text(exc).lower()
     if "reddit_whoa" in blob:
         return "whoa"
+    if "reddit_network_block" in blob:
+        return "network_block"
     if "reddit_block_or_challenge" in blob or "captcha" in blob:
         return "block"
     if any(s in blob for s in _RATE_LIMIT_SNIPPETS):
@@ -814,6 +830,23 @@ class ShredditBrowserSource:
             page.wait_for_timeout(1000)
         return self._has_feed()
 
+    def _is_network_blocked(self) -> bool:
+        """Reddit's "blocked by network security" page (an IP ban, not a captcha)."""
+        if self._page is None:
+            return False
+        try:
+            if self._page.locator(_POST_SELECTOR).count() > 0:
+                return False  # a real post rendered: not the block page
+            title = (self._page.title() or "").lower()
+            body = ""
+            with contextlib.suppress(Exception):
+                body = (self._page.inner_text("body", timeout=2000) or "")[:1500].lower()
+            return page_text_is_network_block(f"{title}\n{body}")
+        except ScrapeStopRequested:
+            raise
+        except Exception:
+            return False
+
     def _is_blocked(self) -> bool:
         if self._page is None:
             return True
@@ -886,6 +919,8 @@ class ShredditBrowserSource:
                             loc.first.wait_for(state="attached", timeout=8000)
                 if self._is_whoa():
                     raise RuntimeError("reddit_whoa")
+                if self._is_network_blocked():
+                    raise RuntimeError("reddit_network_block")
                 if self._is_blocked():
                     raise RuntimeError("reddit_block_or_challenge")
                 host = urlparse(url).path
@@ -904,6 +939,8 @@ class ShredditBrowserSource:
                     # not a 429; only rotate if the tab looks blocked.
                     if self._page_is_open() and self._is_whoa():
                         kind = "whoa"
+                    elif self._page_is_open() and self._is_network_blocked():
+                        kind = "network_block"
                     elif self._page_is_open() and (
                         self._is_challenge() or self._is_blocked()
                     ):
@@ -934,6 +971,13 @@ class ShredditBrowserSource:
                 if kind == "rate_limit":
                     # Instant switch — retrying the same 429 IP is wasted work.
                     self._rotate_proxy(reason=kind, fatal=False)
+                    same_proxy_tries = 0
+                    rotations += 1
+                    continue
+                if kind == "network_block":
+                    # An IP ban: a cooldown would only bring the same IP back.
+                    write_status("running", "Reddit blocked this proxy's IP — switching proxy.")
+                    self._rotate_proxy(reason=kind, fatal=True)
                     same_proxy_tries = 0
                     rotations += 1
                     continue
