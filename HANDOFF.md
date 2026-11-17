@@ -37,9 +37,9 @@ annotation rows. Gold review: 31 of 300 queued items labeled by Gio.
 
 ## In progress
 
-**The archive backfill is running** (started 2026-11-11 03:13 PHT, expected
-to take 2–3 days; see *Next steps* 2). Don't send test requests to the archive
-API while it runs, because they share its rate-limit allowance.
+**The archive backfill is running again** (resumed 2026-11-17 18:01 PHT; see
+*Next steps* 2). Don't send test requests to the archive API while it runs,
+because they share its rate-limit allowance.
 
 - **Temporal extension, 2026-06-01 → 2026-11-10.** `uyam collect --source
   archive` pulls the window from the Arctic Shift archive. Authors are hashed
@@ -58,27 +58,24 @@ records which ones are done.
 
 1. **Back up the annotation DB** (RULES §5.3), e.g.
    `copy data\db\annotation.sqlite3 data\db\annotation-2026-11-10.bak.sqlite3`.
-2. **Archive backfill: RUNNING since 2026-11-11 03:13 (PHT).** Detached
-   process (pid 107900 at start). Command:
-   `uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 300`.
-   Per-day 300 means every post (r/Philippines has ~250–270/day). Measured
-   pace at a busy hour: ~12 min per r/Philippines day (268 posts, ~4.8k
-   comments), so r/Philippines alone is ~30 h, and all three subreddits are
-   likely **2–3 days** unless the archive is quieter off-peak. Subreddits run
-   one after another: Philippines, then CasualPH, then OffMyChestPH. The
-   keyword searches run at the end.
-   - Progress: `data/.archive-backfill.err.log` (`archive_day`,
-     `archive_comments_streamed`, `archive_retry`). Manifests (and the
-     Reminders "Detected" line) appear only when each subreddit's run
-     finishes. A day's posts are stored once comments are streamed 3 days
-     past it.
-   - Stop: the app's Stop button (checked before every request). Resume: run
-     the same command again. Dedup skips stored posts, but a post that was
-     mid-way when stopped keeps only the comments stored so far.
-   - The machine has to stay on and awake (Windows sleep would pause it).
-   - The first attempt (02:31–02:42, per-post comments) stored 20 posts / 211
-     comments before it was stopped for being too slow (1–4 posts/min).
-     Fixed in `6a64caf`.
+2. **Archive backfill: resumed 2026-11-17 18:01 PHT** as a detached
+   PowerShell sequence (pid 43812). The first run (2026-11-11 → 11-13)
+   stored r/Philippines Jun 1 → **Oct 11** (20,266 posts / 361,635 comments)
+   and r/CasualPH Jun 1 → **Aug 17** (1,949 / 13,515), then stopped. Causes,
+   all fixed in `5b72a10`: an hour of throttling used up its budget, a
+   Cloudflare 530 outage was treated as fatal, and the keyword jobs had lost
+   their date window. The resume runs, in order:
+   `--subreddit CasualPH --since 2026-08-18`, `--subreddit Philippines
+   --since 2026-10-12`, `--subreddit OffMyChestPH --since 2026-06-01` (each
+   `--until 2026-11-10 --per-day 300 --no-oversample`), then
+   `--oversample-only --since 2026-06-01 --until 2026-11-10`.
+   - Progress: `data/.archive-backfill.err.log`. The first run's logs are
+     kept as `data/.archive-backfill-2026-11-11*.log`.
+   - Stop: the app's Stop button. Resume: re-run from any earlier `--since`.
+     Days whose posts are all stored no longer re-stream comments, so a
+     resume costs only post listings.
+   - Backups: `data/db/collection-2026-11-17.bak.sqlite3` (and `-11-11`).
+   - The machine has to stay on and awake.
 3. **Latest days: done 2026-11-11 (walk only).** Nov 8–10 is collected for
    all three subreddits. The **Shreddit keyword searches** were switched off
    for that test and are still to run:
@@ -134,6 +131,26 @@ will skip those ids as duplicates. See the Reminders tab.
 ---
 
 ## Session log
+
+### 2026-11-17 — archive backfill resumed after three stop causes
+
+**Context (Gio):** the app showed only r/Philippines had grown; asked why not
+all subreddits.
+
+**Findings:** the run ended 2026-11-13 00:46. r/Philippines got through Oct 11
+(stored) and was then throttled for over an hour (60-wait budget).
+r/CasualPH got through Aug 17, then hit Cloudflare HTTP 530 ("origin
+unreachable", archive down). r/OffMyChestPH hit the same 530 instantly.
+All 24 keyword jobs failed with "needs a date window" (`make_oversample_job`
+strips `--since` for Shreddit, and archive jobs were stripped too). Pace while
+it ran was ~17 min per r/Philippines day.
+
+**Done:** `5b72a10`: 5xx/530 and network errors use the throttle budget, now
+360 waits (~6 h). Archive keyword jobs keep the window and search it with one
+range query. Bulk mode skips comment streaming for stored days. New
+`--no-oversample` flag. Fixed a CLI test that leaked log handlers (14
+cascading failures). Tests: 275 → 281. Resumed per subreddit (see *Next
+steps* 2). Today the archive answers within seconds.
 
 ### 2026-11-11 — archive backfill started; archive throughput fixes
 
