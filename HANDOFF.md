@@ -132,6 +132,28 @@ will skip those ids as duplicates. See the Reminders tab.
 
 ## Session log
 
+### 2026-11-17 — cross-repo rules: tsis + leische, UYAM_LATEST.md
+
+**Decisions (Gio):** a third repo, **tsis** (`../tsis`, the LaTeX
+manuscript), is now part of the workflow. uyam agents always check it and
+never edit its LaTeX. The only file they write there is `UYAM_LATEST.md`
+(a copy of uyam's), updated whenever uyam changes. tsis gets its own
+`RULES.md`: check uyam and leische for new commits and pull. leische runs on
+another device, so GitHub is the channel.
+
+**Done:** `UYAM_LATEST.md` (dataset versions, provisional corpus snapshot,
+method changes for the methodology/ethics text, affected manuscript passages,
+status of leische's U1–U8 brief, change log). RULES.md §1.1/§1.5 and new §9.
+tsis gets `RULES.md`, `CLAUDE.md` and the `UYAM_LATEST.md` mirror.
+
+**Findings:** leische's `suggestions/UYAM_CHANGE_BRIEF.md` (2026-09-17) holds
+eight requests for uyam (U1–U8) that never reached this handoff. Only U5
+(author history, via the archive backfill) and U8 (oversampling) are in
+progress. The manuscript still describes v1 (20,573 records, Aug 1 → Sep 4),
+which is correct until v2 is exported. The local `../leische` clone is on
+`single-notebook`, 31 commits behind, with an uncommitted notebook change
+(not ours, untouched).
+
 ### 2026-11-17 — archive backfill resumed after three stop causes
 
 **Context (Gio):** the app showed only r/Philippines had grown; asked why not

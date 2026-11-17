@@ -15,7 +15,9 @@ defaults. If a rule blocks the task, stop and ask Gio. Don't work around it.
 
 1. **Start:** read [HANDOFF.md](HANDOFF.md) (latest entry first), then
    `git status` and `git log --oneline -10`. If the tree is dirty with work you
-   did not make, ask before touching it.
+   did not make, ask before touching it. Then **check the sibling repos**
+   (§9): pull tsis, fetch leische, and read leische's latest handoff entry
+   and its brief to uyam.
 2. **During:** keep [HANDOFF.md](HANDOFF.md) honest. If you change a plan,
    number, or decision that it records, update it in the same commit.
 3. **End:** add a new entry to the top of HANDOFF.md's session log (template
@@ -27,6 +29,11 @@ defaults. If a rule blocks the task, stop and ask Gio. Don't work around it.
    reminder with a new unique `id` and never rename an existing one. It shows
    up in the Streamlit **Reminders** tab, where Gio ticks it off (ticks live
    in `data/reminders.json`). Read that file to see what Gio has already done.
+5. **Keep [UYAM_LATEST.md](UYAM_LATEST.md) current.** Whenever a change
+   affects what the thesis says about the data (collection sources or window,
+   corpus or label numbers, filters, annotation, the export, dataset version),
+   update UYAM_LATEST.md **in the same commit**, then mirror it to tsis
+   (§9.2). Code-only changes with no effect on the data don't need an entry.
 
 ## 2. Git
 
@@ -165,3 +172,62 @@ Agents **may deploy subagents.** Roles and prompt templates are in
   corpus text, or the cp1252 console crashes.
 - Install: `pip install -e ".[dev]"` (+ `".[annotate]"` for the annotation
   stack).
+
+## 9. Sibling repositories: tsis (thesis) and leische (model)
+
+The thesis is split across three GitHub repos under `mcfcs`. All three are
+cloned side by side in `C:\Users\Gio\Documents\GitHub\`.
+
+| Repo | Role | Local clone |
+|---|---|---|
+| **uyam** (this one) | data collection + LLM annotation, exports the dataset | `.` |
+| **tsis** | the LaTeX manuscript (chapters, tables, `_verify/` number checks) | `../tsis` |
+| **leische** | the model and its results; **developed on another device** | `../leische` |
+
+GitHub is the only channel between them. leische in particular is worked on
+from a different machine, so the local `../leische` clone may be stale, on
+another branch, or have someone's uncommitted work.
+
+### 9.1 At the start of every session
+
+```bash
+git -C ../tsis pull --ff-only          # only if its tree is clean; else just fetch
+git -C ../leische fetch origin         # never pull/checkout/stash there
+git -C ../leische show origin/main:HANDOFF.md | head -60
+git -C ../leische show origin/main:suggestions/UYAM_CHANGE_BRIEF.md
+```
+
+- Read leische from `origin/main` with `git show`/`git log`, not from its
+  working tree. **Never** edit, commit, stash, reset, or check out anything
+  in `../leische`. Requests to leische go through UYAM_LATEST.md (leische
+  reads tsis and uyam) or `docs/dataset-contract-leische.md`.
+- leische's `suggestions/UYAM_CHANGE_BRIEF.md` is its request list for uyam
+  (U1–U8). Keep their status current in UYAM_LATEST.md §8.
+- Check what tsis currently says about the data (mainly
+  `03_methodology.tex` §Data Collection / §Preprocessing) before describing
+  changes, so UYAM_LATEST.md §7 points at the right passages.
+
+### 9.2 What uyam agents may and may not do in tsis
+
+- **Never edit the manuscript**: no `.tex`, `.bib`, `.cls`, figures,
+  `tables/`, `GUIDE.md`, or `_verify/`. The thesis text is Gio's, edited from
+  tsis sessions under tsis's own `RULES.md`.
+- **The one file uyam agents write in tsis is `UYAM_LATEST.md`**, a verbatim
+  copy of uyam's. After committing a UYAM_LATEST.md change here:
+
+  ```bash
+  cp UYAM_LATEST.md ../tsis/UYAM_LATEST.md
+  git -C ../tsis pull --ff-only
+  git -C ../tsis add UYAM_LATEST.md
+  git -C ../tsis commit -m "docs: sync UYAM_LATEST.md from uyam <short-sha>"
+  git -C ../tsis push
+  ```
+
+  The same git rules apply there: no AI attribution, never force-push. If
+  tsis has uncommitted work of Gio's, commit only `UYAM_LATEST.md` and leave
+  the rest alone.
+- UYAM_LATEST.md is written for the thesis side: dataset versions, corpus
+  numbers (marked *provisional* until a dataset version is exported), method
+  changes the methodology/ethics text needs, affected manuscript passages,
+  leische's request status, and a dated change log. Never mark numbers as
+  final before the export that produces them exists.
