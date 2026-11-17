@@ -292,7 +292,7 @@ def test_bad_request_fails_fast_and_exhausted_retries_raise() -> None:
         list(_source(archive).iter_submissions(_request()))
 
     archive = FakeArchive([], [])
-    archive.scripted = [FakeResponse({"data": []}, status=503)] * 3
+    archive.scripted = [FakeResponse("<html>not json</html>")] * 3  # a broken answer
     with pytest.raises(ArchiveApiError, match="after 3 attempts"):
         list(_source(archive, max_retries=3).iter_submissions(_request()))
 
@@ -307,7 +307,7 @@ def test_throttling_has_its_own_budget_and_does_not_end_the_run() -> None:
 
     archive = FakeArchive([], [])
     archive.scripted = [FakeResponse({"data": None}, status=429)] * 4
-    with pytest.raises(ArchiveApiError, match="still throttled after 3 waits"):
+    with pytest.raises(ArchiveApiError, match="still throttled or unavailable after 3 waits"):
         list(_source(archive, max_throttle_waits=3).iter_submissions(_request()))
 
 
@@ -540,3 +540,134 @@ def test_pacing_widens_after_a_throttle_and_eases_back() -> None:
     for _ in range(40):
         src._get("/posts/search", {"subreddit": "CasualPH", "after": JUN1, "limit": 100})
     assert src._interval == pytest.approx(1.0)  # back at the configured base
+
+
+# ---------------------------------------------------------------------------
+# 2026-11-13 run: outages, keyword search window, resume
+# ---------------------------------------------------------------------------
+
+
+def test_outages_and_network_errors_are_waited_out() -> None:
+    """Cloudflare 530 ("origin unreachable") ended two subreddits instantly."""
+    import requests
+
+    archive = FakeArchive(posts=[_post("p1", JUN1 + 5)], comments=[])
+    archive.scripted = [FakeResponse("<html>530</html>", status=530)] * 3
+    real_get = archive.get
+    blips = {"left": 2}
+
+    def get(url: str, params: dict[str, Any], timeout: float) -> FakeResponse:
+        if not archive.scripted and blips["left"]:
+            blips["left"] -= 1
+            raise requests.ConnectionError("network down")
+        return real_get(url, params, timeout)
+
+    archive.get = get  # type: ignore[method-assign]
+    src = _source(archive, max_retries=1)  # 5 outages > max_retries: still fine
+    subs = list(src.iter_submissions(_request(calendar_until="2026-06-01")))
+    assert [s.reddit_id for s in subs] == ["p1"]
+
+
+def test_keyword_search_is_one_range_query_over_the_window() -> None:
+    posts = [
+        _post("hit1", JUN1 + 10, title="edi wow talaga"),
+        _post("miss", JUN2 + 10),
+        _post("hit2", JUN3 + 10, title="edi wow ulit"),
+        _post("late", JUN3 + 5 * DAY, title="edi wow pero labas"),  # after --until
+    ]
+    archive = FakeArchive(posts=posts, comments=[])
+    req = _request(
+        calendar_until="2026-06-03",
+        search_query="edi wow",
+        sampling_strategy="keyword_oversampled",
+        matched_query_or_keyword="edi wow",
+    )
+    subs = list(_source(archive).iter_submissions(req))
+
+    assert [s.reddit_id for s in subs] == ["hit1", "hit2"]
+    post_calls = [p for path, p in archive.calls if path == "/posts/search"]
+    assert len(post_calls) == 1  # not one per day
+    assert post_calls[0]["query"] == "edi wow"
+    assert (post_calls[0]["after"], post_calls[0]["before"]) == (JUN1 - 1, JUN3 + DAY)
+    assert all(s.sampling_strategy == "keyword_oversampled" for s in subs)
+
+
+def test_resume_does_not_restream_comments_for_stored_days() -> None:
+    """Re-running from Jun 1 must not re-read 4 months of comments."""
+    archive = _bulk_archive()
+    stored = {f"t3_d1p{i}" for i in range(30)} | {f"t3_d2p{i}" for i in range(30)}
+    req = _request(calendar_until="2026-06-03")
+    req.is_seen = stored.__contains__
+    src = _source(archive)
+    got: dict[str, list[str]] = {}
+    for sub in src.iter_submissions(req):
+        if req.is_seen(sub.reddit_fullname):
+            continue  # what the pipeline does with a duplicate: no comments asked
+        got[sub.reddit_id] = [c.reddit_id for c in src.iter_comments(sub, req)]
+
+    comment_calls = [p for path, p in archive.calls if path == "/comments/search"]
+    assert comment_calls, "day 3 is new, so its comments are still fetched"
+    assert min(c["after"] for c in comment_calls) >= JUN3 - 1  # days 1-2 skipped
+    assert all("subreddit" in c for c in comment_calls)  # bulk stream only
+    assert sorted(got) == sorted(f"d3p{i}" for i in range(30))
+    assert got["d3p0"] == ["cd3p0"]
+
+
+def test_archive_keyword_jobs_keep_the_window_shreddit_jobs_do_not() -> None:
+    from uyam.parallel import make_oversample_job
+
+    base = {
+        "calendar_since": "2026-06-01",
+        "calendar_until": "2026-11-10",
+        "posts_per_day": 300,
+    }
+    archive_job = make_oversample_job(
+        {**base, "source": "archive"},
+        subreddit="CasualPH", keyword="sana all", worker_index=1, collection_run_id="r1",
+    )
+    shreddit_job = make_oversample_job(
+        {**base, "source": "shreddit"},
+        subreddit="CasualPH", keyword="sana all", worker_index=1, collection_run_id="r2",
+    )
+    assert (archive_job["calendar_since"], archive_job["calendar_until"]) == (
+        "2026-06-01",
+        "2026-11-10",
+    )
+    assert archive_job["posts_per_day"] is None
+    assert shreddit_job["calendar_since"] is None and shreddit_job["calendar_until"] is None
+
+
+@pytest.mark.parametrize("flag", [None, "--no-oversample"])
+def test_cli_no_oversample_skips_the_keyword_jobs(
+    flag: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from typer.testing import CliRunner
+
+    from uyam.cli import app
+
+    batches: list[list[dict[str, Any]]] = []
+
+    def fake_run_jobs(jobs: list[dict[str, Any]], *, max_workers: int) -> list[dict[str, Any]]:
+        batches.append(jobs)
+        return [{"ok": True, "subreddit": j["subreddit"], "errors": []} for j in jobs]
+
+    monkeypatch.setattr("uyam.parallel.run_jobs", fake_run_jobs)
+    # collect() configures global logging onto CliRunner's stream (closed after
+    # invoke, breaking later tests) and loads the real .env: keep both out.
+    monkeypatch.setattr("uyam.cli.configure_logging", lambda *_a, **_k: None)
+    monkeypatch.setattr("uyam.cli.load_env", lambda *_a, **_k: None)
+    args = [
+        "collect", "--source", "archive", "--subreddit", "CasualPH",
+        "--since", "2026-06-01", "--until", "2026-11-10",
+    ]
+    result = CliRunner().invoke(app, args + ([flag] if flag else []))
+    assert result.exit_code == 0, result.output
+
+    natural = batches[0]
+    assert [j["sampling_strategy"] for j in natural] == ["natural"]
+    if flag:
+        assert len(batches) == 1  # no keyword jobs
+    else:
+        searches = batches[1]
+        assert searches and all(j["listing_type"] == "search" for j in searches)
+        assert all(j["calendar_since"] == "2026-06-01" for j in searches)

@@ -109,6 +109,12 @@ def collect(
         None,
         help="Max posts per UTC day (default 15 with --since; archive: no cap unless set).",
     ),
+    oversample: bool = typer.Option(
+        True,
+        "--oversample/--no-oversample",
+        help="Run the keyword-oversampling searches after the natural pass "
+        "(collection.yaml oversampling.enabled). --no-oversample skips them.",
+    ),
     oversample_only: bool = typer.Option(
         False,
         "--oversample-only",
@@ -285,7 +291,7 @@ def collect(
                 )
 
         want_oversampling = (
-            (oversample_only or cfg.oversampling.enabled)
+            (oversample_only or (cfg.oversampling.enabled and oversample))
             and bool(cfg.oversampling.keywords)
             and source != "fixture"
         )

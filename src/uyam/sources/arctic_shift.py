@@ -59,7 +59,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://arctic-shift.photon-reddit.com/api"
 _PLACEHOLDER_TEXT = {"[deleted]", "[removed]", "[deleted by user]"}
-_RETRY_STATUS = {429, 500, 502, 503, 504}
 _MAX_INTERVAL_S = 15.0  # adaptive pacing ceiling
 # The archive reports throttling and server-side query timeouts in the JSON
 # error body, on HTTP 200 *or* 4xx (seen: 422) — never fail fast on these.
@@ -81,7 +80,7 @@ class ArcticShiftSource:
         min_interval_seconds: float = 1.0,
         timeout_seconds: float = 60.0,
         max_retries: int = 8,
-        max_throttle_waits: int = 60,
+        max_throttle_waits: int = 360,
         page_size: int | str = 100,
         bulk_comments: bool = True,
         comment_horizon_days: float = 3.0,
@@ -147,7 +146,9 @@ class ArcticShiftSource:
         (its docs), and at busy hours most requests come back throttled for
         many minutes. That is not a failure: it gets its own, much larger
         budget (`max_throttle_waits`), so a slow hour cannot end a multi-day
-        backfill the way 8 retries did on 2026-11-11.
+        backfill the way 8 retries did on 2026-11-11. Server outages (any 5xx,
+        incl. Cloudflare's 530 "origin unreachable", seen 2026-11-13) and
+        network errors share that budget: they pass, they are not bad requests.
         """
         url = f"{self._base_url}{path}"
         failures = 0
@@ -162,6 +163,7 @@ class ArcticShiftSource:
                 resp = self._session.get(url, params=params, timeout=self._timeout)
             except (requests.ConnectionError, requests.Timeout) as exc:
                 reason = type(exc).__name__
+                throttled = True  # network blip or archive down: wait, don't fail
             else:
                 reset = self._reset_seconds(resp)
                 try:
@@ -169,10 +171,12 @@ class ArcticShiftSource:
                 except ValueError:
                     payload = None
                 error = str(payload.get("error") or "") if isinstance(payload, dict) else ""
-                throttled = resp.status_code == 429 or any(
-                    m in error.lower() for m in _THROTTLE_MARKERS
+                throttled = (
+                    resp.status_code == 429
+                    or resp.status_code >= 500
+                    or any(m in error.lower() for m in _THROTTLE_MARKERS)
                 )
-                if throttled or resp.status_code in _RETRY_STATUS:
+                if throttled:
                     reason = error[:80] or f"http_{resp.status_code}"
                 elif resp.status_code >= 400:
                     raise ArchiveApiError(
@@ -189,7 +193,8 @@ class ArcticShiftSource:
                 throttles += 1
                 if throttles > self._max_throttle_waits:
                     raise ArchiveApiError(
-                        f"archive {path} still throttled after {throttles - 1} waits"
+                        f"archive {path} still throttled or unavailable after "
+                        f"{throttles - 1} waits ({reason})"
                     )
                 delay = max(5.0, (reset if reset is not None else 30.0) + 1.0)
                 delay += random.uniform(0, 2)
@@ -263,6 +268,34 @@ class ArcticShiftSource:
         self._buckets = {}
         self._comments_until = None
 
+        if request.search_query:
+            # One full-text query over the whole window, not one per day:
+            # 8 keywords x 3 subreddits x 163 days would be ~3,900 requests.
+            _, window_end = day_bounds_unix(until)
+            hits = [
+                p
+                for p in self._paginate(
+                    "/posts/search", params, after=window_start - 1, before=window_end
+                )
+                if window_start <= int(p["created_utc"]) < window_end
+            ]
+            logger.info(
+                "archive_search",
+                extra={
+                    "subreddit": request.subreddit,
+                    "query": request.search_query,
+                    "posts": len(hits),
+                },
+            )
+            for raw in hits[: request.limit] if request.limit else hits:
+                yield map_submission_dict(
+                    _submission_defaults(raw, request.subreddit),
+                    collection_run_id=request.collection_run_id,
+                    sampling_strategy=request.sampling_strategy,
+                    matched_query_or_keyword=request.matched_query_or_keyword,
+                )
+            return
+
         # Days fetched but not yet handed on, as (day_end_unix, posts). In bulk
         # mode a day waits until its comments are streamed `horizon` past it.
         pending: deque[tuple[int, list[dict[str, Any]]]] = deque()
@@ -287,6 +320,10 @@ class ArcticShiftSource:
             pending.append((end, posts))
             if bulk:
                 for raw in posts:
+                    # Already stored (a resumed run): the pipeline will skip it,
+                    # so don't spend requests streaming its comments again.
+                    if request.is_seen is not None and request.is_seen(f"t3_{raw['id']}"):
+                        continue
                     self._buckets.setdefault(str(raw["id"]), [])
                 # Never ask for comments from the future (--until can be today).
                 upto = min(end, int(self._now()))
@@ -335,6 +372,12 @@ class ArcticShiftSource:
         """
         start = self._comments_until if self._comments_until is not None else window_start
         if upto <= start:
+            return
+        if not self._buckets:
+            # No post is waiting for comments (e.g. a resumed stretch that is
+            # all duplicates): nothing in this span can be wanted later either,
+            # because a comment never predates its post.
+            self._comments_until = upto
             return
         kept = 0
         for raw in self._paginate(

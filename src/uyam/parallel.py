@@ -57,8 +57,11 @@ def make_oversample_job(
 
     Copying the natural job left ``calendar_since`` set. Shreddit then
     ignored ``listing_type=search`` and stored /new posts as
-    ``keyword_oversampled``.
+    ``keyword_oversampled``. The archive is the opposite: its search *needs*
+    the window (it is what bounds the query), so it keeps ``--since/--until``
+    and drops only the per-day cap.
     """
+    keep_window = str(base.get("source") or "") == "archive"
     return {
         **base,
         "subreddit": subreddit,
@@ -68,8 +71,8 @@ def make_oversample_job(
         "sampling_strategy": "keyword_oversampled",
         "matched_query_or_keyword": keyword,
         "worker_index": worker_index,
-        "calendar_since": None,
-        "calendar_until": None,
+        "calendar_since": base.get("calendar_since") if keep_window else None,
+        "calendar_until": base.get("calendar_until") if keep_window else None,
         "posts_per_day": None,
     }
 
