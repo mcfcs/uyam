@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-17, uyam `8d10533` (plus this file's commit)
+- **Last updated:** 2026-11-17 20:10, uyam `af861db` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **Next dataset:** `dataset-v2`, **not exported yet**. The corpus is being
@@ -34,8 +34,10 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 
 ## 2. Corpus right now (2026-11-17 18:05, *provisional*)
 
-The archive backfill is still running, so r/OffMyChestPH is mostly missing
-and the keyword searches haven't run yet.
+Update 20:05: **r/Philippines and r/CasualPH are complete for Jun 1 →
+Nov 10** (the resume added 3,068 + 1,627 posts and 51,831 + 11,980 comments
+on top of the table below). r/OffMyChestPH is collecting, and the keyword
+searches run after it.
 
 | Subreddit | Submissions | Comments | Span |
 |---|---|---|---|
@@ -140,6 +142,11 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-17 (evening)**: r/Philippines and r/CasualPH backfills finished.
+  Briefs for the other repos are in uyam `docs/briefs/`:
+  `LEISCHE_BRIEF.md` (join this status-file protocol, reply on U1–U8, get
+  ready for v2) and `TSIS_BRIEF.md` (portable `_verify`, data-number check,
+  v2 draft with placeholders).
 - **2026-11-17**: The archive backfill resumed after stopping on 11-13
   (throttling, an archive outage, keyword jobs missing their date window;
   all fixed in `5b72a10`). This file was created.
