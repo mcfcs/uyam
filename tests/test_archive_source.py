@@ -671,3 +671,27 @@ def test_cli_no_oversample_skips_the_keyword_jobs(
         searches = batches[1]
         assert searches and all(j["listing_type"] == "search" for j in searches)
         assert all(j["calendar_since"] == "2026-06-01" for j in searches)
+
+
+def test_keyword_search_never_sends_limit_auto() -> None:
+    """The archive answers HTTP 400 to limit=auto with a query (2026-11-17)."""
+    archive = FakeArchive(posts=[_post("hit", JUN1 + 10, title="sana all")], comments=[])
+    real_get = archive.get
+    sent: set[tuple[bool, Any]] = set()  # what the source asked for, before the fake rewrites
+
+    def get(url: str, params: dict[str, Any], timeout: float) -> FakeResponse:
+        if url.endswith("/posts/search"):
+            sent.add((bool(params.get("query")), params.get("limit")))
+        if params.get("query") and params.get("limit") == "auto":
+            return FakeResponse({"data": None, "error": 'Cannot use "auto" limit with query'}, 400)
+        if params.get("limit") == "auto":
+            params = {**params, "limit": 1000}
+        return real_get(url, params, timeout)
+
+    archive.get = get  # type: ignore[method-assign]
+    src = _source(archive, page_size="auto")
+    req = _request(calendar_until="2026-06-01", search_query="sana all")
+    assert [s.reddit_id for s in src.iter_submissions(req)] == ["hit"]
+    natural = _source(archive, page_size="auto")
+    list(natural.iter_submissions(_request(calendar_until="2026-06-01")))
+    assert sent == {(True, 100), (False, "auto")}

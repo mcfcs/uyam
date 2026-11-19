@@ -235,7 +235,10 @@ class ArcticShiftSource:
         cursor = after
         seen: set[str] = set()
         while before is None or cursor < before:
-            query = {**params, "after": cursor, "limit": self._limit_param, "sort": "asc"}
+            # The archive rejects limit=auto on full-text searches (HTTP 400
+            # "Cannot use \"auto\" limit with query", 2026-11-17): use 100 there.
+            limit = 100 if "query" in params and self._limit_param == "auto" else self._limit_param
+            query = {**params, "after": cursor, "limit": limit, "sort": "asc"}
             if before is not None:
                 query["before"] = before
             page = self._get(path, query)
