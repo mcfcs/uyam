@@ -47,7 +47,14 @@ _LETTER = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿñÑ]")
 
 
 def sentence_count(text: str | None) -> int:
-    """Sentences by punctuation and line breaks (approximate for informal Taglish)."""
+    """Sentences by punctuation and line breaks (approximate for informal Taglish).
+
+    This counts sentences for the length bands and the published length
+    profile, and only pieces with a letter count. It is deliberately not
+    review_workflow.split_sentences, the span picker's splitter, which also
+    keeps emoji-only pieces and closing quotes. Changing this would change
+    the reported band counts.
+    """
     return len([p for p in _SENTENCE_SPLIT.split(text or "") if _LETTER.search(p)])
 
 
@@ -96,6 +103,11 @@ def sample_gold_subset(
     a no-op once the queue is full. `redraw=True` first removes the gold items
     nobody has labeled yet (completed = 0) and draws their replacements;
     labeled gold items are always kept.
+
+    Allocation is proportional over the items being drawn. Kept items are not
+    subtracted from their strata's shares, so the final queue is proportional
+    only up to the kept items (31 of 300 at the 2026-11-19 redraw, drawn under
+    the older record_type x subreddit scheme).
     """
     target = size or cfg.review.gold_size
     weight_split = (
