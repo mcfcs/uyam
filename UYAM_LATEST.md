@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-19 09:20, uyam `f842667` (plus this file's commit)
+- **Last updated:** 2026-11-19, uyam `07211e2` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **Next dataset:** `dataset-v2`, **not exported yet**. The corpus is being
@@ -116,6 +116,31 @@ Facts the methodology / ethics text will need (once v2 is final):
 - Collection used rotating residential proxies for the live scraper. The
   archive needs none.
 
+### 3.1 Ethics facts the thesis must state accurately (checked 2026-11-19)
+
+- **No data came through Reddit's official API.** The v1 core was collected
+  by an automated scraper reading Reddit's logged-out JSON listings and pages
+  through rotating proxies. v2 history comes from the Arctic Shift archive.
+  The scope paragraph's reason for choosing Reddit ("its public Application
+  Programming Interface (API)") does not describe how the data was actually
+  collected.
+- **Reddit User Agreement** (effective 1 July 2026): users may not "Access,
+  search, or collect data from the Services by any means (automated or
+  otherwise) except as permitted in these Terms or in a separate agreement
+  with Reddit (we conditionally grant permission to crawl the Services in
+  accordance with the parameters set forth in our robots.txt file, but
+  scraping the Services without Reddit's prior written consent is
+  prohibited)". No research exception appears in the Agreement itself.
+- The live scraper switched proxies when Reddit rate-limited or blocked an
+  IP ("blocked by network security"). That is working around an access
+  control, and it should be disclosed or avoided. Since the archive now
+  covers the whole window, no further live scraping is needed.
+- The archive keeps copies of content that may since have been deleted on
+  Reddit. A deletion policy is still to be decided (the tsis v2 draft has a
+  `{{v2.deletion_policy}}` placeholder).
+- These are for Gio and the adviser / ethics reviewer to weigh. uyam
+  doesn't decide them.
+
 ## 4. Preprocessing change: `phatic` exclusion (code ready, not yet applied)
 
 A new filter excludes short social-ritual items with nothing else in them:
@@ -176,6 +201,15 @@ for Gio's yes.
   annotators saw. New data adds **temporal** context (other posts by the same
   author), not new conversational context for existing items.
 
+### 6.1 Label definition gap (for the guideline, leische U3)
+
+The `sarc-v2` prompt defines `sarcastic` for "the TARGET" (intended meaning
+differs from literal, plus a cue). It never says whether a long post counts
+as sarcastic when only part of it is. Each annotator LLM chose for itself,
+which adds noise on long items. The gold guideline should fix the unit, e.g.
+"sarcastic if any part of the target is sarcastic", optionally marking which
+sentence. That gap is a limitation of the v1 labels.
+
 ## 7. Manuscript passages affected (tsis, `CS 197A CS Thesis Template (LaTeX)-…/`)
 
 Do not edit these until `dataset-v2` is announced here. Listed so the update
@@ -206,6 +240,8 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-19 (evening)**: Added the ethics facts (§3.1; Reddit User
+  Agreement clause verified) and the label-definition gap (§6.1).
 - **2026-11-19 (later)**: Keyword searches stopped as redundant. The marker
   counts and the target-selection option are in §5.
 - **2026-11-19**: Natural pass complete for all three subreddits (588,507

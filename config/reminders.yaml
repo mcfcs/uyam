@@ -141,6 +141,18 @@ reminders:
       ingest-time snapshots, so score is not compared across sources.
       Authors hashed with the same HMAC key before storage.
 
+  - id: ethics-collection-method-2026-11
+    section: Thesis manuscript
+    title: Settle the data-collection ethics with your adviser
+    details: >
+      None of the data came through Reddit's official API: the v1 core was
+      scraped (logged-out pages, rotating proxies), and v2 history comes from
+      the Arctic Shift archive. Reddit's User Agreement (1 Jul 2026)
+      prohibits scraping without prior written consent. The thesis should
+      describe the real method, drop the "public API" reason in Scope ¶1,
+      disclose proxy rotation, and state a deletion policy for archived
+      content. See UYAM_LATEST.md §3.1.
+
   - id: thesis-window-and-phatic
     section: Thesis manuscript
     title: Update the collection window and preprocessing filters
@@ -148,6 +160,18 @@ reminders:
       Real span after the backfill (from dataset_card `collection_window`),
       and add the `phatic` exclusion (birthday / thanks / congrats-only text)
       to the preprocessing list with its count from the card.
+
+  - id: pilot-nimble-annotator-2026-11
+    section: Optional
+    title: Pilot nimble (adviser's suggestion) as an evaluation-only annotator
+    details: >
+      nimble:9b (Bespoke Labs, fine-tuned Qwen3.5-9B, ~9.4 GB, Apache 2.0) is a
+      fast classification model with no reasoning step and no stated Tagalog
+      support. It won't fit the 8 GB local GPU, so run it on the 24 GB box.
+      Pilot it on the gold items (once about 150 are labeled) plus a
+      500-item sample, and compare its agreement with your gold labels
+      against the three current annotators. Don't add it to the voting
+      ensemble for v2; leische asked that the labels stay unchanged.
 
   - id: optional-annotate-new-items
     section: Optional
