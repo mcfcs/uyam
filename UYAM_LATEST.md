@@ -23,13 +23,13 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 | | `dataset-v1` (in the manuscript) | `dataset-v2` (in progress) |
 |---|---|---|
 | Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months), *provisional* |
-| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 (40,125 / 548,382), *provisional*; natural pass complete, keyword searches running |
+| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 (40,125 / 548,382), *provisional*; collection complete |
 | Distinct authors | 8,920 | 63,754, *provisional* |
 | Eligible after filters | 17,424 | not computed yet |
 | Annotated items | 15,000 | 15,000 (same labels; new items optional) |
 | Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated |
 | Preprocessing filters | 6 reasons (manuscript Table 3.1) | 7 reasons: adds `phatic` (§4) |
-| Keyword oversampling | not executed | being run (§5) |
+| Keyword oversampling | not executed | search step redundant; optional at annotation (§5) |
 | Prompt / labels | `sarc-v2` | `sarc-v2` (no prompt change so far) |
 
 ## 2. Corpus right now (2026-11-19, *provisional*)
@@ -132,17 +132,40 @@ database yet, so manuscript Table 3.1 is still correct for v1.
 ## 5. Keyword oversampling
 
 The manuscript comment in §3.1 says oversampling "was implemented but not
-executed". For v2 it **is being executed** (restarted 2026-11-19 after all 24
-searches failed on the archive refusing `limit=auto` with a query, fixed in
-`f842667`). The archive backfill runs the 8
-Taglish sarcasm-marker searches ("edi wow", "sana all", "wow naman", "ang
-galing naman", "talaga lang", "ikaw na", "buti naman", "yan tayo eh") over
-Jun 1 → Nov 10 once the natural pass finishes. Those rows are tagged
-`keyword_oversampled` and must stay out of natural-distribution metrics.
+executed". Status for v2 (2026-11-19):
 
-Open issue: a 2026-11-10 scraper trial stored **57 posts tagged
-`keyword_oversampled` that actually came from `/new`**. Gio decides whether
-to re-tag them.
+- **Searching Reddit by keyword adds nothing any more.** The natural pass
+  collected *every* post from Jun 1 to Nov 10, so the archive keyword searches
+  only re-find posts already in the corpus (first 5 searches: 107 hits, all
+  duplicates). They were stopped. Archive search also covers only post
+  titles and bodies, and the markers live mostly in comments.
+- **The markers are rare.** 1,196 of 588,507 items contain any of the 8
+  ("edi wow", "sana all", "wow naman", "ang galing naman", "talaga lang",
+  "ikaw na", "buti naman", "yan tayo eh"). 48 are already labeled, leaving
+  1,148 unlabeled.
+
+| Marker | Posts | Comments | Labeled | Labeled sarcastic |
+|---|---|---|---|---|
+| sana all | 43 | 264 | 15 | 8 (53%) |
+| ikaw na | 93 | 565 | 31 | 3 (10%) |
+| buti naman | 10 | 142 | 2 | 0 |
+| others (5 markers) | 5 | 80 | 0 | — |
+
+  Only "sana all" shows a sarcasm rate above the 10.7% base, on a small
+  sample. "ikaw na" is mostly literal ("ikaw na bahala").
+- **What oversampling can still mean:** choose extra *annotation targets* by
+  marker from the collected corpus, tagged `keyword_oversampled`, and keep
+  them out of natural-distribution metrics. That's an optional extra
+  annotation of ~1,148 items, and it's Gio's decision. leische asked that the
+  15,000 v1 labels stay unchanged, which this wouldn't affect.
+- If nothing is added, the honest wording is that oversampling was **not
+  needed for collection** (every post in the window was collected) and was
+  not applied at annotation.
+
+The 57 posts from the 2026-11-10 Shreddit trial that are wrongly tagged
+`keyword_oversampled` (they came from `/new`) are still to be re-tagged
+`natural`. leische asks for this (its U8). It rewrites raw JSONL, so it waits
+for Gio's yes.
 
 ## 6. What hasn't changed
 
@@ -179,10 +202,12 @@ is quick when it comes:
 | U5 | more author history for temporal context | **in progress** via the subreddit-wide archive backfill (not per-author); coverage to be reported in the v2 card |
 | U6 | make `needs_human` fire | not started |
 | U7 | deterministic `labels.language_lid` | not started |
-| U8 | run or drop keyword oversampling | **in progress** (§5) |
+| U8 | run or drop keyword oversampling | search step redundant (natural pass complete); target-selection option open; 57 trial posts to re-tag (§5) |
 
 ## 9. Change log
 
+- **2026-11-19 (later)**: Keyword searches stopped as redundant. The marker
+  counts and the target-selection option are in §5.
 - **2026-11-19**: Natural pass complete for all three subreddits (588,507
   records). Keyword searches restarted after a fix. Temporal coverage by
   history window (§2.1) and the length profile (§2.2) added.

@@ -77,6 +77,18 @@ reminders:
       A later run skips these ids as duplicates, so the wrong tag sticks
       unless you ask for a retag.
 
+  - id: decide-marker-oversampling-2026-11
+    section: Annotation
+    title: Decide whether to annotate the 1,148 sarcasm-marker items
+    details: >
+      Collection is complete (every post Jun 1 → Nov 10), so searching Reddit
+      by keyword adds nothing. Oversampling can only mean choosing extra
+      annotation targets: the 1,148 unlabeled items containing a marker
+      ("sana all" looks strongest: 8 of 15 labeled are sarcastic). They'd be
+      tagged keyword_oversampled and kept out of natural metrics. That's about
+      8% of the original annotation effort. If not, the thesis says
+      oversampling wasn't needed at collection. See UYAM_LATEST.md §5.
+
   - id: reindex-reselect-phatic
     section: Annotation
     title: Re-index the corpus and re-run candidate selection

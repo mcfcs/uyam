@@ -37,9 +37,9 @@ annotation rows. Gold review: 31 of 300 queued items labeled by Gio.
 
 ## In progress
 
-**The archive backfill is running again** (resumed 2026-11-17 18:01 PHT; see
-*Next steps* 2). Don't send test requests to the archive API while it runs,
-because they share its rate-limit allowance.
+**Collection is complete (2026-11-19):** 588,507 records, Jun 1 → Nov 10, all
+three subreddits. Nothing is running. Next is the v2 prep: index/select, U9
+phatic flagging, U1, then the export.
 
 - **Temporal extension, 2026-06-01 → 2026-11-10.** `uyam collect --source
   archive` pulls the window from the Arctic Shift archive. Authors are hashed
@@ -131,6 +131,36 @@ will skip those ids as duplicates. See the Reminders tab.
 ---
 
 ## Session log
+
+### 2026-11-19 — collection complete; size, length and oversampling analysis
+
+**Context (Gio):** asked whether 500k+ records is too much, how to
+preprocess them, and whether to limit items to ≤3 sentences.
+
+**Findings:**
+- Natural pass complete for all three subreddits: **588,507 records** (40,125 /
+  548,382), ~770 MB. Most of it is temporal context, not annotation work. At
+  the 48 h rule only 9,637 records reach the model. Coverage on the 15,000 v1
+  labels: 48 h 36.8% → 46.5%, 7 d 64.9%, 30 d 82.1%. Widening the window is a
+  leische/method decision (UYAM_LATEST §2.1).
+- Length (v1 labels): 1-sentence items are the hardest (F1 ~0.33, 41% split
+  votes); 2–5 are fine; 6+ fail but hold 66 of 1,601 positives. A ≤3 cut
+  drops 27% of items and 190 positives (mostly r/OffMyChestPH) and breaks
+  v1/v2 comparability. Advised against it; a token cap (≤192) or ≤5 sentences
+  works as a reported evaluation slice. Table in UYAM_LATEST §2.2.
+- Archive keyword searches: fixed `limit=auto` with query (`f842667`). They
+  only re-found existing posts (natural pass is complete), so they were
+  stopped. Markers are rare (1,196 items; "sana all" is the only promising
+  one). Oversampling now means optional target selection (a reminder for
+  Gio).
+- leische (LEISCHE_LATEST, 2026-11-17): v2 should keep the 15,000 labels.
+  Must-haves are U5 (coverage in the card), U8 (re-tag the 57 trial posts
+  `natural`), U9 (keep labeled rows; flag `phatic`, don't drop); U1 should be
+  included; U2 is held.
+
+**Left open:** implement U9 (phatic as a flag for labeled rows) and U1 before
+the v2 export. Re-tagging the 57 trial posts needs Gio's yes (raw JSONL
+rewrite).
 
 ### 2026-11-17 — cross-repo rules: tsis + leische, UYAM_LATEST.md
 
