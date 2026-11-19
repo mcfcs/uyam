@@ -9,46 +9,41 @@ a chat (see [RULES.md §1](RULES.md)).
 
 ---
 
-## Current state (as of 2026-11-10, end of session)
+## Current state (as of 2026-11-19, end of session)
 
-**Corpus (raw JSONL, `data/raw/`)**: 21,190 records (2,017 submissions,
-19,173 comments). The Aug–Sep core is 1,954 submissions / 18,619 comments
-from r/Philippines, r/CasualPH and r/OffMyChestPH, span **2026-08-01 →
-2026-09-04**, plus one stray 2025-07 post, all natural-sampled. Plaintext
-authors were scrubbed on 2026-09-08. The 2026-11-10 Shreddit trial appended
-63 posts and 554 comments; 57 of those posts are mis-tagged (see below).
+**Corpus (raw JSONL, `data/raw/`)**: **588,507 records** (40,125
+submissions, 548,382 comments) from r/Philippines, r/CasualPH and
+r/OffMyChestPH, **2026-06-01 → 2026-11-10**, complete (Arctic Shift archive
+plus the Aug–Sep Shreddit core and Nov 8–10 Shreddit walks). Every record is
+`natural`: the 57 mis-tagged trial posts (and 543 comments) were re-tagged on
+2026-11-19 (backups in `data/raw-backup-20261119T030244Z/`, log
+`data/retag-log-20261119T030244Z.json`).
 
-**Annotation (`data/db/annotation.sqlite3`, prompt `sarc-v2`)**: 17,424
-eligible candidates; 15,000 items aggregated, all resolved (unanimous 3,355 /
-majority 6,759 / adjudicator 4,886); 1,601 sarcastic (10.7%). 50,201 LLM
-annotation rows. Gold review: 31 of 300 queued items labeled by Gio.
+**Annotation (`data/db/annotation.sqlite3`, prompt `sarc-v2`)**: re-indexed
+and re-selected 2026-11-19: **512,471 eligible**, 1,417 unlabeled items
+excluded as `phatic`, 120 labeled items flagged `phatic` (labels kept). The
+15,000 aggregated items and their labels are **frozen** (Gio, for leische
+U9): 1,601 sarcastic, unchanged and verified against the backup
+`data/db/annotation-2026-11-19.bak.sqlite3`. Gold queue redrawn: 300 items,
+31 labeled by Gio, 269 to do. `assist_suggestions` holds 300 Claude Code
+suggestions (`claude-code:claude-opus-5-5`, `guideline-v1-draft`; 11
+sarcastic). `eval_annotations` is empty because nimble hasn't been run.
 
-**Export (`data/annotated/`, `dataset-v1`)**: written 2026-09-15 from commit
-`039c3aa`, 15,000 rows. leische consumes this JSONL, not the Streamlit CSVs.
+**Export (`data/annotated/`)**: still `dataset-v1` (2026-09-15). A trial v2
+export to the scratchpad matched v1 (same 15,000 items, 0 label changes;
+majority positives 2,747, rows differing 1,712, κ shipped vs majority 0.545,
+48 h coverage 46.5%). **The real v2 export waits for leische to say it's
+ready** (Gio, 2026-11-19), when `../tsis/LEISCHE_LATEST.md` reports its v2 code
+changes done.
 
-**Known gaps the thesis must address**:
-- Collection window is ~5 weeks; the thesis scope says ≥3 months.
-- Temporal-context coverage is thin: ~35% of rows have ≥1 prior post by the
-  same author within 48 h.
-- Gold subset is only 10% labeled, so no Cohen's κ yet (leische H1).
-- Phatic noise (pure thanks / congrats / HBD / greetings): the new filter
-  would exclude 107 eligible items and route 21 more, which carry a sarcastic
-  vote, to review. That's not applied to the real DB yet.
+**Known gaps the thesis must address**: data didn't come through Reddit's
+official API (ethics reminder); gold κ on 31 items is −0.148; the guideline
+decisions D1–D5 are open.
 
 ## In progress
 
-**Collection is complete (2026-11-19):** 588,507 records, Jun 1 → Nov 10, all
-three subreddits. Nothing is running. Next is the v2 prep: index/select, U9
-phatic flagging, U1, then the export.
-
-- **Temporal extension, 2026-06-01 → 2026-11-10.** `uyam collect --source
-  archive` pulls the window from the Arctic Shift archive. Authors are hashed
-  with the same `AUTHOR_HMAC_KEY`, so they link to the Shreddit-era corpus.
-  The goal is author history for the labeled Aug–Sep rows (temporal channel),
-  not necessarily more labels.
-- **Cleaning.** The `phatic` exclusion reason is live in `select`. Export now
-  drops items that are no longer eligible. The real DB has **not** been
-  re-selected yet.
+Nothing is running. Waiting on Gio for the D1–D5 decisions and gold labels,
+and on leische for v2 readiness.
 
 ## Next steps (for Gio unless marked)
 
@@ -56,45 +51,33 @@ These are also the to-dos in the Streamlit **Reminders** tab
 (`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
 records which ones are done.
 
-1. **Back up the annotation DB** (RULES §5.3), e.g.
-   `copy data\db\annotation.sqlite3 data\db\annotation-2026-11-10.bak.sqlite3`.
-2. **Archive backfill: resumed 2026-11-17 18:01 PHT** as a detached
-   PowerShell sequence (pid 43812). The first run (2026-11-11 → 11-13)
-   stored r/Philippines Jun 1 → **Oct 11** (20,266 posts / 361,635 comments)
-   and r/CasualPH Jun 1 → **Aug 17** (1,949 / 13,515), then stopped. Causes,
-   all fixed in `5b72a10`: an hour of throttling used up its budget, a
-   Cloudflare 530 outage was treated as fatal, and the keyword jobs had lost
-   their date window. The resume runs, in order:
-   `--subreddit CasualPH --since 2026-08-18`, `--subreddit Philippines
-   --since 2026-10-12`, `--subreddit OffMyChestPH --since 2026-06-01` (each
-   `--until 2026-11-10 --per-day 300 --no-oversample`), then
-   `--oversample-only --since 2026-06-01 --until 2026-11-10`.
-   - Progress: `data/.archive-backfill.err.log`. The first run's logs are
-     kept as `data/.archive-backfill-2026-11-11*.log`.
-   - Stop: the app's Stop button. Resume: re-run from any earlier `--since`.
-     Days whose posts are all stored no longer re-stream comments, so a
-     resume costs only post listings.
-   - Backups: `data/db/collection-2026-11-17.bak.sqlite3` (and `-11-11`).
-   - The machine has to stay on and awake.
-3. **Latest days: done 2026-11-11 (walk only).** Nov 8–10 is collected for
-   all three subreddits. The **Shreddit keyword searches** were switched off
-   for that test and are still to run:
-   `uyam collect --source shreddit --oversample-only`.
-   For later top-ups, or as a fallback if the archive is down:
-   `uyam collect --source shreddit --since <YYYY-MM-DD> --per-day 40`.
-4. **Re-select + review.** `uyam annotate index && uyam annotate select`. The
-   dry run predicts 107 `phatic` exclusions and 21 phatic items with a
-   sarcastic vote sent to review (20 new `low_confidence` items; 1 is already
-   in the gold queue). Label those, and keep going on the gold queue (31/300
-   done), in the Annotation Review tab.
-5. **Re-export as v2.** `uyam annotate aggregate && uyam annotate export
-   --version v2`. Check `temporal_context_coverage` and `collection_window`
-   in the card against v1 (35% ≥1 history post; 2026-08-01 → 09-04).
-   Then tell leische v2 exists (bundle zip over Tailscale).
-6. Optional: annotating new Jun–Nov items means raising
-   `pipeline.target_items` above 12,000 and running `uyam annotate pipeline`.
-7. Thesis text: state the Arctic Shift source and its ingest-time scores in
-   the methodology/ethics section, plus the real window and the phatic filter.
+1. **Settle guideline decisions D1–D5** (`docs/GUIDELINE.md` §7). D1 (hugot,
+   self-pity, playful elevation) decides whether Claude's suggestions match
+   how Gio labels: on his 31 items they agree on 26 but miss 5 of his 6
+   positives. If he takes the broad reading, an agent updates the guideline
+   and regenerates the suggestions (below).
+2. **Label the 269 gold items** in Annotation Review: blind first, then
+   optionally reveal Claude's suggestion.
+3. **nimble** on the remote box: `ollama pull nimble:9b`, then
+   `uyam annotate evaluate --model nimble` and `uyam annotate eval-report`.
+4. **Agent, when LEISCHE_LATEST says ready:** `uyam annotate export --version
+   v2`, check the card against the trial numbers above, update UYAM_LATEST.md
+   §1/§9, and mirror it to tsis. Gio then sends the bundle (Annotation tab →
+   Download bundle).
+5. Thesis text (reminders in the *Thesis manuscript* section): Arctic Shift
+   method and ethics, window and phatic filter, guideline and blind-first
+   assist.
+6. Optional: marker oversampling (1,148 items) and annotating new Jun–Nov
+   items.
+
+**Regenerating the assist suggestions** (after a guideline change): dump
+the gold items (fullname, target, parent, submission title/body; no votes,
+no labels) into batches of 60 under the scratchpad, give each to one agent
+with only `docs/GUIDELINE.md`, and ask it for JSONL with exactly
+`reddit_fullname, sarcastic, sarcastic_span, rationale, confidence`. Agents
+must not open the DB or `data/guideline_examples.md`. Then run `uyam annotate
+load-assist <files> --source claude-code:<model> --guideline-version <v>`.
+It validates everything before writing and replaces rows by id.
 
 **Shreddit walk works live (verified 2026-11-11).** `/r/<sub>/new.json`
 still returns 403, so calendar mode scrolls the page itself. That needed
@@ -111,26 +94,69 @@ rate limit, and switched past 2 IP bans. `fe55611` also stops tests from
 sharing the live scrape's control file and `collect.log`. The archive source
 still covers everything up to ~2 days ago.
 
-The stopped trial's 63 posts / 554 comments are already in `data/raw/`.
-**57 posts are mis-tagged** `keyword_oversampled` (the keyword was replaced
-by the UTC day, e.g. `2026-11-10`) because those jobs walked `/new`. Six
-posts are correctly `natural`. Raw JSONL was not rewritten. A later run
-will skip those ids as duplicates. See the Reminders tab.
-
 **Open questions / ideas for agents:**
 - Records don't carry their source; it's only in the run manifest. If leische
   needs per-row provenance (e.g. to ignore archive scores), add a
   `source_type` column to the corpus dump, joined from manifests.
 - `compute_agreement` (κ/α) still counts every annotated item, including ones
-  a later filter made ineligible. Consider restricting it to eligible items
-  for v2.
-- Keyword search through the archive returned 0 hits for "sana all" on one
-  CasualPH day. That's plausible, but check the oversampled counts after the
-  real run.
+  a later filter made ineligible. Since U9, all 15,000 stay eligible, so this
+  only matters if a future filter drops labeled items.
 
 ---
 
 ## Session log
+
+### 2026-11-19 (late) — v2 prep: phatic flag, retag, gold redraw, guideline, assist, nimble
+
+**Context (Gio):** "do the stuff you can do now". He approved the DB backup,
+the reindex, the gold redraw and the retag. His choices: phatic is a flag only
+with labels frozen; Claude assist via Claude Code agents with a reveal
+toggle; the v2 export waits for leische.
+
+**Done:**
+- Schema (`2d81141`): `candidates.phatic`, review span/unsure/first-pass/
+  assist_seen, and the `eval_annotations` and `assist_suggestions` tables.
+  It migrates in place on open.
+- Retag (`9a457f9`): `uyam retag-calendar-walk` re-tagged 600 records with
+  backups and manifest notes. It is idempotent.
+- U9 and the gold redraw (`bce2167`): labeled phatic items stay eligible and
+  are flagged. The gold strata are sarcasm × language × split × length band,
+  proportional with spill-over; `--redraw` replaces only unlabeled items.
+  Real run: 31 kept, 269 new; long submissions went 20 → 4 and greeting posts
+  3 → 0.
+- Index streams JSONL (`9bc89ad`): 588,507 records in 74 s.
+- Export (`3738c04`): `sarcastic_majority`, `sarcasm_vote_share`,
+  `flags.phatic`, coverage by window, slim corpus (`--corpus-scope`), and a
+  versioned card.
+- Review tab (`2469da3`): span checkboxes, unsure, and blind-first reveal.
+  The first pass is never overwritten and is what gold κ uses.
+- nimble as an evaluation-only annotator (`badaa2b`): `annotate evaluate` /
+  `eval-report`. A NaN gold κ is now null, so the card stays strict JSON.
+- `docs/GUIDELINE.md` draft v1 (`2090ba9`). It shares no 6-gram with the
+  labeled texts. Gio's own examples are private, in
+  `data/guideline_examples.md`.
+- `load-assist` (`49c8839`). 300 suggestions loaded (11 sarcastic, 13 under
+  0.6 confidence).
+- UYAM_LATEST (`7716aa5`) mirrored to tsis (`b79f629`). Reminders updated
+  (`4a1ce32`).
+
+**Guideline gaps the assist agents hit** (for D1–D5 or a v2 of the
+guideline):
+- A curt or dismissive "good luck" (H9 vs H11).
+- Leading rhetorical questions that push the author's view without pretending
+  ignorance (H5 vs H10).
+- An ironic concession whose words are literally true ("he did accomplish
+  something — for X").
+- Mocking "daw" next to an openly stated rebuttal (H8 vs H10).
+- Scare quotes inside a sincere argument (H8).
+- Parody quoting other people's voice (not covered by T3).
+- Half-meant joking quips (H4 step 4b).
+- H13 when the text itself describes the unseen video, or the target is
+  someone the thread never introduces.
+
+**Left open:** everything in *Next steps*. Ask Gio whether the gold strata
+should over-weight sarcastic items: about 11–33 positives of 300 is thin for
+κ on the positive class.
 
 ### 2026-11-19 — collection complete; size, length and oversampling analysis
 
