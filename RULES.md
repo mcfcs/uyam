@@ -64,8 +64,9 @@ ruff check src tests         # lint clean
 mypy src/uyam/               # strict; no new errors
 ```
 
-mypy baseline: **50 pre-existing errors in 12 files** as of 2026-11-10 (mostly
-missing type args in `cli.py`, untyped third-party calls, no pandas stubs).
+mypy baseline: **47 pre-existing errors in 12 files** as of 2026-11-19 (was 50
+on 2026-11-10; mostly missing type args in `cli.py`, untyped third-party
+calls, no pandas stubs).
 The count must not grow. Fixing them is welcome as a separate commit.
 
 If a check fails for a reason unrelated to your change, say so in the commit
@@ -94,7 +95,6 @@ replacing it:
 | A Shreddit calendar walk reads listing cards in one snapshot and stops once it passes `--since` | `test_shreddit_source.py` |
 | Calendar windows are inclusive UTC days | `test_calendar_window.py`, `test_archive_source.py` |
 | Candidate exclusions always record a reason | `test_annotate_candidates.py` |
-| The phatic filter never drops an item an annotator voted sarcastic (it goes to review) | `test_annotate_candidates.py` |
 | Archive throttle answers are retried; real 4xx fail fast | `test_archive_source.py` |
 | Ineligible items never reach the export | `test_annotate_export.py` |
 | Every annotator labels the same target set | `test_annotate_target.py` |
@@ -123,7 +123,8 @@ These protect the thesis. Breaking one silently can invalidate results.
    across the corpus, and with it the temporal context.
 3. **Raw JSONL is append-only.** Never rewrite or delete files in `data/`, and
    never touch `data/db/*.sqlite3`, without Gio's explicit OK *and* a backup
-   copy first. `uyam scrub-authors` is the one sanctioned in-place rewrite.
+   copy first. The sanctioned in-place rewrites are `uyam scrub-authors` and
+   `uyam retag-calendar-walk` (which backs up every file it rewrites).
 4. **Prompt contract:** changing the prompt, few-shots, or output schema means
    bumping `PROMPT_VERSION` in `src/uyam/annotate/prompts.py` **and**
    `prompt_version` in `config/annotation.yaml` together. A version bump
