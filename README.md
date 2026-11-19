@@ -557,6 +557,20 @@ runs/adjudication/export (long passes run as detached background jobs with
 live log tails, surviving app restarts), and the **Annotation Review** tab is
 where the gold subset and low-confidence queue are human-labeled.
 
+**Review workflow (both queues).** Label each item blind first: sarcastic,
+language, literal/intended sentiment, cues, an *Unsure* mark, and, when it is
+sarcastic, the sentence(s) of the target that carry the sarcasm (the target is
+split on sentence punctuation and line breaks; a short unpunctuated comment is
+one sentence). Nothing from the pre-computed Claude suggestion
+(`assist_suggestions`) is shown before that first save. The first save also
+stores those labels as `first_pass_json`. The item then stays on screen with
+**Show Claude's take** (only when a suggestion exists; revealing it sets
+`assist_seen`), **Revise**, and **Next item**. A revision updates the labels
+but never replaces `first_pass_json`. That blind first pass is the record
+the gold Cohen's kappa is computed on. Gold items keep the ensemble's model
+votes hidden; the low-confidence queue shows them, and its (revised) label is
+final.
+
 **Phatic filter.** `select` excludes short social-ritual items (happy
 birthday, thanks, congrats, greetings, follow-bait) as `phatic`. Irony
 markers ("edi congrats", "thanks for nothing", "ikaw na" …) veto the rule.

@@ -293,7 +293,13 @@ def _krippendorff_alpha(matrix: list[list[str | None]], codes: dict[str, int]) -
 
 
 def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
-    """Cohen's kappa: human gold labels vs the ensemble finals, per label."""
+    """Cohen's kappa: human gold labels vs the ensemble finals, per label.
+
+    Uses the reviewer's blind first pass (first_pass_json) when it is stored,
+    so a revision made after revealing the assist suggestion never inflates
+    the agreement. Rows saved before that column existed fall back to the
+    stored labels, which were saved blind.
+    """
     pairs: dict[str, tuple[list[str], list[str]]] = {
         "sarcastic": ([], []),
         "language": ([], []),
@@ -314,8 +320,10 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
         if agg is None:
             continue
         n += 1
+        first_pass = human.get("first_pass_json")
+        labels: dict[str, Any] = json.loads(str(first_pass)) if first_pass else human
         for label, (h_list, e_list) in pairs.items():
-            h_val, e_val = human.get(label), agg.get(agg_col[label])
+            h_val, e_val = labels.get(label), agg.get(agg_col[label])
             if h_val is not None and e_val is not None:
                 h_list.append(str(h_val))
                 e_list.append(str(e_val))

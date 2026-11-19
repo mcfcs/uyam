@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -50,3 +52,15 @@ def isolated_scrape_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     monkeypatch.setattr(uyam.cli, "LOG_FILE", status / "collect.log")
     monkeypatch.setattr(uyam.parallel, "LOG_FILE", status / "collect.log")
     return status
+
+
+@pytest.fixture(autouse=True)
+def restore_main_module() -> Iterator[None]:
+    """AppTest installs its temp script as sys.modules["__main__"] and leaves it
+    there; multiprocessing spawn in later tests (test_parallel) would then try
+    to re-run that script in its workers. Put the real __main__ back after
+    every test (several test files use AppTest)."""
+    main = sys.modules["__main__"]
+    yield
+    sys.modules["__main__"] = main
+

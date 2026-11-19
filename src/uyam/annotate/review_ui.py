@@ -6,6 +6,13 @@ Serves two queues from review_queue:
 - low_confidence: items the adjudicator was unsure about — model votes shown,
   the human label becomes final
 
+Both queues follow the same blind-first workflow (rules in review_workflow.py):
+1. label the item; the first save also snapshots the labels into
+   first_pass_json. Nothing from assist_suggestions is read before this.
+2. the item stays on screen: "Show Claude's take" (only when a suggestion
+   exists) reveals it and persists assist_seen = 1; "Revise" re-saves the
+   labels but never replaces first_pass_json; "Next item" moves on.
+
 Imported lazily by app.py so the collector UI works without the annotate
 extras installed.
 """
@@ -18,6 +25,15 @@ from typing import Any
 
 from uyam.annotate.config import load_annotation_config
 from uyam.annotate.db import AnnotationDatabase
+from uyam.annotate.review_workflow import (
+    LABEL_KEYS,
+    build_review_row,
+    highlight_spans,
+    reveal_assist,
+    revealable_assist,
+    span_from_selection,
+    split_sentences,
+)
 
 # (key, label, definition, worked example) — definitions mirror the cue taxonomy in
 # annotate/prompts.py so human gold labels and model votes are graded on one rubric.
@@ -84,6 +100,212 @@ def _render_context(st: Any, db: AnnotationDatabase, fullname: str) -> None:
         st.caption(f"[view on reddit]({url})")
 
 
+def _label_form(
+    st: Any,
+    *,
+    prefix: str,
+    sentences: list[str],
+    defaults: dict[str, Any] | None,
+) -> tuple[bool, dict[str, Any], str]:
+    """The label form, prefilled from ``defaults`` (a saved row) when revising.
+
+    Returns (submitted, labels keyed by LABEL_KEYS, notes).
+    """
+    d = defaults or {}
+
+    def idx(options: list[str], value: Any) -> int:
+        return options.index(value) if value in options else 0
+
+    saved_span = set(str(d.get("sarcastic_span") or "").split("\n"))
+    with st.form(key=prefix):
+        sarcastic = st.radio(
+            "Sarcastic?",
+            ["no", "yes"],
+            index=int(bool(d.get("sarcastic"))),
+            horizontal=True,
+            key=f"{prefix}_sarcastic",
+        )
+        if sentences:
+            st.caption(
+                "If sarcastic: tick the sentence(s) of the target that carry the sarcasm "
+                "(ignored when Sarcastic = no)."
+            )
+        ticked = [
+            st.checkbox(
+                sentence,
+                # A one-sentence target is its own span; when revising, re-tick the saved span.
+                value=(sentence in saved_span) if defaults else len(sentences) == 1,
+                key=f"{prefix}_span_{i}",
+            )
+            for i, sentence in enumerate(sentences)
+        ]
+        language = st.radio(
+            "Language",
+            _LANGUAGES,
+            index=idx(_LANGUAGES, d.get("language")),
+            horizontal=True,
+            key=f"{prefix}_language",
+        )
+        literal = st.radio(
+            "Literal sentiment",
+            _SENTIMENTS,
+            index=idx(_SENTIMENTS, d.get("literal_sentiment")),
+            horizontal=True,
+            key=f"{prefix}_literal",
+        )
+        intended = st.radio(
+            "Intended sentiment",
+            _SENTIMENTS,
+            index=idx(_SENTIMENTS, d.get("intended_sentiment")),
+            horizontal=True,
+            key=f"{prefix}_intended",
+        )
+        st.caption("Sarcasm cues present in the target:")
+        cue_values: dict[str, bool] = {}
+        cue_cols = st.columns(len(_CUES))
+        for col, (cue_key, cue_label, definition, example) in zip(cue_cols, _CUES, strict=True):
+            with col:
+                cue_values[cue_key] = st.checkbox(
+                    cue_label,
+                    value=bool(d.get(cue_key)),
+                    help=f"{definition}\n\n*Example:* {example}",
+                    key=f"{prefix}_{cue_key}",
+                )
+        with st.expander("Cue guide"):
+            for _, cue_label, definition, example in _CUES:
+                st.markdown(f"**{cue_label}** — {definition}")
+                st.caption(f"Example: {example}")
+        unsure = st.checkbox(
+            "Unsure about this label", value=bool(d.get("unsure")), key=f"{prefix}_unsure"
+        )
+        notes = st.text_input(
+            "Notes (optional)", value=str(d.get("notes") or ""), key=f"{prefix}_notes"
+        )
+        submitted = st.form_submit_button("Save label", type="primary")
+
+    is_sarcastic = sarcastic == "yes"
+    labels: dict[str, Any] = {
+        "sarcastic": int(is_sarcastic),
+        "language": language,
+        "literal_sentiment": literal,
+        "intended_sentiment": intended,
+        **{k: int(v) for k, v in cue_values.items()},
+        "sarcastic_span": span_from_selection(is_sarcastic, sentences, ticked),
+        "unsure": int(unsure),
+    }
+    return bool(submitted), labels, str(notes)
+
+
+def _labels_summary(labels: dict[str, Any]) -> str:
+    cues = [label for key, label, _, _ in _CUES if labels.get(key)]
+    parts = [
+        f"sarcastic **{'yes' if labels.get('sarcastic') else 'no'}**",
+        f"language {labels.get('language')}",
+        f"literal {labels.get('literal_sentiment')} → intended {labels.get('intended_sentiment')}",
+        f"cues: {', '.join(cues) or 'none'}",
+    ]
+    if labels.get("unsure"):
+        parts.append("**unsure**")
+    return " · ".join(parts)
+
+
+def _render_assist(st: Any, assist: dict[str, Any], target_text: str) -> None:
+    with st.container(border=True):
+        st.markdown("#### Claude's take")
+        verdict = assist.get("sarcastic")
+        verdict_text = (
+            "no verdict" if verdict is None else ("sarcastic" if verdict else "not sarcastic")
+        )
+        confidence = assist.get("confidence")
+        conf_text = "n/a" if confidence is None else f"{float(confidence):.2f}"
+        st.markdown(f"**Verdict:** {verdict_text} (confidence {conf_text})")
+        span = str(assist.get("sarcastic_span") or "")
+        if span.strip():
+            marked, missing = highlight_spans(target_text, span)
+            if len(missing) < len([p for p in span.split("\n") if p.strip()]):
+                st.markdown("**Span, highlighted in the target:**")
+                st.markdown(marked, unsafe_allow_html=True)
+            for part in missing:
+                st.markdown("**Span (not found verbatim in the target):**")
+                st.text(part)
+        if assist.get("rationale"):
+            st.markdown(f"**Rationale:** {assist['rationale']}")
+        st.caption(
+            f"source: {assist.get('source')} · guideline: "
+            f"{assist.get('guideline_version') or 'n/a'}"
+        )
+
+
+def _set_state(key: str, value: Any) -> None:
+    import streamlit as st
+
+    st.session_state[key] = value
+
+
+def _next_item(active_key: str, edit_key: str) -> None:
+    import streamlit as st
+
+    st.session_state.pop(active_key, None)
+    st.session_state.pop(edit_key, None)
+
+
+def _reveal(db_path: Path, fullname: str) -> None:
+    with AnnotationDatabase(db_path) as db:
+        reveal_assist(db, fullname)
+
+
+def _open_labeled(active_key: str, select_key: str) -> None:
+    import streamlit as st
+
+    choice = st.session_state.get(select_key)
+    if choice:
+        st.session_state[active_key] = str(choice)
+
+
+def _render_saved_item(
+    st: Any,
+    db: AnnotationDatabase,
+    db_path: Path,
+    fullname: str,
+    existing: dict[str, Any],
+    target_text: str,
+    *,
+    active_key: str,
+    edit_key: str,
+) -> None:
+    """After the first save: saved labels, the optional assist reveal, Revise, Next item."""
+    st.success("Label saved.")
+    st.markdown(f"**Current label:** {_labels_summary(existing)}")
+    if existing.get("sarcastic_span"):
+        st.caption("Your span: " + " / ".join(str(existing["sarcastic_span"]).split("\n")))
+    first_pass_raw = existing.get("first_pass_json")
+    if first_pass_raw:
+        first_pass = json.loads(str(first_pass_raw))
+        if any(first_pass.get(k) != existing.get(k) for k in LABEL_KEYS):
+            st.caption(f"Blind first pass (kept on record): {_labels_summary(first_pass)}")
+
+    # Only reached once a human_reviews row exists; revealable_assist re-checks
+    # that before it reads assist_suggestions.
+    assist = revealable_assist(db, fullname)
+    if assist is None:
+        st.caption("No Claude suggestion for this item.")
+    elif existing.get("assist_seen"):
+        _render_assist(st, assist, target_text)
+    else:
+        st.button(
+            "Show Claude's take",
+            key=f"reveal_{fullname}",
+            help="Shows a pre-computed Claude suggestion. Your first-pass label stays on "
+            "record unchanged.",
+            on_click=_reveal,
+            args=(db_path, fullname),
+        )
+
+    c1, c2 = st.columns(2)
+    c1.button("Revise", key=f"revise_btn_{fullname}", on_click=_set_state, args=(edit_key, True))
+    c2.button("Next item", key=f"next_{fullname}", on_click=_next_item, args=(active_key, edit_key))
+
+
 def render_review_tab(config_path: Path | None = None) -> None:
     import streamlit as st
 
@@ -97,10 +319,11 @@ def render_review_tab(config_path: Path | None = None) -> None:
 
     db = AnnotationDatabase(cfg.db_path)
     try:
-        queue = db.review_queue_items(only_pending=True)
+        all_items = db.review_queue_items(only_pending=False)
+        queue = [q for q in all_items if not q["completed"]]
         gold_pending = [q for q in queue if q["reason"] == "gold"]
         lc_pending = [q for q in queue if q["reason"] == "low_confidence"]
-        done = len(db.review_queue_items(only_pending=False)) - len(queue)
+        done = len(all_items) - len(queue)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Gold pending", len(gold_pending))
@@ -111,20 +334,50 @@ def render_review_tab(config_path: Path | None = None) -> None:
             "Queue",
             ["gold", "low_confidence"],
             horizontal=True,
+            key="review_queue_reason",
             help="Gold items are labeled blind (validation subset); low-confidence items "
             "are final-call adjudications.",
         )
         pending = gold_pending if reason == "gold" else lc_pending
-        if not pending:
+        pending_names = [str(q["reddit_fullname"]) for q in pending]
+        active_key = f"review_active_{reason}"
+
+        labeled = [
+            str(q["reddit_fullname"]) for q in all_items if q["reason"] == reason and q["completed"]
+        ]
+        if labeled:
+            with st.expander(f"Revisit a labeled item ({len(labeled)})"):
+                select_key = f"review_revisit_{reason}"
+                st.selectbox("Labeled item", labeled, key=select_key)
+                st.button(
+                    "Open",
+                    key=f"review_open_{reason}",
+                    on_click=_open_labeled,
+                    args=(active_key, select_key),
+                )
+
+        # The item on screen: the one just saved or reopened (kept until "Next
+        # item"), else the head of the pending queue.
+        active = st.session_state.get(active_key)
+        if active is not None and db.get_human_review(str(active)) is None:
+            active = None
+        if active is not None:
+            fullname = str(active)
+        elif pending_names:
+            fullname = pending_names[0]
+        else:
             st.success(f"No pending items in the {reason} queue.")
             return
+        edit_key = f"review_editing_{fullname}"
 
-        fullname = str(pending[0]["reddit_fullname"])
-        st.caption(f"Item {fullname} — {len(pending)} left in this queue")
+        status = "" if fullname in pending_names else "labeled; "
+        st.caption(f"Item {fullname} — {status}{len(pending_names)} left in this queue")
         _render_context(st, db, fullname)
 
         show_votes = reason == "low_confidence" or st.checkbox(
-            "Reveal model votes (breaks blindness for this item)", value=False
+            "Reveal model votes (breaks blindness for this item)",
+            value=False,
+            key=f"votes_{fullname}",
         )
         if show_votes:
             agg = db.get_aggregate(fullname)
@@ -137,41 +390,46 @@ def render_review_tab(config_path: Path | None = None) -> None:
                     }
                 )
 
-        with st.form(key=f"review_{fullname}"):
-            sarcastic = st.radio("Sarcastic?", ["no", "yes"], horizontal=True)
-            language = st.radio("Language", _LANGUAGES, horizontal=True)
-            literal = st.radio("Literal sentiment", _SENTIMENTS, horizontal=True)
-            intended = st.radio("Intended sentiment", _SENTIMENTS, horizontal=True)
-            st.caption("Sarcasm cues present in the target:")
-            cue_values: dict[str, bool] = {}
-            cue_cols = st.columns(len(_CUES))
-            for col, (cue_key, cue_label, definition, example) in zip(cue_cols, _CUES, strict=True):
-                with col:
-                    cue_values[cue_key] = st.checkbox(
-                        cue_label, help=f"{definition}\n\n*Example:* {example}"
-                    )
-            with st.expander("Cue guide"):
-                for _, cue_label, definition, example in _CUES:
-                    st.markdown(f"**{cue_label}** — {definition}")
-                    st.caption(f"Example: {example}")
-            notes = st.text_input("Notes (optional)")
-            submitted = st.form_submit_button("Save label", type="primary")
+        record = db.get_record(fullname)
+        target_text = str(record["text"]) if record else ""
+        existing = db.get_human_review(fullname)
+        editing = existing is not None and bool(st.session_state.get(edit_key))
 
-        if submitted:
-            db.upsert_human_review(
-                {
-                    "reddit_fullname": fullname,
-                    "sarcastic": int(sarcastic == "yes"),
-                    "language": language,
-                    "literal_sentiment": literal,
-                    "intended_sentiment": intended,
-                    **{k: int(v) for k, v in cue_values.items()},
-                    "notes": notes or None,
-                    "is_gold": int(reason == "gold"),
-                }
+        if existing is None or editing:
+            if existing is None:
+                # Blind first pass: assist_suggestions is never read on this path.
+                st.caption(
+                    "Claude's take, if one exists for this item, can be revealed after you "
+                    "save. Your first saved label is kept as the blind first pass."
+                )
+            submitted, labels, notes = _label_form(
+                st,
+                prefix=f"{'revise' if editing else 'review'}_{fullname}",
+                sentences=split_sentences(target_text),
+                defaults=existing,
             )
-            st.success(f"Saved {fullname}")
-            st.rerun()
+            if editing:
+                st.button("Cancel revision", on_click=_set_state, args=(edit_key, False))
+            if submitted:
+                db.upsert_human_review(
+                    build_review_row(
+                        fullname, labels, notes=notes, is_gold=reason == "gold", existing=existing
+                    )
+                )
+                st.session_state[active_key] = fullname
+                st.session_state[edit_key] = False
+                st.rerun()
+        else:
+            _render_saved_item(
+                st,
+                db,
+                cfg.db_path,
+                fullname,
+                existing,
+                target_text,
+                active_key=active_key,
+                edit_key=edit_key,
+            )
 
         with st.expander("Agreement statistics"):
             if st.button("Compute agreement report"):
@@ -180,3 +438,5 @@ def render_review_tab(config_path: Path | None = None) -> None:
                 st.json(compute_agreement(cfg, cfg.prompt_version))
     finally:
         db.close()
+
+
