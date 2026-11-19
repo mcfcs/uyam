@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import shutil
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,40 @@ def record_identity(record: dict[str, object]) -> str | None:
     return None
 
 
+def _rewrite_jsonl(
+    data: bytes, transform: Callable[[dict[str, object]], bool]
+) -> tuple[bytes, int]:
+    """Apply ``transform`` (mutates in place, returns True if it changed) to each record.
+
+    Records are split on "\\n" only: str.splitlines() would also split inside
+    a record on U+2028/U+2029/U+0085, which JSON may carry unescaped. Every
+    line the transform leaves alone, including blank, partial and unparseable
+    lines, is kept byte-for-byte, and so is a CRLF ending on a changed line.
+    Returns (new bytes, number of records changed).
+    """
+    lines = data.decode("utf-8").split("\n")
+    changed = 0
+    for i, line in enumerate(lines):
+        body = line.removesuffix("\r")
+        if not body.strip():
+            continue
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and transform(parsed):
+            changed += 1
+            lines[i] = json.dumps(parsed, ensure_ascii=False) + line[len(body) :]
+    return "\n".join(lines).encode("utf-8"), changed
+
+
+def _drop_author(record: dict[str, object]) -> bool:
+    if "author" not in record:
+        return False
+    record.pop("author")
+    return True
+
+
 def scrub_author_field(data_dir: Path) -> dict[str, int]:
     """Remove the plaintext `author` key from every JSONL line under data/raw.
 
@@ -65,29 +100,12 @@ def scrub_author_field(data_dir: Path) -> dict[str, int]:
     for path in sorted(raw_dir.glob("**/*.jsonl")):
         stats["files"] += 1
         try:
-            text = path.read_text(encoding="utf-8")
+            new_bytes, changed = _rewrite_jsonl(path.read_bytes(), _drop_author)
         except OSError:
             continue
-        out_lines: list[str] = []
-        changed = 0
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                out_lines.append(line)
-                continue
-            if isinstance(parsed, dict) and "author" in parsed:
-                parsed.pop("author")
-                changed += 1
-                out_lines.append(json.dumps(parsed, ensure_ascii=False))
-            else:
-                out_lines.append(line)
         if changed:
             tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+            tmp.write_bytes(new_bytes)
             os.replace(tmp, path)
             stats["files_rewritten"] += 1
             stats["records_scrubbed"] += changed
@@ -118,8 +136,9 @@ def retag_calendar_walk_records(data_dir: Path, backup_dir: Path) -> dict[str, A
 
     Each affected raw JSONL file is first copied to `backup_dir` (same
     relative path), then rewritten atomically. Every other line is kept
-    byte-identical. The collection-run manifests of the affected runs get a
-    `corrections` entry, so their provenance stays traceable. Idempotent.
+    byte-identical (see _rewrite_jsonl). The collection-run manifests of the
+    affected runs get a `corrections` entry, so their provenance stays
+    traceable. Idempotent.
     Do not run during a scrape.
     """
     raw_dir = data_dir / "raw"
@@ -128,38 +147,27 @@ def retag_calendar_walk_records(data_dir: Path, backup_dir: Path) -> dict[str, A
     files_rewritten = 0
     if not raw_dir.exists():
         return {"records": 0, "files_rewritten": 0, "runs": {}, "fullnames": []}
+
+    def retag(record: dict[str, object]) -> bool:
+        if not _is_calendar_walk_mistag(record):
+            return False
+        record["sampling_strategy"] = "natural"
+        record["matched_query_or_keyword"] = None
+        changed_ids.append(str(record.get("reddit_fullname")))
+        run_id = str(record.get("collection_run_id"))
+        runs[run_id] = runs.get(run_id, 0) + 1
+        return True
     for path in sorted(raw_dir.glob("**/*.jsonl")):
         try:
-            text = path.read_text(encoding="utf-8")
+            new_bytes, changed = _rewrite_jsonl(path.read_bytes(), retag)
         except OSError:
             continue
-        out_lines: list[str] = []
-        changed = 0
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                parsed = json.loads(stripped)
-            except json.JSONDecodeError:
-                out_lines.append(line)
-                continue
-            if isinstance(parsed, dict) and _is_calendar_walk_mistag(parsed):
-                parsed["sampling_strategy"] = "natural"
-                parsed["matched_query_or_keyword"] = None
-                changed += 1
-                changed_ids.append(str(parsed.get("reddit_fullname")))
-                run_id = str(parsed.get("collection_run_id"))
-                runs[run_id] = runs.get(run_id, 0) + 1
-                out_lines.append(json.dumps(parsed, ensure_ascii=False))
-            else:
-                out_lines.append(line)
         if changed:
             backup = backup_dir / path.relative_to(data_dir)
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, backup)
             tmp = path.with_suffix(path.suffix + ".tmp")
-            tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+            tmp.write_bytes(new_bytes)
             os.replace(tmp, path)
             files_rewritten += 1
 

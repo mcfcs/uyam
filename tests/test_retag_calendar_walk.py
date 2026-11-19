@@ -84,3 +84,32 @@ def test_retag_is_idempotent(tmp_path: Path) -> None:
     assert not (tmp_path / "b2").exists()
     manifest = json.loads((data / "manifests" / "run-a.json").read_text(encoding="utf-8"))
     assert len(manifest["corrections"]) == 1
+
+
+def test_rewrite_splits_on_newline_only_and_keeps_other_bytes(tmp_path: Path) -> None:
+    """U+2028/U+2029/U+0085 inside a record must not split it, and untouched
+    lines (blank, CRLF, partial) stay byte-identical."""
+    data = tmp_path / "data"
+    raw = data / "raw" / "CasualPH" / "2026-11-10.jsonl"
+    raw.parent.mkdir(parents=True)
+    body = "a b c\x85d"
+    tricky = _rec("t1_sep", "natural", None, "run-a") | {"body": body}
+    lines = [
+        json.dumps(_rec("t3_walk", "keyword_oversampled", "2026-11-10", "run-a")) + "\r",
+        json.dumps(tricky, ensure_ascii=False),
+        "",
+        json.dumps(_rec("t3_nat", "natural", None, "run-a")) + "\r",
+        '{"partial line',
+    ]
+    original = "\n".join(lines).encode("utf-8")
+    raw.write_bytes(original)
+
+    stats = retag_calendar_walk_records(data, tmp_path / "backup")
+    assert stats["records"] == 1
+    out = raw.read_bytes().decode("utf-8").split("\n")
+    assert len(out) == len(lines)
+    assert out[0].endswith("\r") and json.loads(out[0])["sampling_strategy"] == "natural"
+    assert out[1:] == lines[1:]  # separator characters, blank and partial lines kept
+    assert json.loads(out[1])["body"] == body
+    backup = tmp_path / "backup" / "raw" / "CasualPH" / "2026-11-10.jsonl"
+    assert backup.read_bytes() == original
