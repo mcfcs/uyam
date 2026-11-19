@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
@@ -370,6 +371,38 @@ def clear_data_cmd(
 # ---------------------------------------------------------------------------
 # validate-fixtures
 # ---------------------------------------------------------------------------
+
+@app.command(name="retag-calendar-walk")
+def retag_calendar_walk_cmd(
+    config_path: Path | None = typer.Option(None, help="Path to collection.yaml"),
+) -> None:
+    """Re-tag /new calendar-walk records mis-tagged as keyword_oversampled.
+
+    The 2026-11-10 Shreddit trial stored /new posts as keyword_oversampled
+    with a UTC date as the "keyword". This sets them to natural, backs up
+    every rewritten file under data/raw-backup-<timestamp>/, notes the change
+    in the affected run manifests, and writes data/retag-log-<timestamp>.json.
+    Idempotent. Refuses to run during a live scrape.
+    """
+    from uyam.scrape_status import scrape_is_running
+    from uyam.storage import retag_calendar_walk_records
+
+    cfg = load_config(config_path)
+    if scrape_is_running():
+        typer.echo("Error: a live scrape is running — stop it before re-tagging.", err=True)
+        raise typer.Exit(1)
+    data_dir = cfg.data_dir if cfg.data_dir.is_absolute() else _REPO_ROOT / cfg.data_dir
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    stats = retag_calendar_walk_records(data_dir, data_dir / f"raw-backup-{stamp}")
+    if stats["records"]:
+        log = data_dir / f"retag-log-{stamp}.json"
+        log.write_text(json.dumps(stats, indent=2), encoding="utf-8")
+        console.print(f"Log: {log}")
+    console.print(
+        f"[green]Re-tagged[/green] {stats['records']} records as natural in "
+        f"{stats['files_rewritten']} files ({len(stats['runs'])} runs)."
+    )
+
 
 @app.command(name="scrub-authors")
 def scrub_authors_cmd(

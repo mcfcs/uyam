@@ -14,8 +14,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from uyam.models import CollectionContext, CommentRecord, SubmissionRecord
 
@@ -89,6 +92,102 @@ def scrub_author_field(data_dir: Path) -> dict[str, int]:
             stats["files_rewritten"] += 1
             stats["records_scrubbed"] += changed
     return stats
+
+
+_DATE_KEYWORD = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _is_calendar_walk_mistag(record: dict[str, object]) -> bool:
+    """A /new calendar-walk record wrongly tagged as keyword-oversampled.
+
+    The 2026-11-10 Shreddit trial ran keyword jobs that still carried
+    --since, so they walked /new and stored those posts as
+    `keyword_oversampled` with the UTC day in `matched_query_or_keyword`.
+    A real keyword is never a bare date, which makes the signature exact.
+    """
+    keyword = record.get("matched_query_or_keyword")
+    return (
+        record.get("sampling_strategy") == "keyword_oversampled"
+        and isinstance(keyword, str)
+        and _DATE_KEYWORD.fullmatch(keyword) is not None
+    )
+
+
+def retag_calendar_walk_records(data_dir: Path, backup_dir: Path) -> dict[str, Any]:
+    """Re-tag calendar-walk records mis-tagged `keyword_oversampled` as `natural`.
+
+    Each affected raw JSONL file is first copied to `backup_dir` (same
+    relative path), then rewritten atomically. Every other line is kept
+    byte-identical. The collection-run manifests of the affected runs get a
+    `corrections` entry, so their provenance stays traceable. Idempotent.
+    Do not run during a scrape.
+    """
+    raw_dir = data_dir / "raw"
+    changed_ids: list[str] = []
+    runs: dict[str, int] = {}
+    files_rewritten = 0
+    if not raw_dir.exists():
+        return {"records": 0, "files_rewritten": 0, "runs": {}, "fullnames": []}
+    for path in sorted(raw_dir.glob("**/*.jsonl")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        out_lines: list[str] = []
+        changed = 0
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                out_lines.append(line)
+                continue
+            if isinstance(parsed, dict) and _is_calendar_walk_mistag(parsed):
+                parsed["sampling_strategy"] = "natural"
+                parsed["matched_query_or_keyword"] = None
+                changed += 1
+                changed_ids.append(str(parsed.get("reddit_fullname")))
+                run_id = str(parsed.get("collection_run_id"))
+                runs[run_id] = runs.get(run_id, 0) + 1
+                out_lines.append(json.dumps(parsed, ensure_ascii=False))
+            else:
+                out_lines.append(line)
+        if changed:
+            backup = backup_dir / path.relative_to(data_dir)
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, backup)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text("\n".join(out_lines) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+            files_rewritten += 1
+
+    stamp = datetime.now(UTC).isoformat(timespec="seconds")
+    for run_id, count in runs.items():
+        manifest = data_dir / "manifests" / f"{run_id}.json"
+        if not manifest.exists():
+            continue
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data.setdefault("corrections", []).append(
+            {
+                "at": stamp,
+                "records": count,
+                "change": "sampling_strategy keyword_oversampled -> natural; "
+                "matched_query_or_keyword (a UTC date) -> null",
+                "reason": "keyword job carried --since and walked /new (calendar mode) "
+                "instead of searching; fixed in cb0dc37",
+            }
+        )
+        tmp = manifest.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, manifest)
+    return {
+        "records": len(changed_ids),
+        "files_rewritten": files_rewritten,
+        "runs": runs,
+        "fullnames": changed_ids,
+    }
 
 
 def load_jsonl_records(data_dir: Path, *, unique: bool = True) -> list[dict[str, object]]:
