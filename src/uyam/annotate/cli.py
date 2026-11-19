@@ -3,8 +3,9 @@
   index -> select -> lid -> sentiment -> run -> aggregate -> adjudicate
   -> (Streamlit review) -> aggregate -> export
 
-Plus: status, smoke, gold-sample, and `pipeline` (the whole chain to a
-target count in one command).
+Plus: status, smoke, gold-sample, `pipeline` (the whole chain to a target
+count in one command), and the evaluation-only `evaluate` / `eval-report`
+(compare a model against the gold labels without touching the dataset).
 """
 
 from __future__ import annotations
@@ -268,6 +269,88 @@ def adjudicate(
 
     run_adjudication(cfg, limit=limit, dry_run=dry_run, retry_failed=retry_failed)
     console.print("Re-run [bold]uyam annotate aggregate[/bold] to apply adjudicated labels.")
+
+
+@annotate_app.command()
+def evaluate(
+    model: str = typer.Option(..., "--model", help="Evaluator key from annotation.yaml"),
+    items: str = typer.Option(
+        "gold",
+        "--items",
+        help="'gold' (every gold-sample item, labeled or not) or a txt file of reddit_fullnames",
+    ),
+    limit: int | None = typer.Option(None, help="Stop after N items THIS run"),
+    retry_failed: bool = typer.Option(False, help="Clear recorded failures and retry them"),
+    config_path: Path | None = _CONFIG_OPT,
+    log_level: str = typer.Option("INFO"),
+) -> None:
+    """Evaluation-only model pass: votes go to eval_annotations, never to the dataset.
+
+    Same prompt and persisted thread context as the base annotators; items with
+    no context snapshot are skipped (and counted), not rebuilt. Resumable.
+    """
+    configure_logging(log_level)
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.evaluation import run_evaluator
+
+    try:
+        run_evaluator(cfg, model, items=items, limit=limit, retry_failed=retry_failed)
+    except (KeyError, FileNotFoundError) as exc:
+        console.print(f"[red]{exc.args[0] if exc.args else exc}[/red]")
+        raise typer.Exit(1) from exc
+
+
+@annotate_app.command(name="eval-report")
+def eval_report(
+    out: Path | None = typer.Option(None, "--out", help="Also write the report as Markdown"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Sarcasm accuracy / F1 / Cohen's kappa vs the human gold labels, per source.
+
+    Rows: each base annotator, their majority vote, the shipped final label, and
+    every evaluator; plus each evaluator's kappa against the shipped final label.
+    """
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.evaluation import build_eval_report, fmt_metric, render_eval_markdown
+
+    report = build_eval_report(cfg, cfg.prompt_version)
+    table = Table(
+        title=f"Sarcasm vs human gold — {report['n_gold']} items "
+        f"({report['n_gold_sarcastic']} sarcastic), prompt {report['prompt_version']}",
+        header_style="bold",
+    )
+    for col in ("Source", "Kind"):
+        table.add_column(col)
+    for col in ("n", "Accuracy", "F1 (sarcastic)", "kappa vs human"):
+        table.add_column(col, justify="right")
+    for r in report["vs_human"]:
+        table.add_row(
+            r["source"],
+            r["kind"],
+            str(r["n"]),
+            fmt_metric(r["accuracy"]),
+            fmt_metric(r["f1_sarcastic"]),
+            fmt_metric(r["kappa"]),
+        )
+    console.print(table)
+
+    ftable = Table(title="Evaluators vs the shipped final label", header_style="bold")
+    ftable.add_column("Evaluator")
+    for col in ("Labeled", "n with final", "Agreement", "kappa"):
+        ftable.add_column(col, justify="right")
+    for r in report["evaluators_vs_final"]:
+        ftable.add_row(
+            r["evaluator"],
+            str(r["n_labeled"]),
+            str(r["n"]),
+            fmt_metric(r["agreement"]),
+            fmt_metric(r["kappa"]),
+        )
+    console.print(ftable)
+    if out is not None:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(render_eval_markdown(report), encoding="utf-8")
+        console.print(f"[green]Wrote[/green] {out}")
 
 
 @annotate_app.command(name="gold-sample")

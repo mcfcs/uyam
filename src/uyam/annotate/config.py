@@ -107,6 +107,10 @@ class AnnotationConfig:
     review: ReviewConfig
     export: ExportConfig
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    # Evaluation-only models: same entry shape as annotators, but their votes
+    # go to eval_annotations and are only ever compared, never aggregated.
+    # Deliberately NOT returned by annotator(): `annotate run` cannot reach them.
+    evaluators: list[AnnotatorConfig] = field(default_factory=list)
 
     def annotator(self, key: str) -> AnnotatorConfig:
         if key == self.adjudicator.key:
@@ -115,6 +119,13 @@ class AnnotationConfig:
             if ann.key == key:
                 return ann
         raise KeyError(f"No annotator with key {key!r} in annotation.yaml")
+
+    def evaluator(self, key: str) -> AnnotatorConfig:
+        for ev in self.evaluators:
+            if ev.key == key:
+                return ev
+        known = ", ".join(ev.key for ev in self.evaluators) or "none configured"
+        raise KeyError(f"No evaluator with key {key!r} in annotation.yaml ({known})")
 
     def endpoint_url(self, name: str) -> str:
         try:
@@ -146,6 +157,29 @@ def _parse_annotator(raw: dict[str, Any]) -> AnnotatorConfig:
     )
 
 
+def _check_evaluator_keys(
+    annotators: list[AnnotatorConfig],
+    adjudicator: AnnotatorConfig,
+    evaluators: list[AnnotatorConfig],
+) -> None:
+    """Evaluator keys must be unique and disjoint from annotator/adjudicator keys.
+
+    A shared key would let an evaluation-only model's failures and progress be
+    mistaken for a dataset annotator's (llm_failures is keyed by model_key).
+    """
+    taken = {a.key for a in annotators} | {adjudicator.key}
+    seen: set[str] = set()
+    for ev in evaluators:
+        if ev.key in taken:
+            raise ValueError(
+                f"annotation.yaml evaluator key {ev.key!r} collides with an annotator/"
+                "adjudicator key — evaluators need their own keys"
+            )
+        if ev.key in seen:
+            raise ValueError(f"annotation.yaml evaluator key {ev.key!r} is listed twice")
+        seen.add(ev.key)
+
+
 def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
     """Load and parse annotation.yaml."""
     path = config_path or _DEFAULT_CONFIG_PATH
@@ -163,7 +197,10 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         raise ValueError("annotation.yaml must define an adjudicator")
     adjudicator = _parse_annotator(adj_raw)
 
-    for ann in [*annotators, adjudicator]:
+    evaluators = [_parse_annotator(e) for e in (raw.get("evaluators") or [])]
+    _check_evaluator_keys(annotators, adjudicator, evaluators)
+
+    for ann in [*annotators, adjudicator, *evaluators]:
         if ann.endpoint not in endpoints:
             raise ValueError(f"Annotator {ann.key!r} references unknown endpoint {ann.endpoint!r}")
 
@@ -244,4 +281,5 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         review=review,
         export=export,
         pipeline=pipeline,
+        evaluators=evaluators,
     )

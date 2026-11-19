@@ -284,3 +284,19 @@ def test_coverage_windows_widen_monotonically(tmp_path: Path) -> None:
     windows = ("48h", "7d", "30d", "unbounded")
     shares = [cov["by_window"][w]["share_with_at_least_1"] for w in windows]
     assert shares == sorted(shares)
+
+
+def test_single_class_gold_gives_null_kappa_and_strict_json(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)  # every shipped label is "not sarcastic"
+    with AnnotationDatabase(cfg.db_path) as db:
+        for fullname in ("t1_c1", "t1_c2", "t1_c3"):
+            db.upsert_human_review({"reddit_fullname": fullname, "sarcastic": 0, "is_gold": 1})
+    result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
+
+    def reject(token: str) -> None:
+        raise AssertionError(f"non-standard JSON constant {token} in the card")
+
+    card = json.loads(Path(result["card"]).read_text(encoding="utf-8"), parse_constant=reject)
+    gold = card["agreement"]["gold_vs_ensemble_cohen_kappa"]
+    assert gold["n_gold_items"] == 3
+    assert gold["sarcastic"] is None

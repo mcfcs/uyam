@@ -51,13 +51,13 @@ class AnnotatorClient(Protocol):
     def model_digest(self, model: str) -> str | None: ...
 
 
-def _make_client(cfg: AnnotationConfig, annotator: AnnotatorConfig) -> AnnotatorClient:
+def make_client(cfg: AnnotationConfig, annotator: AnnotatorConfig) -> AnnotatorClient:
     from uyam.annotate.ollama_client import OllamaClient
 
     return OllamaClient(cfg.endpoint_url(annotator.endpoint), cfg.options.timeout_seconds)
 
 
-def _annotation_row(
+def annotation_row(
     fullname: str,
     annotator: AnnotatorConfig,
     role: str,
@@ -95,6 +95,26 @@ def _annotation_row(
     }
 
 
+def check_prompt_contract(cfg: AnnotationConfig) -> None:
+    """annotation.yaml and prompts.py must name the same prompt version."""
+    if cfg.prompt_version != PROMPT_VERSION:
+        raise RuntimeError(
+            f"annotation.yaml prompt_version={cfg.prompt_version!r} does not match "
+            f"prompts.PROMPT_VERSION={PROMPT_VERSION!r} — align them before running."
+        )
+
+
+def make_progress() -> Progress:
+    return Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
+
 def order_least_done_first(
     db: AnnotationDatabase, keys: list[str], prompt_version: str, target: int
 ) -> list[str]:
@@ -121,11 +141,7 @@ def run_annotator(
     through the shared N-item target set (see AnnotationDatabase.target_items)
     and stop once it has N done — the pipeline's "reach 12k then move on".
     """
-    if cfg.prompt_version != PROMPT_VERSION:
-        raise RuntimeError(
-            f"annotation.yaml prompt_version={cfg.prompt_version!r} does not match "
-            f"prompts.PROMPT_VERSION={PROMPT_VERSION!r} — align them before running."
-        )
+    check_prompt_contract(cfg)
     annotator = cfg.annotator(annotator_key)
 
     with AnnotationDatabase(cfg.db_path) as db:
@@ -183,7 +199,7 @@ def run_annotator(
             )
             return stats
 
-        client = (client_factory or _make_client)(cfg, annotator)
+        client = (client_factory or make_client)(cfg, annotator)
         ollama_version = client.server_version()
         model_digest = client.model_digest(annotator.model)
         target_note = f" (target {target})" if target is not None else ""
@@ -192,14 +208,7 @@ def run_annotator(
             f"on {annotator.endpoint} — {len(pending)} pending{target_note}"
         )
 
-        progress = Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        )
+        progress = make_progress()
         try:
             with progress:
                 task = progress.add_task(annotator.key, total=len(pending))
@@ -221,7 +230,7 @@ def run_annotator(
                         progress.advance(task)
                         continue
                     inserted = db.insert_llm_annotation(
-                        _annotation_row(
+                        annotation_row(
                             fullname,
                             annotator,
                             role,

@@ -586,6 +586,30 @@ statistics, fold guidance — is documented in
 model-side build plan (architecture, notebooks, upgrade recommendations) in
 [docs/leische-model-notebook-guide.md](docs/leische-model-notebook-guide.md).
 
+### Evaluation-only annotators
+
+To compare a new model (e.g. `nimble:9b`, on the remote box after `ollama pull
+nimble:9b`) without changing the frozen labels, list it under `evaluators:` in
+`config/annotation.yaml`. An evaluator runs exactly like a base annotator
+(same prompt and `PROMPT_VERSION`, the same persisted thread-context snapshot
+the annotators saw, same client options and retries), but its votes go to a
+separate `eval_annotations` table that aggregation, the target set, agreement
+stats, status and the export never read. They never reach the dataset.
+
+```bash
+uyam annotate evaluate --model nimble                 # every gold-sample item (resumable)
+uyam annotate evaluate --model nimble --items picks.txt --limit 50   # one fullname per line
+uyam annotate eval-report --out eval-report.md        # vs the human gold labels
+```
+
+`evaluate` skips items it already labeled, and items with no context snapshot
+for the current prompt version (counted, never rebuilt). Failures are kept in
+`llm_failures` with role `evaluator` (`--retry-failed` retries them).
+`eval-report` lists n, sarcasm accuracy, F1 for the sarcastic class and Cohen's
+kappa against the human gold labels for each base annotator, their majority
+vote, the shipped final label and each evaluator, plus each evaluator's kappa
+against the shipped final label ("n/a" where a value is undefined).
+
 ---
 
 ## Running Tests

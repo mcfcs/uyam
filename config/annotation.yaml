@@ -40,6 +40,19 @@ adjudicator:
   endpoint: remote
   think: false
 
+# Evaluation-only models: same entry shape as annotators, but their votes are
+# stored in eval_annotations and only compared against the human gold labels
+# and the shipped labels (`uyam annotate evaluate` / `uyam annotate eval-report`).
+# They never reach aggregation, the target set, agreement stats, or the export,
+# so adding one cannot change the labeled dataset.
+evaluators:
+  # Adviser's request (2026-11-19): compare Bespoke Labs' nimble (fine-tuned
+  # Qwen3.5-9B classifier, no reasoning step) on the gold items. ~9.4 GB, so
+  # it runs on the remote 24 GB box; run `ollama pull nimble:9b` there first.
+  - key: nimble
+    model: "nimble:9b"
+    endpoint: remote
+
 options:
   temperature: 0.0
   seed: 7

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import Counter
 from typing import Any
 
@@ -333,9 +334,10 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
         from sklearn.metrics import cohen_kappa_score
 
         for label, (h_list, e_list) in pairs.items():
-            result[label] = (
-                round(float(cohen_kappa_score(h_list, e_list)), 4) if len(h_list) >= 2 else None
-            )
+            kappa = float(cohen_kappa_score(h_list, e_list)) if len(h_list) >= 2 else math.nan
+            # Single-class gold (e.g. every human label "not sarcastic") makes
+            # kappa undefined: NaN would also write invalid JSON into the card.
+            result[label] = round(kappa, 4) if math.isfinite(kappa) else None
     except Exception as exc:  # noqa: BLE001
         logger.warning("cohen_kappa_failed", extra={"error": str(exc)})
         for label in pairs:
