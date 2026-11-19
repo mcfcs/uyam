@@ -18,6 +18,10 @@ data/reminders.json
 data/reminders.json.tmp
 data/.streamlit-app*.log
 data/.archive-backfill*.log
+data/raw-backup-*/
+data/retag-log-*.json
+data/guideline_examples.md
+data/*.bak.sqlite3
 .probe-profile/
 
 # Python
@@ -62,3 +66,6 @@ htmlcov/
 Thumbs.db
 /context
 /thesis
+
+# Claude Code subagent worktrees
+.claude/worktrees/
