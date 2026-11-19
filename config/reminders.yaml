@@ -58,14 +58,13 @@ reminders:
 
   - id: shreddit-keyword-searches-2026-11
     section: Data collection
-    title: Run the Shreddit keyword-oversampling searches
+    title: "Not needed any more: Shreddit keyword-oversampling searches"
     details: >
-      The 2026-11-11 walk ran with oversampling switched off, so the eight
-      sarcasm-marker searches ("edi wow", "sana all", …) have not run on the
-      fixed scraper yet. These rows are tagged keyword_oversampled and are
-      kept out of natural-distribution metrics. Takes a while (8 keywords ×
-      3 subreddits). Reddit may rate-limit; the scraper waits it out.
-    command: uyam collect --source shreddit --oversample-only
+      Superseded 2026-11-19. The archive collected every post from Jun 1 to
+      Nov 10, so any keyword search only re-finds posts already stored (the
+      archive's own searches returned 107 hits, all duplicates). You can just
+      tick this off. Oversampling is now an annotation choice; see the
+      "Decide whether to annotate the 1,148 sarcasm-marker items" reminder.
 
   - id: retag-shreddit-trial-2026-11-10
     section: Data collection
