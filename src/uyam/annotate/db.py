@@ -121,6 +121,51 @@ CREATE TABLE IF NOT EXISTS llm_annotations (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_item ON llm_annotations(reddit_fullname, prompt_version);
 
+-- Evaluation-only annotators (e.g. a model an adviser asked to compare). Same
+-- columns as llm_annotations but a separate table, so no existing query
+-- (aggregation, target sets, agreement, export) can ever count these votes.
+CREATE TABLE IF NOT EXISTS eval_annotations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    reddit_fullname TEXT NOT NULL,
+    model_key       TEXT NOT NULL,
+    prompt_version  TEXT NOT NULL,
+    language        TEXT,
+    literal_sentiment  TEXT,
+    intended_sentiment TEXT,
+    sarcastic       INTEGER,
+    cue_polarity_inversion     INTEGER,
+    cue_rhetorical_intent      INTEGER,
+    cue_contextual_incongruity INTEGER,
+    cue_hyperbole              INTEGER,
+    confidence      REAL,
+    rationale       TEXT,
+    raw_json        TEXT,
+    model_digest    TEXT,
+    endpoint        TEXT,
+    ollama_version  TEXT,
+    options_json    TEXT,
+    attempts        INTEGER,
+    duration_ms     INTEGER,
+    prompt_tokens   INTEGER,
+    completion_tokens INTEGER,
+    created_at      TEXT NOT NULL,
+    UNIQUE(reddit_fullname, model_key, prompt_version)
+);
+
+-- Pre-computed reviewer-assist suggestions (written by Claude Code agents,
+-- not by the annotation ensemble). Shown in the review UI only after the
+-- human has saved a blind first-pass label.
+CREATE TABLE IF NOT EXISTS assist_suggestions (
+    reddit_fullname   TEXT PRIMARY KEY,
+    source            TEXT NOT NULL,
+    guideline_version TEXT,
+    sarcastic         INTEGER,
+    sarcastic_span    TEXT,
+    rationale         TEXT,
+    confidence        REAL,
+    created_at        TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS llm_failures (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     reddit_fullname TEXT NOT NULL,
@@ -184,6 +229,33 @@ CREATE TABLE IF NOT EXISTS prompt_versions (
 """
 
 
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS never adds
+# columns to an existing table, so these are added on open when missing.
+_ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
+    # U9 (leische brief): an already-labeled item that matches the phatic rule
+    # stays eligible and is flagged instead of dropped.
+    "candidates": (("phatic", "INTEGER DEFAULT 0"),),
+    # Gold-review upgrades: the sarcastic sentence(s), an "unsure" mark, the
+    # blind first-pass labels kept when a reviewer revises after seeing the
+    # assist suggestion, and whether that suggestion was revealed.
+    "human_reviews": (
+        ("sarcastic_span", "TEXT"),
+        ("unsure", "INTEGER DEFAULT 0"),
+        ("first_pass_json", "TEXT"),
+        ("assist_seen", "INTEGER DEFAULT 0"),
+    ),
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add any missing columns from _ADDED_COLUMNS. Idempotent."""
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
+        for name, decl in columns:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
 def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -204,6 +276,7 @@ class AnnotationDatabase:
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.executescript(_SCHEMA)
+                _migrate(conn)
                 conn.commit()
                 self._conn = conn
                 return
@@ -312,14 +385,22 @@ class AnnotationDatabase:
         eligible: bool,
         exclusion_reason: str | None,
         text_norm: str | None,
+        phatic: bool = False,
     ) -> None:
         self._conn.execute(
             """
             INSERT OR REPLACE INTO candidates
-              (reddit_fullname, eligible, exclusion_reason, text_norm, selected_at)
-            VALUES (?, ?, ?, ?, ?)
+              (reddit_fullname, eligible, exclusion_reason, text_norm, phatic, selected_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (reddit_fullname, int(eligible), exclusion_reason, text_norm, _utc_now_iso()),
+            (
+                reddit_fullname,
+                int(eligible),
+                exclusion_reason,
+                text_norm,
+                int(phatic),
+                _utc_now_iso(),
+            ),
         )
 
     def candidate_counts(self) -> dict[str, int]:
@@ -808,6 +889,7 @@ class AnnotationDatabase:
             "cue_polarity_inversion", "cue_rhetorical_intent",
             "cue_contextual_incongruity", "cue_hyperbole",
             "notes", "is_gold",
+            "sarcastic_span", "unsure", "first_pass_json", "assist_seen",
         )
         placeholders = ", ".join("?" for _ in cols) + ", ?"
         self._conn.execute(
