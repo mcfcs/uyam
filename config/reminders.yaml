@@ -25,10 +25,9 @@ reminders:
     section: Data collection
     title: Run the archive backfill (2026-06-01 → 2026-11-10)
     details: >
-      Arctic Shift archive, all three subreddits. Full window is roughly
-      40–55k posts / 12–20 h; `--per-day 40` caps it at ~19k posts / 6–8 h.
-      Safe to stop and re-run — dedup skips what is already stored. The
-      keyword oversampling searches run afterwards automatically.
+      Done 2026-11-19: all three subreddits are complete from Jun 1 to Nov 10
+      (corpus 588,507 records). Re-running is safe because dedup skips stored
+      posts. The keyword searches proved redundant and were stopped.
     command: uyam collect --source archive --since 2026-06-01 --until 2026-11-10 --per-day 40
     check: archive_runs
 
@@ -68,13 +67,13 @@ reminders:
 
   - id: retag-shreddit-trial-2026-11-10
     section: Data collection
-    title: Decide what to do with the mis-tagged Shreddit trial rows
+    title: "Done: mis-tagged Shreddit trial rows re-tagged natural"
     details: >
-      The stopped 2026-11-10 trial stored 57 posts (and their comments) as
-      keyword_oversampled even though the browser walked /new. Six posts
-      from that trial are correctly natural. Raw JSONL was not rewritten.
-      A later run skips these ids as duplicates, so the wrong tag sticks
-      unless you ask for a retag.
+      Done 2026-11-19 with your OK (`uyam retag-calendar-walk`): 57 posts and
+      543 comments from the 2026-11-10 trial now say `natural`. The rewritten
+      files were backed up under data/raw-backup-*/ and the three manifests
+      note the correction. The corpus has no keyword_oversampled records
+      left. Tick this off.
 
   - id: decide-marker-oversampling-2026-11
     section: Annotation
@@ -92,36 +91,66 @@ reminders:
     section: Annotation
     title: Re-index the corpus and re-run candidate selection
     details: >
-      Indexes the new archive data and applies the new `phatic` filter.
-      Dry run predicted 107 items excluded and 21 phatic-but-voted-sarcastic
-      items sent to the review queue.
+      Done 2026-11-19 after a DB backup: 588,507 records indexed, 512,471
+      eligible, 1,417 unlabeled phatic items excluded. The 120 already-labeled
+      phatic items keep their labels and are only flagged (you chose frozen
+      labels), so nothing went to a review queue. Labels, contexts and gold
+      labels were checked against the backup: 0 changes. Tick this off; re-run
+      only after new data is collected.
     command: uyam annotate index && uyam annotate select
     check: phatic_selected
 
   - id: review-phatic-low-confidence
     section: Annotation
-    title: Label the low-confidence review queue
+    title: "Not needed any more: low-confidence phatic review"
     details: >
-      "Annotation Review" tab → low_confidence queue. Mostly happy-birthday
-      / congrats comments one model called sarcastic — your label is final.
+      Superseded 2026-11-19. You chose to freeze the 15,000 labels, so the
+      phatic items are flagged in the export instead of being queued for you
+      (none of the 120 is labeled sarcastic). The low_confidence queue is
+      empty. Tick this off.
     check: low_conf_queue
 
   - id: gold-subset-300
     section: Annotation
     title: Finish the gold subset (300 items)
     details: >
-      "Annotation Review" tab → gold queue, labeled blind. Needed for the
-      human-vs-ensemble Cohen's κ (leische H1). Was 31 / 300 on 2026-11-10.
+      "Annotation Review" tab → gold queue. Needed for the human-vs-ensemble
+      Cohen's κ (leische H1/U3). The 269 unlabeled items were redrawn on
+      2026-11-19 (no greeting posts, far fewer long submissions); your 31 are
+      kept. Label each item first, using docs/GUIDELINE.md: tick the
+      sarcastic sentence(s), or "unsure". After you save, you can toggle on
+      Claude's suggestion and revise. Your first pass is kept and is what κ
+      uses. Settle the guideline decisions D1–D5 (next reminder) first, so
+      the 269 are labeled under one rule.
     check: gold_progress
+
+  - id: guideline-decisions-d1-d5
+    section: Annotation
+    title: Settle the guideline decisions D1–D5 (docs/GUIDELINE.md §7)
+    details: >
+      The draft guideline leaves five calls to you. D1 matters most:
+      whether hyperbolic self-pity, *hugot* and playful elevation count as
+      sarcasm. Claude's suggestions follow the strict reading. On your 31
+      existing gold items they agree with you on 26, but they miss 5 of
+      your 6 positives, mostly hugot and humor. If you take the broad
+      reading, say so and the guideline (and the suggestions) get updated
+      before you label the rest. The suggestion agents also raised cases
+      the guideline doesn't cover: a dismissive "good luck", leading
+      rhetorical questions, mocking "daw" next to a stated rebuttal, scare
+      quotes in a sincere argument, and parody that quotes other people.
+      These are listed in HANDOFF.md.
 
   - id: export-dataset-v2
     section: Handoff to leische
-    title: Aggregate and export dataset v2
+    title: Export dataset v2 once leische says it's ready
     details: >
-      Compare `temporal_context_coverage` and `collection_window` in the new
-      dataset_card.json against v1 (35% of rows with ≥1 history post;
-      2026-08-01 → 09-04).
-    command: uyam annotate aggregate && uyam annotate export --version v2
+      Waits on leische (your call, 2026-11-19). Run it when tsis's
+      LEISCHE_LATEST.md says the v2 code changes are done: results under
+      results/v2/, a selectable dataset version, and keyword_oversampled
+      masking. A trial export on 2026-11-19 matched v1 exactly (same 15,000
+      items, 0 label changes, κ shipped vs majority 0.545, 48 h coverage
+      46.5% vs v1's ~35%). A uyam agent can run it and update UYAM_LATEST.md.
+    command: uyam annotate export --version v2
     check: export_v2
 
   - id: send-v2-to-leische
@@ -161,17 +190,34 @@ reminders:
       and add the `phatic` exclusion (birthday / thanks / congrats-only text)
       to the preprocessing list with its count from the card.
 
+  - id: thesis-guideline-and-assist-2026-11
+    section: Thesis manuscript
+    title: Describe the written guideline and the blind-first Claude assist
+    details: >
+      Chapter III (human subset): the gold labels follow a written guideline
+      (docs/GUIDELINE.md), and the first 31 items predate it. The 269 were
+      redrawn stratified by sarcasm × language × split vote × length band.
+      You label each item blind first, then may view a Claude suggestion
+      and revise, and κ uses the blind first pass. Ethics: the item text was
+      processed by a third-party model (Claude). Also fix "when all three
+      agreed, that label was accepted": 341 unanimous-sarcasm rows were still
+      adjudicated because another label split. See UYAM_LATEST.md §6.1–6.2.
+
   - id: pilot-nimble-annotator-2026-11
     section: Optional
     title: Pilot nimble (adviser's suggestion) as an evaluation-only annotator
     details: >
       nimble:9b (Bespoke Labs, fine-tuned Qwen3.5-9B, ~9.4 GB, Apache 2.0) is a
       fast classification model with no reasoning step and no stated Tagalog
-      support. It won't fit the 8 GB local GPU, so run it on the 24 GB box.
-      Pilot it on the gold items (once about 150 are labeled) plus a
-      500-item sample, and compare its agreement with your gold labels
-      against the three current annotators. Don't add it to the voting
-      ensemble for v2; leische asked that the labels stay unchanged.
+      support. It won't fit the 8 GB local GPU, so run it on the 24 GB box:
+      `ollama pull nimble:9b` there first. The tooling is ready: the command
+      below runs it on all 300 gold items, and its votes go to a separate
+      table that can never change the dataset. `uyam annotate eval-report`
+      compares it with your gold labels against the three current
+      annotators; the report is meaningful once about 150 items are labeled.
+      Don't add it to the voting ensemble for v2; leische asked that the
+      labels stay unchanged.
+    command: uyam annotate evaluate --model nimble && uyam annotate eval-report --out data/eval-report.md
 
   - id: optional-annotate-new-items
     section: Optional
