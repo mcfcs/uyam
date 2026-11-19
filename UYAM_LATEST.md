@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-17 20:10, uyam `af861db` (plus this file's commit)
+- **Last updated:** 2026-11-19 09:20, uyam `f842667` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **Next dataset:** `dataset-v2`, **not exported yet**. The corpus is being
@@ -23,8 +23,8 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 | | `dataset-v1` (in the manuscript) | `dataset-v2` (in progress) |
 |---|---|---|
 | Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months), *provisional* |
-| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 423,433 so far (24,707 / 398,726), *provisional, still growing* |
-| Distinct authors | 8,920 | 46,755 so far, *provisional* |
+| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 (40,125 / 548,382), *provisional*; natural pass complete, keyword searches running |
+| Distinct authors | 8,920 | 63,754, *provisional* |
 | Eligible after filters | 17,424 | not computed yet |
 | Annotated items | 15,000 | 15,000 (same labels; new items optional) |
 | Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated |
@@ -32,22 +32,61 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 | Keyword oversampling | not executed | being run (§5) |
 | Prompt / labels | `sarc-v2` | `sarc-v2` (no prompt change so far) |
 
-## 2. Corpus right now (2026-11-17 18:05, *provisional*)
+## 2. Corpus right now (2026-11-19, *provisional*)
 
-Update 20:05: **r/Philippines and r/CasualPH are complete for Jun 1 →
-Nov 10** (the resume added 3,068 + 1,627 posts and 51,831 + 11,980 comments
-on top of the table below). r/OffMyChestPH is collecting, and the keyword
-searches run after it.
+The **natural pass is complete** for all three subreddits, Jun 1 → Nov 10.
+The keyword-oversampling searches are running (§5) and will add a little
+more.
 
-| Subreddit | Submissions | Comments | Span |
+| Subreddit | Submissions | Comments |
+|---|---|---|
+| r/Philippines | 23,938 | 424,022 |
+| r/OffMyChestPH | 12,210 | 95,417 |
+| r/CasualPH | 3,977 | 28,943 |
+| **Total** | **40,125** | **548,382** |
+
+Raw size: ~770 MB of JSONL, about 30× v1's 20 MB corpus dump.
+
+### 2.1 Temporal-context coverage (measured on the 15,000 v1 labeled items)
+
+Share of labeled items with ≥1 earlier post by the same author inside the
+history window, on the v1 corpus vs the current corpus:
+
+| History window | v1 corpus | current corpus | records the model would read (≤5 per item) |
 |---|---|---|---|
-| r/Philippines | 20,870 | 372,191 | 2026-06-01 → 2026-11-10 |
-| r/CasualPH | 2,706 | 18,823 | 2026-06-01 → 2026-11-10 (Aug 18 → Nov being filled) |
-| r/OffMyChestPH | 1,131 | 7,712 | 2026-08-10 → 2026-11-10 (Jun → Aug not yet collected) |
+| 48 h (current thesis rule) | 36.8% | **46.5%** | 9,637 |
+| 7 days | 45.2% | **64.9%** | 17,098 |
+| 30 days | 53.5% | **82.1%** | 27,819 |
+| unbounded (before the item) | 53.5% | **89.3%** | 34,990 |
 
-By collection source: Arctic Shift archive 22,215 / 375,150; live Shreddit
-scrape 1,429 / 12,216; early-August live scrape (runs predate manifests)
-1,063 / 11,360.
+At 48 h: ≥3 prior posts for 18.9%, the full 5 for 10.1%.
+
+**Why this matters for the method:** all 15,000 labels are from Aug–Sep, so
+under the 48-hour rule almost none of the Jun–Jul and Oct–Nov data can reach
+the model. Only 9,637 of 588,507 records (1.6%) are ever read. Widening the
+window (the model already decays older posts with λ) is what turns the
+backfill into coverage: 7 days clears leische's U5 target of ≥60%. This is a
+**leische / methodology decision**, not a uyam one. Most of the corpus is
+context, not annotation targets: nobody annotates 588k items.
+
+### 2.2 Length profile of the labeled items (v1, for the analysis chapter)
+
+Sentences counted by a punctuation/line-break splitter (approximate for
+informal Taglish). F1 is leische's seed-13 out-of-fold predictions at the
+tuned threshold.
+
+| Sentences | Items | Share | Sarcastic | 2-1 split votes | F1 baseline | F1 full model | > 192 tokens |
+|---|---|---|---|---|---|---|---|
+| 1 | 4,941 | 32.9% | 14.7% | 41.2% | 0.318 | 0.337 | 0.0% |
+| 2 | 3,967 | 26.4% | 12.3% | 32.8% | 0.364 | 0.375 | 0.0% |
+| 3 | 2,102 | 14.0% | 9.4% | 24.9% | 0.404 | 0.392 | 0.0% |
+| 4–5 | 2,015 | 13.4% | 6.2% | 20.5% | 0.344 | 0.326 | 0.5% |
+| 6–10 | 1,351 | 9.0% | 4.1% | 15.2% | 0.192 | 0.245 | 12.7% |
+| 11+ | 624 | 4.2% | 1.6% | 10.7% | 0.000 | 0.000 | 77.1% |
+
+≤3 sentences is 73.4% of items and 88.1% of the sarcastic ones (1,411 of
+1,601). ≤5 sentences is 86.8% of items and 95.9% of positives. Long items are
+mostly r/OffMyChestPH and submissions.
 
 ## 3. How the data is collected now
 
@@ -93,7 +132,9 @@ database yet, so manuscript Table 3.1 is still correct for v1.
 ## 5. Keyword oversampling
 
 The manuscript comment in §3.1 says oversampling "was implemented but not
-executed". For v2 it **is being executed**. The archive backfill runs the 8
+executed". For v2 it **is being executed** (restarted 2026-11-19 after all 24
+searches failed on the archive refusing `limit=auto` with a query, fixed in
+`f842667`). The archive backfill runs the 8
 Taglish sarcasm-marker searches ("edi wow", "sana all", "wow naman", "ang
 galing naman", "talaga lang", "ikaw na", "buti naman", "yan tayo eh") over
 Jun 1 → Nov 10 once the natural pass finishes. Those rows are tagged
@@ -142,6 +183,9 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-19**: Natural pass complete for all three subreddits (588,507
+  records). Keyword searches restarted after a fix. Temporal coverage by
+  history window (§2.1) and the length profile (§2.2) added.
 - **2026-11-17 (evening)**: r/Philippines and r/CasualPH backfills finished.
   Briefs for the other repos are in uyam `docs/briefs/`:
   `LEISCHE_BRIEF.md` (join this status-file protocol, reply on U1–U8, get
