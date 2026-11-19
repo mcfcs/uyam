@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-19 (late), uyam `2d1079d` (plus this file's commit)
+- **Last updated:** 2026-11-19 (night), uyam `0969434` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **Next dataset:** `dataset-v2`, **built and trial-verified, not exported
@@ -249,10 +249,14 @@ Two notes for the thesis text (found while writing the guideline):
 - **Blind-first assist (Claude Code):** suggestions for the gold items are
   computed by Claude Code agents from the guideline only (no ensemble votes,
   no human labels). The Review tab reveals them only **after** Gio saves his
-  own label. The first-pass label is kept (`first_pass_json`) and is what gold
-  κ uses. The export ships `human_gold.first_pass`, `sarcastic_span`,
-  `unsure` and `assist_seen`. The ethics text should mention that item text
-  is processed by a third-party model (§3.1).
+  own label. The first-pass label is kept (`first_pass_json`) and is what
+  every gold score uses: the card's gold κ, the LID-vs-gold accuracy and
+  `eval-report`. Gold items whose model votes were shown before the first
+  save are recorded (`votes_seen`) and left out of those scores. The export
+  ships `human_gold.first_pass` (same shape as the other human labels),
+  `sarcastic_span`, `unsure`, `assist_seen` and `votes_seen`. 300
+  suggestions are loaded for the gold queue. The ethics text should mention
+  that item text is processed by a third-party model (§3.1).
 - **Evaluation-only annotators:** the adviser's suggested `nimble:9b` can be
   run on the gold items (`uyam annotate evaluate --model nimble`, then
   `eval-report`). Its votes live in a separate table and can never change the
@@ -290,6 +294,11 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-19 (night)**: A code review of the day's changes led to fixes.
+  Every gold score now uses the blind first pass, `votes_seen` was added, and
+  raw-JSONL rewrites now split on newlines only (the retag that already ran
+  lost nothing). `docs/dataset-contract-leische.md` now documents all the v2
+  export fields. No labels or data changed.
 - **2026-11-19 (late)**: v2 prepared, trial-exported and checked against v1
   (same 15,000 items, 0 label changes). U1, U5, U8 and U9 done. Gold queue
   redrawn. Guideline draft v1, blind-first assist, and evaluation-only

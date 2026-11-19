@@ -18,8 +18,8 @@ Produced by `uyam annotate export --version v1` under `data/annotated/`:
 |---|---|
 | `dataset-v1.jsonl` | One row per resolved annotation target (submission or comment) — the training dataset |
 | `dataset-v1.parquet` | Same rows, flattened (nested objects as `*_json` string columns) |
-| `corpus-v1.jsonl` | Pseudonymized dump of the FULL collected corpus — source for temporal context |
-| `dataset_card.json` | Counts, label distributions, agreement statistics, model provenance, filter settings |
+| `corpus-v1.jsonl` | Pseudonymized corpus dump, the source for temporal context. v1: the full collected corpus. From v2 the default (`--corpus-scope labeled_authors`) is every exported row plus every record by an author of an exported row; `--corpus-scope all` dumps everything. The card's `corpus_dump_scope` says which |
+| `dataset_card.json` | Counts, label distributions, agreement statistics, model provenance, filter settings. Always the latest export; from v2 each export also writes `dataset_card-<version>.json` |
 | `uyam-dataset-v1.zip` | All of the above plus `SHA256SUMS.txt` — the transfer bundle |
 
 Transfer: the Annotation tab's **Download bundle (.zip)** button serves the zip
@@ -66,6 +66,13 @@ Text:
 Labels (`labels`, the ensemble finals — the training targets):
 
 - `sarcastic` — bool. Binary sarcasm label per the thesis's four operationalized cues.
+  This is the shipped (adjudicated) label.
+- `sarcastic_majority` (from v2, leische U1) — bool. The three base annotators'
+  own majority on sarcasm, before adjudication. A tie (only possible with fewer
+  than three votes) falls back to `sarcastic`.
+- `sarcasm_vote_share` (from v2) — share of base annotators voting sarcastic
+  (e.g. 0.6667 for 2-1), or null with no votes. The card's `label_sets`
+  compares the two label sets (rows that differ, Cohen's κ).
 - `language` — `english` | `tagalog` | `taglish`
 - `literal_sentiment` — surface polarity (`positive`|`neutral`|`negative`)
 - `intended_sentiment` — the sentiment actually meant. **This is the ground
@@ -91,13 +98,37 @@ Reliability (`reliability`):
   confidence, one-sentence rationale)
 - `adjudicator` — the adjudicator's labels when the item was escalated, else null
 
+`flags` (from v2) — `{"phatic": bool}`. True for an already-labeled item
+that matches the `phatic` rule (§8.5). Such items keep their labels and stay
+in the dataset (leische U9); slice or drop them as an evaluation choice.
+
 `human_gold` — non-null only for the ~300-item stratified validation subset:
 the native-speaker labels, shipped ALONGSIDE (not replacing) the ensemble
-labels so leische can reproduce the human-vs-ensemble Cohen's kappa.
-**Gold rows are evaluation-only: never train on them.** The subset is
-stratified on `sarcastic × language × record_type × subreddit × split`, where
-split rows (base annotators disagreed on sarcasm, later decided by the
-adjudicator) are weighted ×2 (`review.gold_split_oversample`).
+labels. **Gold rows are evaluation-only: never train on them.**
+
+- `sarcastic`, `language`, `literal_sentiment`, `intended_sentiment`, `cues`
+  (same shape as `labels`), `notes`.
+- From v2: `sarcastic_span` (the sarcastic sentence(s) of the target, joined
+  by `\n`, or null), `unsure` (bool).
+- From v2: `first_pass` holds the reviewer's **blind first-pass** labels, in the
+  same shape as the fields above (minus `notes`). The top-level fields are
+  the latest save, which may be revised after the reviewer saw a
+  Claude-written suggestion (`assist_seen`). `first_pass` is null only for
+  rows saved before it was recorded; their top-level labels were saved blind.
+- From v2: `votes_seen` (bool) is true when the model votes were on screen at
+  the first save, so that first pass is not blind.
+
+**To reproduce the card's human-vs-ensemble κ**, use `first_pass` when it is
+non-null, else the top-level fields, and leave out `votes_seen` rows. The
+card's `gold_vs_ensemble_cohen_kappa`, `lid_vs_human_gold_language` and
+`uyam annotate eval-report` all follow this rule.
+
+Sampling: v1 stratified on `sarcastic × language × record_type × subreddit ×
+split`. The v2 redraw (2026-11-19) kept the 31 labeled items and drew the
+rest proportionally on `sarcastic × language × split × length band`
+(≤3 / 4–5 / 6+ sentences), from eligible, non-phatic items only. Split rows
+(the base annotators disagreed on sarcasm, and the adjudicator decided)
+are weighted ×2 (`review.gold_split_oversample`).
 
 Auxiliary signals (`aux`):
 
@@ -127,8 +158,10 @@ Auxiliary signals (`aux`):
    (`resolved_by = "adjudicator"`).
 4. Adjudications below the confidence floor (0.6) went to a human queue; human
    labels are final (`resolved_by = "human"`).
-5. A stratified ~300-item gold subset (sarcasm × language × record_type ×
-   subreddit) was labeled blind by the author (native Tagalog/English speaker).
+5. A stratified ~300-item gold subset (§2 `human_gold`) is labeled blind by
+   the author (native Tagalog/English speaker). From v2 it follows the
+   written guideline `docs/GUIDELINE.md`, and a Claude suggestion can be
+   shown only after the blind first pass is saved.
 
 Agreement statistics in `dataset_card.json`: per-label Fleiss' kappa over the
 three base annotators, Krippendorff's alpha (nominal, missing-tolerant),
@@ -202,6 +235,13 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
   hashed with the same key, so labeled Aug–Sep rows gain author history from
   the surrounding months without any re-annotation.
 - `label_distributions.is_text_only`, `sarcastic_per_label_resolution`.
+- From v2: `temporal_context_coverage.by_window` repeats the coverage for
+  48 h, 7 d, 30 d and unbounded history (the top-level keys stay the 48 h
+  thesis rule). `label_sets` compares `labels.sarcastic` with
+  `labels.sarcastic_majority`. `counts.phatic_flagged_rows` counts
+  `flags.phatic`. `corpus_dump_scope` (see §1).
+  `gold_vs_ensemble_cohen_kappa.n_excluded_votes_seen` counts the gold items
+  left out of the κ.
 
 ## 7. Recommended evaluation protocol
 
@@ -233,8 +273,9 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
    in it — were excluded at candidate selection (`dataset_card.json` →
    `counts.candidates` lists every exclusion reason and count;
    `counts.skipped_ineligible` counts annotated rows a later filter removed).
-   Phatic items the ensemble had voted sarcastic were not dropped but sent to
-   human review.
+   The rule excludes only items that were never labeled: an already-labeled
+   item that matches it keeps its labels and ships with `flags.phatic = true`
+   (leische U9; 120 rows in v2, none labeled sarcastic).
 6. Sarcasm class imbalance is expected; do not rebalance the test folds.
 7. Mixed collection sources (from v2): the Aug–Sep 2026 core was scraped live
    from Reddit (Shreddit), the rest of 2026-06-01 → 2026-11 comes from the
