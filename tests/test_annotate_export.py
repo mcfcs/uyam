@@ -122,9 +122,11 @@ def test_gold_sample_fills_review_queue(tmp_path: Path) -> None:
     with AnnotationDatabase(cfg.db_path) as db:
         queue = db.review_queue_items()
         assert len([q for q in queue if q["reason"] == "gold"]) == 3
-    # Deterministic under the same seed.
+    # Re-running tops up to the target only: a full queue gets nothing new.
     stats2 = sample_gold_subset(cfg, PROMPT_VERSION, size=3, seed=7)
-    assert stats2["sampled"] == 3
+    assert stats2["sampled"] == 0 and stats2["kept"] == 3
+    with AnnotationDatabase(cfg.db_path) as db:
+        assert len([q for q in db.review_queue_items() if q["reason"] == "gold"]) == 3
 
 
 def test_export_bundle_zip(tmp_path: Path) -> None:

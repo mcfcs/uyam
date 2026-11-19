@@ -89,10 +89,10 @@ def select(
     for reason, n in counts.items():
         table.add_row(reason, str(n))
     console.print(table)
-    if stats["phatic_to_review"]:
+    if stats["phatic_flagged"]:
         console.print(
-            f"{stats['phatic_to_review']} phatic items already voted sarcastic were kept "
-            "and sent to the low_confidence review queue"
+            f"{stats['phatic_flagged']} already-labeled phatic items kept and flagged "
+            f"(labels unchanged); {stats['phatic_excluded']} unlabeled ones excluded"
         )
 
 
@@ -274,18 +274,27 @@ def adjudicate(
 def gold_sample(
     size: int | None = typer.Option(None, help="Sample size (default: annotation.yaml gold_size)"),
     seed: int = typer.Option(7),
+    redraw: bool = typer.Option(
+        False,
+        "--redraw",
+        help="Replace the gold items nobody has labeled yet; labeled ones are always kept.",
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
-    """Draw the stratified human-validation gold subset into the review queue."""
+    """Fill the stratified human-validation gold subset up to gold_size."""
     configure_logging(log_level)
     cfg = load_annotation_config(config_path)
     from uyam.annotate.review import sample_gold_subset
 
-    stats = sample_gold_subset(cfg, cfg.prompt_version, size=size, seed=seed)
+    stats = sample_gold_subset(cfg, cfg.prompt_version, size=size, seed=seed, redraw=redraw)
+    if redraw:
+        console.print(f"Removed {stats['removed_unlabeled']} unlabeled gold items.")
     console.print(
-        f"[green]Gold sample[/green] {stats['sampled']} items across {stats['strata']} strata "
-        f"(population {stats['population']}) — label them in the Streamlit 'Annotation Review' tab"
+        f"[green]Gold sample[/green] +{stats['sampled']} items ({stats['kept']} already queued) "
+        f"across {stats['strata']} strata (population {stats['population']}); "
+        f"split votes {stats['split_sampled']}, length bands {stats['bands']}. "
+        "Label them in the Streamlit 'Annotation Review' tab."
     )
 
 

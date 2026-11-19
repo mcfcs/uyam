@@ -148,8 +148,8 @@ def run_pipeline(
             console.print(
                 f"eligible candidates: {db.eligible_count()}"
                 + (
-                    f" ({sel['phatic_to_review']} phatic-but-voted-sarcastic sent to review)"
-                    if sel["phatic_to_review"]
+                    f" ({sel['phatic_flagged']} labeled phatic items flagged, not dropped)"
+                    if sel["phatic_flagged"]
                     else ""
                 )
             )

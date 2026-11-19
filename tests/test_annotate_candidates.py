@@ -133,7 +133,7 @@ def _vote_sarcastic(db: AnnotationDatabase, fullname: str) -> None:
     )
 
 
-def test_phatic_items_excluded_unless_already_voted_sarcastic(tmp_path: Path) -> None:
+def test_phatic_items_excluded_unless_already_labeled(tmp_path: Path) -> None:
     cfg = make_config(tmp_path)
     write_raw_corpus(cfg.data_dir)
     _add_phatic_records(cfg)
@@ -148,11 +148,16 @@ def test_phatic_items_excluded_unless_already_voted_sarcastic(tmp_path: Path) ->
         }
         assert reasons["t1_hbd1"] == "phatic"
         assert db.candidate_counts()["phatic"] == 1
-        # The ensemble called hbd2 sarcastic: a human decides, the filter does not.
+        # U9: hbd2 already carries annotator votes, so it stays labeled and
+        # eligible (labels frozen) and is only flagged; nothing is queued.
         assert reasons["t1_hbd2"] is None
-        assert stats["phatic_to_review"] == 1
-        queued = {q["reddit_fullname"]: q["reason"] for q in db.review_queue_items()}
-        assert queued == {"t1_hbd2": "low_confidence"}
+        assert stats["phatic_flagged"] == 1 and stats["phatic_excluded"] == 1
+        flags = {
+            str(r["reddit_fullname"]): r["phatic"]
+            for r in db.conn.execute("SELECT reddit_fullname, phatic FROM candidates")
+        }
+        assert flags["t1_hbd2"] == 1 and flags["t1_hbd1"] == 1 and flags["t1_c3"] == 0
+        assert db.review_queue_items() == []
         # Ordinary eligibility is untouched.
         assert reasons["t1_c3"] is None
 

@@ -119,41 +119,44 @@ def _exclusion_reason(
     return None, norm
 
 
-def _has_sarcastic_vote(db: AnnotationDatabase, reddit_fullname: str) -> bool:
-    row = db.conn.execute(
-        """
-        SELECT 1 FROM llm_annotations
-        WHERE reddit_fullname = ? AND role = 'annotator' AND sarcastic = 1 LIMIT 1
-        """,
-        (reddit_fullname,),
-    ).fetchone()
-    return row is not None
-
-
 def select_candidates(
     db: AnnotationDatabase, filters: CandidateFiltersConfig
 ) -> dict[str, int]:
     """(Re)compute eligibility for every indexed record. Idempotent.
 
-    A phatic item that an annotator already voted sarcastic is not dropped:
-    it stays eligible and goes to the human low_confidence queue, so the
-    filter can never silently delete a positive the ensemble found.
+    Phatic items (U9, leische brief): an item that already carries annotator
+    votes stays eligible and is only *flagged* (candidates.phatic = 1), so
+    the labeled set and its labels never change when the filter changes.
+    Only not-yet-annotated phatic items are excluded (reason `phatic`).
+    Rows are streamed: the corpus is ~590k records.
     """
-    rows = db.conn.execute("SELECT * FROM corpus_index").fetchall()
-    stats = {"eligible": 0, "excluded": 0, "phatic_to_review": 0}
-    for row in rows:
-        record = dict(row)
-        reason, norm = _exclusion_reason(record, filters)
-        if reason == "phatic" and _has_sarcastic_vote(db, record["reddit_fullname"]):
-            reason = None
-            db.enqueue_review(record["reddit_fullname"], "low_confidence")
-            stats["phatic_to_review"] += 1
-        db.upsert_candidate(
-            record["reddit_fullname"],
-            eligible=reason is None,
-            exclusion_reason=reason,
-            text_norm=norm,
+    annotated = {
+        str(r[0])
+        for r in db.conn.execute(
+            "SELECT DISTINCT reddit_fullname FROM llm_annotations WHERE role = 'annotator'"
         )
-        stats["eligible" if reason is None else "excluded"] += 1
+    }
+    stats = {"eligible": 0, "excluded": 0, "phatic_flagged": 0, "phatic_excluded": 0}
+    reader = db.conn.cursor()
+    reader.execute("SELECT * FROM corpus_index")
+    while batch := reader.fetchmany(5000):
+        for row in batch:
+            record = dict(row)
+            fullname = record["reddit_fullname"]
+            reason, norm = _exclusion_reason(record, filters)
+            phatic = reason == "phatic"
+            if phatic and fullname in annotated:
+                reason = None
+                stats["phatic_flagged"] += 1
+            elif phatic:
+                stats["phatic_excluded"] += 1
+            db.upsert_candidate(
+                fullname,
+                eligible=reason is None,
+                exclusion_reason=reason,
+                text_norm=norm,
+                phatic=phatic,
+            )
+            stats["eligible" if reason is None else "excluded"] += 1
     db.commit()
     return stats

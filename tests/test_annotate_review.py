@@ -35,7 +35,8 @@ def _seed(tmp_path: Path):  # type: ignore[no-untyped-def]
             for key in ("a1", "a2", "a3"):
                 db.insert_llm_annotation(_ann(fullname, key, sarcastic=1))
         # ...and three 2-1 splits decided sarcastic by the adjudicator.
-        for fullname in ("t1_c4", "t1_c5", "t1_short1"):
+        # t3_sub1, not the too-short "ok": only eligible items can be drawn.
+        for fullname in ("t1_c4", "t1_c5", "t3_sub1"):
             db.insert_llm_annotation(_ann(fullname, "a1", sarcastic=1))
             db.insert_llm_annotation(_ann(fullname, "a2", sarcastic=1))
             db.insert_llm_annotation(_ann(fullname, "a3", sarcastic=0))
@@ -67,7 +68,7 @@ def test_gold_sample_oversamples_split_votes(tmp_path: Path) -> None:
         queued = {str(r["reddit_fullname"]) for r in db.review_queue_items()}
         db.conn.execute("DELETE FROM review_queue")
         db.commit()
-    assert {"t1_c4", "t1_c5", "t1_short1"} <= queued
+    assert {"t1_c4", "t1_c5", "t3_sub1"} <= queued
 
     flat = sample_gold_subset(cfg, PROMPT_VERSION, size=4, split_oversample=1.0)
     assert flat["sampled"] == 4
@@ -81,3 +82,44 @@ def test_gold_sample_default_weight_comes_from_config(tmp_path: Path) -> None:
     assert stats["sampled"] == 6
     assert stats["split_sampled"] == 3
     assert stats["strata"] == 2
+
+
+def test_allocate_is_exact_and_capped() -> None:
+    from uyam.annotate.review import _allocate
+
+    sizes = {("a",): 50, ("b",): 30, ("c",): 2}
+    weights = {k: float(v) for k, v in sizes.items()}
+    quota = _allocate(weights, sizes, 41)
+    assert sum(quota.values()) == 41
+    assert quota[("c",)] <= 2
+    assert quota[("a",)] > quota[("b",)] > quota[("c",)]
+    # A stratum smaller than its share is capped; the rest goes elsewhere.
+    tiny = _allocate({("x",): 100.0, ("y",): 1.0}, {("x",): 3, ("y",): 10}, 8)
+    assert tiny == {("x",): 3, ("y",): 5}
+
+
+def test_redraw_keeps_labeled_gold_and_skips_phatic_and_ineligible(tmp_path: Path) -> None:
+    cfg = _seed(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        # c1 was labeled by the human; c2 is a labeled-but-phatic item (flagged).
+        db.enqueue_review("t1_c1", "gold")
+        db.upsert_human_review({"reddit_fullname": "t1_c1", "sarcastic": 1, "is_gold": 1})
+        db.enqueue_review("t1_c3", "gold")  # queued, never labeled
+        db.conn.execute("UPDATE candidates SET phatic = 1 WHERE reddit_fullname = 't1_c2'")
+        db.commit()
+
+    stats = sample_gold_subset(cfg, PROMPT_VERSION, size=4, redraw=True)
+
+    assert stats["removed_unlabeled"] == 1  # t1_c3 dropped from the queue...
+    assert stats["kept"] == 1  # ...t1_c1 (labeled) kept
+    with AnnotationDatabase(cfg.db_path) as db:
+        gold = {q["reddit_fullname"]: q["completed"] for q in db.review_queue_items(
+            only_pending=False) if q["reason"] == "gold"}
+    assert gold["t1_c1"] == 1
+    assert len(gold) == 4
+    assert "t1_c2" not in gold  # phatic-flagged: never drawn
+    assert "t1_short1" not in gold  # ineligible: never drawn
+    assert sum(stats["bands"].values()) == stats["sampled"] == 3
+
+    again = sample_gold_subset(cfg, PROMPT_VERSION, size=4)
+    assert again["sampled"] == 0  # the queue is full: nothing added
