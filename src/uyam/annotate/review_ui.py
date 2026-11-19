@@ -133,8 +133,11 @@ def _label_form(
         ticked = [
             st.checkbox(
                 sentence,
-                # A one-sentence target is its own span; when revising, re-tick the saved span.
-                value=(sentence in saved_span) if defaults else len(sentences) == 1,
+                # A one-sentence target is its own span (GUIDELINE T2); when revising a
+                # sarcastic label, re-tick the saved span.
+                value=(sentence in saved_span)
+                if d.get("sarcastic")
+                else len(sentences) == 1,
                 key=f"{prefix}_span_{i}",
             )
             for i, sentence in enumerate(sentences)
@@ -375,11 +378,14 @@ def render_review_tab(config_path: Path | None = None) -> None:
         _render_context(st, db, fullname)
 
         show_votes = reason == "low_confidence" or st.checkbox(
-            "Reveal model votes (breaks blindness for this item)",
+            "Reveal model votes (breaks blindness: an unsaved item then leaves the gold κ)",
             value=False,
             key=f"votes_{fullname}",
         )
+        votes_seen_key = f"votes_seen_{fullname}"
         if show_votes:
+            # Sticky for the session: unticking the box doesn't make it blind again.
+            st.session_state[votes_seen_key] = True
             agg = db.get_aggregate(fullname)
             if agg:
                 st.json(
@@ -413,7 +419,12 @@ def render_review_tab(config_path: Path | None = None) -> None:
             if submitted:
                 db.upsert_human_review(
                     build_review_row(
-                        fullname, labels, notes=notes, is_gold=reason == "gold", existing=existing
+                        fullname,
+                        labels,
+                        notes=notes,
+                        is_gold=reason == "gold",
+                        existing=existing,
+                        votes_seen=bool(st.session_state.get(votes_seen_key)),
                     )
                 )
                 st.session_state[active_key] = fullname

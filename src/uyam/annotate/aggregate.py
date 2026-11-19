@@ -296,10 +296,9 @@ def _krippendorff_alpha(matrix: list[list[str | None]], codes: dict[str, int]) -
 def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
     """Cohen's kappa: human gold labels vs the ensemble finals, per label.
 
-    Uses the reviewer's blind first pass (first_pass_json) when it is stored,
-    so a revision made after revealing the assist suggestion never inflates
-    the agreement. Rows saved before that column existed fall back to the
-    stored labels, which were saved blind.
+    Uses the reviewer's blind first pass (db.blind_gold_labels), so a revision
+    made after revealing the assist suggestion never inflates the agreement,
+    and leaves out items whose model votes were revealed before the first save.
     """
     pairs: dict[str, tuple[list[str], list[str]]] = {
         "sarcastic": ([], []),
@@ -314,22 +313,19 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
         "intended_sentiment": "intended_final",
     }
     n = 0
-    for human in db.all_human_reviews():
-        if not human.get("is_gold"):
-            continue
-        agg = db.get_aggregate(str(human["reddit_fullname"]))
+    gold, n_votes_seen = db.blind_gold_labels()
+    for fullname, labels in gold.items():
+        agg = db.get_aggregate(fullname)
         if agg is None:
             continue
         n += 1
-        first_pass = human.get("first_pass_json")
-        labels: dict[str, Any] = json.loads(str(first_pass)) if first_pass else human
         for label, (h_list, e_list) in pairs.items():
             h_val, e_val = labels.get(label), agg.get(agg_col[label])
             if h_val is not None and e_val is not None:
                 h_list.append(str(h_val))
                 e_list.append(str(e_val))
 
-    result: dict[str, Any] = {"n_gold_items": n}
+    result: dict[str, Any] = {"n_gold_items": n, "n_excluded_votes_seen": n_votes_seen}
     try:
         from sklearn.metrics import cohen_kappa_score
 
@@ -360,18 +356,22 @@ def _lid_agreement(db: AnnotationDatabase) -> dict[str, Any]:
 
 
 def _lid_vs_human_gold(db: AnnotationDatabase) -> dict[str, Any]:
-    """Thesis §3.2.1: accuracy of the automatic LID step against the manual labels."""
-    rows = db.conn.execute(
-        """
-        SELECT h.language AS human, l.language AS lid
-        FROM human_reviews h JOIN lid_results l ON l.reddit_fullname = h.reddit_fullname
-        WHERE h.is_gold = 1 AND h.language IS NOT NULL
-        """
-    ).fetchall()
-    if not rows:
+    """Thesis §3.2.1: accuracy of the automatic LID step against the manual labels
+    (the blind first pass, like the gold kappa)."""
+    gold, _ = db.blind_gold_labels()
+    pairs: list[tuple[str, str]] = []
+    for fullname, labels in gold.items():
+        if labels.get("language") is None:
+            continue
+        lid = db.conn.execute(
+            "SELECT language FROM lid_results WHERE reddit_fullname = ?", (fullname,)
+        ).fetchone()
+        if lid is not None:
+            pairs.append((str(labels["language"]), str(lid["language"])))
+    if not pairs:
         return {"n": 0, "accuracy": None}
-    agree = sum(1 for r in rows if str(r["human"]) == str(r["lid"]))
-    return {"n": len(rows), "accuracy": round(agree / len(rows), 4)}
+    agree = sum(1 for human, lid in pairs if human == lid)
+    return {"n": len(pairs), "accuracy": round(agree / len(pairs), 4)}
 
 
 def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, Any]:

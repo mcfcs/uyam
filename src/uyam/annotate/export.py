@@ -105,6 +105,19 @@ def majority_label(
     return yes > no, share
 
 
+def _human_labels(labels: dict[str, Any]) -> dict[str, Any]:
+    """A human_reviews row (or a first_pass_json dict) in the export's label shape."""
+    return {
+        "sarcastic": None if labels.get("sarcastic") is None else bool(labels["sarcastic"]),
+        "language": labels.get("language"),
+        "literal_sentiment": labels.get("literal_sentiment"),
+        "intended_sentiment": labels.get("intended_sentiment"),
+        "cues": {name: bool(labels.get(col) or 0) for name, col in _CUE_COLS.items()},
+        "sarcastic_span": labels.get("sarcastic_span"),
+        "unsure": bool(labels.get("unsure") or 0),
+    }
+
+
 def _phatic_flag(db: AnnotationDatabase, fullname: str) -> bool:
     row = db.conn.execute(
         "SELECT phatic FROM candidates WHERE reddit_fullname = ?", (fullname,)
@@ -149,7 +162,7 @@ def build_export_row(
     first_pass: Any = None
     if human is not None and human.get("first_pass_json"):
         try:
-            first_pass = json.loads(str(human["first_pass_json"]))
+            first_pass = _human_labels(json.loads(str(human["first_pass_json"])))
         except ValueError:
             first_pass = None
 
@@ -195,19 +208,16 @@ def build_export_row(
         },
         "human_gold": (
             {
-                "sarcastic": None if human.get("sarcastic") is None else bool(human["sarcastic"]),
-                "language": human.get("language"),
-                "literal_sentiment": human.get("literal_sentiment"),
-                "intended_sentiment": human.get("intended_sentiment"),
-                "cues": {name: bool(human.get(col) or 0) for name, col in _CUE_COLS.items()},
+                **_human_labels(human),
                 "notes": human.get("notes"),
-                # The sarcastic sentence(s), an "unsure" mark, and the blind
-                # first-pass labels (kappa uses these) if the reviewer later
-                # revised after revealing the assist suggestion.
-                "sarcastic_span": human.get("sarcastic_span"),
-                "unsure": bool(human.get("unsure") or 0),
+                # The blind first pass, same shape as the labels above; the
+                # card's gold kappa uses it (null: rows saved before it was
+                # recorded, whose labels above were saved blind).
                 "first_pass": first_pass,
                 "assist_seen": bool(human.get("assist_seen") or 0),
+                # Model votes were on screen at the first save: not blind,
+                # left out of the gold kappa.
+                "votes_seen": bool(human.get("votes_seen") or 0),
             }
             if human is not None and human.get("is_gold")
             else None

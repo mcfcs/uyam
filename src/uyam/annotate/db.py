@@ -238,11 +238,16 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # Gold-review upgrades: the sarcastic sentence(s), an "unsure" mark, the
     # blind first-pass labels kept when a reviewer revises after seeing the
     # assist suggestion, and whether that suggestion was revealed.
+    # votes_seen: the model votes were revealed before the first save, so the
+    # first pass is not blind. first_reviewed_at: when the first pass was saved
+    # (reviewed_at moves on every revision).
     "human_reviews": (
         ("sarcastic_span", "TEXT"),
         ("unsure", "INTEGER DEFAULT 0"),
         ("first_pass_json", "TEXT"),
         ("assist_seen", "INTEGER DEFAULT 0"),
+        ("votes_seen", "INTEGER DEFAULT 0"),
+        ("first_reviewed_at", "TEXT"),
     ),
 }
 
@@ -253,7 +258,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         existing = {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
         for name, decl in columns:
             if name not in existing:
-                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                try:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+                except sqlite3.OperationalError as exc:
+                    # Another process opening the same DB added it first.
+                    if "duplicate column" not in str(exc).lower():
+                        raise
 
 
 def _utc_now_iso() -> str:
@@ -890,12 +900,14 @@ class AnnotationDatabase:
             "cue_contextual_incongruity", "cue_hyperbole",
             "notes", "is_gold",
             "sarcastic_span", "unsure", "first_pass_json", "assist_seen",
+            "votes_seen",
         )
-        placeholders = ", ".join("?" for _ in cols) + ", ?"
+        now = _utc_now_iso()
+        placeholders = ", ".join("?" for _ in cols) + ", ?, ?"
         self._conn.execute(
-            f"INSERT OR REPLACE INTO human_reviews ({', '.join(cols)}, reviewed_at) "
-            f"VALUES ({placeholders})",
-            tuple(row.get(c) for c in cols) + (_utc_now_iso(),),
+            f"INSERT OR REPLACE INTO human_reviews ({', '.join(cols)}, "
+            f"first_reviewed_at, reviewed_at) VALUES ({placeholders})",
+            tuple(row.get(c) for c in cols) + (row.get("first_reviewed_at") or now, now),
         )
         self._conn.execute(
             "UPDATE review_queue SET completed = 1 WHERE reddit_fullname = ?",
@@ -912,6 +924,26 @@ class AnnotationDatabase:
     def all_human_reviews(self) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM human_reviews").fetchall()
         return [dict(r) for r in rows]
+
+    def blind_gold_labels(self) -> tuple[dict[str, dict[str, Any]], int]:
+        """The gold labels every human-vs-model score must use.
+
+        Per gold item: the blind first pass (first_pass_json) when stored, else
+        the stored labels (rows saved before that column existed were saved
+        blind). Items whose model votes were revealed before the first save
+        (votes_seen) are left out. Returns (labels by fullname, n left out).
+        """
+        labels: dict[str, dict[str, Any]] = {}
+        n_votes_seen = 0
+        for human in self.all_human_reviews():
+            if not human.get("is_gold"):
+                continue
+            if human.get("votes_seen"):
+                n_votes_seen += 1
+                continue
+            raw = human.get("first_pass_json")
+            labels[str(human["reddit_fullname"])] = json.loads(str(raw)) if raw else human
+        return labels, n_votes_seen
 
     def enqueue_review(self, reddit_fullname: str, reason: str) -> None:
         self._conn.execute(

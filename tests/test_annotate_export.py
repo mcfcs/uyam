@@ -203,10 +203,51 @@ def _rows(path: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()]
 
 
+def _run_pipeline_with(tmp_path: Path, extra: list[dict[str, Any]]) -> Any:
+    """_run_pipeline plus extra raw records (written before indexing)."""
+    cfg = make_config(tmp_path)
+    write_raw_corpus(cfg.data_dir)
+    out = cfg.data_dir / "raw" / "CasualPH" / "2026-08-19.jsonl"
+    out.write_text("".join(json.dumps(r) + "\n" for r in extra), encoding="utf-8")
+    with AnnotationDatabase(cfg.db_path) as db:
+        index_corpus(db, cfg.data_dir)
+        select_candidates(db, cfg.candidate_filters)
+    for key in ("a1", "a2", "a3"):
+        run_annotator(cfg, key, client_factory=lambda c, a: FakeClient())
+    run_aggregation(cfg, PROMPT_VERSION)
+    return cfg
+
+
 def test_export_ships_majority_flags_and_review_fields(tmp_path: Path) -> None:
     cfg = _run_pipeline(tmp_path)
     with AnnotationDatabase(cfg.db_path) as db:
         db.conn.execute("UPDATE candidates SET phatic = 1 WHERE reddit_fullname = 't1_c2'")
+        # t1_c1: annotators vote 2-1 sarcastic, the adjudicator ships "no".
+        # t1_c2: unanimous sarcastic, shipped "yes". Everything else: 3-0 "no".
+        db.conn.execute(
+            "UPDATE llm_annotations SET sarcastic = 1 WHERE role = 'annotator' AND "
+            "((reddit_fullname = 't1_c1' AND model_key IN ('a1', 'a2')) "
+            "OR reddit_fullname = 't1_c2')"
+        )
+        db.conn.execute(
+            "UPDATE aggregates SET sarcastic_final = 0, resolved_by = 'adjudicator' "
+            "WHERE reddit_fullname = 't1_c1'"
+        )
+        db.conn.execute(
+            "UPDATE aggregates SET sarcastic_final = 1 WHERE reddit_fullname = 't1_c2'"
+        )
+        first_pass = {
+            "sarcastic": 0,
+            "language": "taglish",
+            "literal_sentiment": "neutral",
+            "intended_sentiment": "neutral",
+            "cue_polarity_inversion": 0,
+            "cue_rhetorical_intent": 1,
+            "cue_contextual_incongruity": 0,
+            "cue_hyperbole": 0,
+            "sarcastic_span": None,
+            "unsure": 0,
+        }
         db.upsert_human_review(
             {
                 "reddit_fullname": "t1_c1",
@@ -214,76 +255,123 @@ def test_export_ships_majority_flags_and_review_fields(tmp_path: Path) -> None:
                 "is_gold": 1,
                 "sarcastic_span": "Ang galing mo naman",
                 "unsure": 1,
-                "first_pass_json": json.dumps({"sarcastic": 0}),
+                "first_pass_json": json.dumps(first_pass),
                 "assist_seen": 1,
+                "votes_seen": 1,
             }
         )
         db.commit()
     result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
     rows = {r["reddit_fullname"]: r for r in _rows(result["jsonl"])}
 
-    # FakeClient: three unanimous "not sarcastic" votes on every item.
     c1 = rows["t1_c1"]
-    assert c1["labels"]["sarcastic_majority"] is False
-    assert c1["labels"]["sarcasm_vote_share"] == 0.0
+    assert c1["labels"]["sarcastic"] is False
+    assert c1["labels"]["sarcastic_majority"] is True
+    assert c1["labels"]["sarcasm_vote_share"] == 0.6667
+    assert rows["t1_c2"]["labels"]["sarcastic_majority"] is True
+    assert rows["t1_c3"]["labels"]["sarcastic_majority"] is False
     assert rows["t1_c2"]["flags"] == {"phatic": True}
     assert c1["flags"] == {"phatic": False}
     gold = c1["human_gold"]
-    assert gold["sarcastic_span"] == "Ang galing mo naman"
-    assert gold["unsure"] is True and gold["assist_seen"] is True
-    assert gold["first_pass"] == {"sarcastic": 0}
+    assert gold["sarcastic"] is True and gold["sarcastic_span"] == "Ang galing mo naman"
+    assert gold["unsure"] is True and gold["assist_seen"] is True and gold["votes_seen"] is True
+    # first_pass has the same shape as the top-level human labels (bools, cues dict).
+    assert gold["first_pass"] == {
+        "sarcastic": False,
+        "language": "taglish",
+        "literal_sentiment": "neutral",
+        "intended_sentiment": "neutral",
+        "cues": {
+            "polarity_inversion": False,
+            "rhetorical_intent": True,
+            "contextual_incongruity": False,
+            "hyperbole": False,
+        },
+        "sarcastic_span": None,
+        "unsure": False,
+    }
+    extra_keys = {"notes", "first_pass", "assist_seen", "votes_seen"}
+    assert set(gold) == set(gold["first_pass"]) | extra_keys
 
     card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))
     assert card["counts"]["phatic_flagged_rows"] == 1
     sets = card["label_sets"]
-    assert sets["n"] == len(rows) and sets["rows_that_differ"] == 0
-    assert sets["cohen_kappa_shipped_vs_majority"] is None  # single class: undefined
+    n = len(rows)
+    assert sets["n"] == n and sets["rows_that_differ"] == 1
+    assert (sets["shipped_positives"], sets["majority_positives"]) == (1, 2)
+    p_o = (n - 1) / n
+    p_e = (1 / n) * (2 / n) + (1 - 1 / n) * (1 - 2 / n)
+    assert sets["cohen_kappa_shipped_vs_majority"] == round((p_o - p_e) / (1 - p_e), 4)
     cov = card["temporal_context_coverage"]
     assert set(cov["by_window"]) == {"48h", "7d", "30d", "unbounded"}
     assert cov["share_with_at_least_1"] == cov["by_window"]["48h"]["share_with_at_least_1"]
+    # votes_seen keeps t1_c1 out of the blind gold kappa.
+    gold_kappa = card["agreement"]["gold_vs_ensemble_cohen_kappa"]
+    assert gold_kappa["n_gold_items"] == 0 and gold_kappa["n_excluded_votes_seen"] == 1
 
 
 def test_corpus_dump_scope(tmp_path: Path) -> None:
-    cfg = _run_pipeline(tmp_path)
+    import pytest
+
+    from tests.annotate_fixtures import _comment
+
+    # Too short to be a candidate, so never exported: one by a labeled author
+    # (the author of t1_c1), one by an author with no exported row.
+    same_author = _comment("old1", "sub1", "t3_sub1", 0, body="ok", author_hash="hash_c1")
+    stranger = _comment("old2", "sub1", "t3_sub1", 0, body="ok", author_hash="hash_nobody")
+    cfg = _run_pipeline_with(tmp_path, [same_author, stranger])
     labeled = run_export(cfg, PROMPT_VERSION, dataset_version="va", formats=("jsonl",))
     everything = run_export(
         cfg, PROMPT_VERSION, dataset_version="vb", formats=("jsonl",), corpus_scope="all"
     )
     with AnnotationDatabase(cfg.db_path) as db:
         total = db.corpus_counts()["total"]
-        authors = {
-            str(r["author_hash"])
-            for r in _rows(labeled["jsonl"])
-            if r.get("author_hash")
-        }
-    assert everything["corpus_rows"] == total
-    dumped = _rows(labeled["corpus"])
-    assert labeled["corpus_rows"] == len(dumped) <= total
     exported = {r["reddit_fullname"] for r in _rows(labeled["jsonl"])}
-    for rec in dumped:
-        assert rec["reddit_fullname"] in exported or rec["author_hash"] in authors
-    assert exported <= {rec["reddit_fullname"] for rec in dumped}
+    assert "t1_c1" in exported and not {"t1_old1", "t1_old2"} & exported
+
+    dumped = {r["reddit_fullname"] for r in _rows(labeled["corpus"])}
+    assert labeled["corpus_rows"] == len(dumped)
+    assert exported <= dumped
+    assert "t1_old1" in dumped  # history of a labeled author
+    assert "t1_old2" not in dumped  # nobody labeled wrote it
+    assert everything["corpus_rows"] == total
+    assert {"t1_old1", "t1_old2"} <= {r["reddit_fullname"] for r in _rows(everything["corpus"])}
+
     # dataset_card.json is the latest export; each version keeps its own copy.
     card = json.loads(Path(labeled["card_versioned"]).read_text(encoding="utf-8"))
     assert card["corpus_dump_scope"] == "labeled_authors"
     latest = json.loads(Path(everything["card"]).read_text(encoding="utf-8"))
     assert latest["dataset_version"] == "vb" and latest["corpus_dump_scope"] == "all"
-    import pytest
-
     with pytest.raises(ValueError):
         run_export(cfg, PROMPT_VERSION, dataset_version="vc", corpus_scope="some")
 
 
-def test_coverage_windows_widen_monotonically(tmp_path: Path) -> None:
+def test_coverage_by_window_counts_exact_history(tmp_path: Path) -> None:
+    from tests.annotate_fixtures import _comment
     from uyam.annotate.export import temporal_context_coverage
 
-    cfg = _run_pipeline(tmp_path)
+    # One earlier post per target author, at a different distance each:
+    # c1 (11:00) 2 h before, c2 (11:01) 3 d, c3 (11:02) 20 d, c4 (11:05) 60 d.
+    history = [
+        _comment("h1", "sub1", "t3_sub1", 0, author_hash="hash_c1",
+                 created_utc="2026-08-20T09:00:00Z"),
+        _comment("h2", "sub1", "t3_sub1", 0, author_hash="hash_c2",
+                 created_utc="2026-08-17T11:01:00Z"),
+        _comment("h3", "sub1", "t3_sub1", 0, author_hash="hash_c3",
+                 created_utc="2026-07-31T11:02:00Z"),
+        _comment("h4", "sub1", "t3_sub1", 0, author_hash="hash_c4",
+                 created_utc="2026-06-21T11:05:00Z"),
+    ]
+    cfg = make_config(tmp_path)
+    write_raw_corpus(cfg.data_dir)
+    out = cfg.data_dir / "raw" / "CasualPH" / "2026-06-21.jsonl"
+    out.write_text("".join(json.dumps(r) + "\n" for r in history), encoding="utf-8")
     with AnnotationDatabase(cfg.db_path) as db:
-        fullnames = [str(r["reddit_fullname"]) for r in db.all_aggregates(PROMPT_VERSION)]
-        cov = temporal_context_coverage(db, fullnames)
-    windows = ("48h", "7d", "30d", "unbounded")
-    shares = [cov["by_window"][w]["share_with_at_least_1"] for w in windows]
-    assert shares == sorted(shares)
+        index_corpus(db, cfg.data_dir)
+        cov = temporal_context_coverage(db, ["t1_c1", "t1_c2", "t1_c3", "t1_c4"])
+    shares = {w: cov["by_window"][w]["share_with_at_least_1"] for w in cov["by_window"]}
+    assert shares == {"48h": 0.25, "7d": 0.5, "30d": 0.75, "unbounded": 1.0}
+    assert cov["share_with_at_least_1"] == 0.25  # the thesis rule is the 48 h window
 
 
 def test_single_class_gold_gives_null_kappa_and_strict_json(tmp_path: Path) -> None:

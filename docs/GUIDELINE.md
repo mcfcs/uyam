@@ -414,8 +414,8 @@ example `H3 ironic self-dep` or `H9 50/50`). That one line is what makes the
 labels auditable later.
 
 **6.3 Blind first.** On gold items, don't tick "Reveal model votes" before
-saving. Doing so breaks blindness for that item, and if it happens, say so in
-`notes`.
+saving. If you do, the app records it (`votes_seen`), and that item is left
+out of the gold κ.
 
 **6.4 The assist flow.**
 
@@ -424,15 +424,18 @@ saving. Doing so breaks blindness for that item, and if it happens, say so in
    (`assist_suggestions`: label, span, rationale, confidence).
 3. You may revise. If you do, the app keeps your first-pass labels in
    `first_pass_json` and sets `assist_seen = 1`.
-4. **Gold κ (human vs ensemble, overall and per cue) uses the first-pass
-   label.** Post-assist labels are reported separately and are never the
-   headline number.
+4. **Gold κ (human vs ensemble, for sarcasm, language and both
+   sentiments) uses the first-pass label**, and so do `eval-report` and the
+   LID accuracy. Post-assist labels are reported separately and are never
+   the headline number. A correction you make before revealing anything is
+   saved as your label, but the first pass stays as first saved.
 
 *Implementation status (2026-11-19): all of this is in the Annotation Review
 tab (commit 2469da3). It has sentence checkboxes for the span, an "Unsure"
 checkbox, and a "Show Claude's take" button that appears only after the first
 save. The gold κ in the dataset card reads `first_pass_json`, and the export
-ships `human_gold.first_pass`, `sarcastic_span`, `unsure` and `assist_seen`.*
+ships `human_gold.first_pass`, `sarcastic_span`, `unsure`, `assist_seen` and
+`votes_seen`.*
 
 **6.5 Rules for the assist agent.** The agent:
 

@@ -87,6 +87,7 @@ def build_review_row(
     notes: str | None,
     is_gold: bool,
     existing: dict[str, Any] | None,
+    votes_seen: bool = False,
 ) -> dict[str, Any]:
     """The human_reviews row to upsert for a save of ``labels``.
 
@@ -97,13 +98,22 @@ def build_review_row(
     - existing legacy row without it (labeled before this column existed):
       its stored labels were the blind first pass, so snapshot those, never
       the revised ones
+
+    ``votes_seen`` (the model votes were on screen at save time) is recorded
+    only on the first save, where it marks the first pass as not blind; later
+    saves keep the stored flag. first_reviewed_at is carried forward the same
+    way (upsert_human_review stamps it on the first save).
     """
     if existing is None:
         first_pass = labels_json(labels)
         assist_seen = 0
+        seen_votes = int(votes_seen)
+        first_reviewed_at = None
     else:
         first_pass = existing.get("first_pass_json") or labels_json(existing)
         assist_seen = int(existing.get("assist_seen") or 0)
+        seen_votes = int(existing.get("votes_seen") or 0)
+        first_reviewed_at = existing.get("first_reviewed_at") or existing.get("reviewed_at")
     return {
         "reddit_fullname": fullname,
         **{k: labels.get(k) for k in LABEL_KEYS},
@@ -111,6 +121,8 @@ def build_review_row(
         "is_gold": int(is_gold),
         "first_pass_json": first_pass,
         "assist_seen": assist_seen,
+        "votes_seen": seen_votes,
+        "first_reviewed_at": first_reviewed_at,
     }
 
 

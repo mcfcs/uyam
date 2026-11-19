@@ -355,15 +355,15 @@ def _score(source: str, kind: str, gold: dict[str, int], votes: dict[str, int]) 
 def build_eval_report(cfg: AnnotationConfig, prompt_version: str) -> dict[str, Any]:
     """Sarcasm scores vs the human gold labels, plus evaluator-vs-shipped agreement.
 
-    Read-only. Gold = human_reviews with is_gold = 1 and a sarcasm label.
+    Read-only. Gold = the blind first-pass sarcasm labels of the gold items
+    (db.blind_gold_labels), the same labels the card's gold kappa uses.
     """
     with AnnotationDatabase(cfg.db_path) as db:
+        blind, _ = db.blind_gold_labels()
         gold = {
-            str(r["reddit_fullname"]): int(r["sarcastic"])
-            for r in db.conn.execute(
-                "SELECT reddit_fullname, sarcastic FROM human_reviews "
-                "WHERE is_gold = 1 AND sarcastic IS NOT NULL"
-            )
+            fullname: int(labels["sarcastic"])
+            for fullname, labels in blind.items()
+            if labels.get("sarcastic") is not None
         }
         base: dict[str, dict[str, int]] = defaultdict(dict)
         for r in db.conn.execute(

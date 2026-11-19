@@ -344,3 +344,123 @@ def test_gold_kappa_uses_the_blind_first_pass(tmp_path: Path) -> None:
         result = _gold_cohen_kappa(db)
     assert result["n_gold_items"] == 2
     assert result["sarcastic"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# votes_seen, first_reviewed_at, and every gold score on the blind first pass
+# ---------------------------------------------------------------------------
+
+
+def test_build_review_row_records_votes_seen_only_on_the_first_save() -> None:
+    first = dict.fromkeys(LABEL_KEYS) | {"sarcastic": 0}
+    row = build_review_row("t1_x", first, notes=None, is_gold=True, existing=None, votes_seen=True)
+    assert row["votes_seen"] == 1 and row["first_reviewed_at"] is None
+
+    stored = row | {"reviewed_at": "2026-11-19T01:00:00+00:00"}
+    again = build_review_row("t1_x", first, notes=None, is_gold=True, existing=stored)
+    # Revising can neither clear nor set it, and the first-save time carries forward.
+    assert again["votes_seen"] == 1
+    assert again["first_reviewed_at"] == "2026-11-19T01:00:00+00:00"
+    blind = build_review_row(
+        "t1_x", first, notes=None, is_gold=True, existing=stored | {"votes_seen": 0},
+        votes_seen=True,
+    )
+    assert blind["votes_seen"] == 0
+
+
+def test_first_reviewed_at_survives_revisions(tmp_path: Path) -> None:
+    _, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    with AnnotationDatabase(db_path) as db:
+        labels = dict.fromkeys(LABEL_KEYS) | {"sarcastic": 0}
+        db.upsert_human_review(
+            build_review_row("t1_c3", labels, notes=None, is_gold=True, existing=None)
+        )
+        first = db.get_human_review("t1_c3")
+        assert first is not None and first["first_reviewed_at"] == first["reviewed_at"]
+        db.conn.execute(
+            "UPDATE human_reviews SET first_reviewed_at = '2026-01-01T00:00:00+00:00', "
+            "reviewed_at = '2026-01-01T00:00:00+00:00'"
+        )
+        existing = db.get_human_review("t1_c3")
+        db.upsert_human_review(
+            build_review_row(
+                "t1_c3", labels | {"sarcastic": 1}, notes=None, is_gold=True, existing=existing
+            )
+        )
+        revised = db.get_human_review("t1_c3")
+    assert revised is not None
+    assert revised["first_reviewed_at"] == "2026-01-01T00:00:00+00:00"
+    assert revised["reviewed_at"] != "2026-01-01T00:00:00+00:00"
+
+
+def test_revealing_votes_before_the_first_save_is_recorded(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold", "t1_c2": "gold"}, assists=())
+    head, other = "t1_c2", "t1_c3"  # the queue is served in fullname order
+    with AnnotationDatabase(db_path) as db:
+        db.upsert_aggregate(
+            {"reddit_fullname": head, "prompt_version": PROMPT_VERSION,
+             "sarcasm_votes": "0-3", "votes_json": "{}"}
+        )
+        db.commit()
+    at = _app(config_yaml)
+    # Tick, then untick: the votes were seen, so the first pass is not blind.
+    at.checkbox(key=f"votes_{head}").check().run()
+    assert at.json  # the votes rendered
+    at.checkbox(key=f"votes_{head}").uncheck().run()
+    _save(at)
+    row = _review(db_path, head)
+    assert row is not None and row["votes_seen"] == 1
+
+    at.button(key=f"next_{head}").click().run()
+    _save(at)
+    blind_row = _review(db_path, other)
+    assert blind_row is not None and blind_row["votes_seen"] == 0
+    with AnnotationDatabase(db_path) as db:
+        labels, n_votes_seen = db.blind_gold_labels()
+    assert set(labels) == {other} and n_votes_seen == 1
+
+
+def test_revising_one_sentence_no_to_yes_ticks_the_sentence(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    at = _app(config_yaml)
+    _save(at)  # defaults: sarcastic = no -> span NULL
+    at.button(key="revise_btn_t1_c3").click().run()
+    assert at.checkbox(key="revise_t1_c3_span_0").value is True  # GUIDELINE T2
+    at.radio(key="revise_t1_c3_sarcastic").set_value("yes")
+    _save(at)
+    row = _review(db_path, "t1_c3")
+    assert row is not None
+    assert row["sarcastic_span"] == "Wow ang galing naman ng serbisyo nila dito."
+
+
+def test_eval_report_and_lid_accuracy_use_the_blind_first_pass(tmp_path: Path) -> None:
+    from uyam.annotate.aggregate import _lid_vs_human_gold
+    from uyam.annotate.config import load_annotation_config
+    from uyam.annotate.evaluation import build_eval_report
+
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold", "t1_c4": "gold"}, assists=())
+    with AnnotationDatabase(db_path) as db:
+        for fullname, value in (("t1_c3", 1), ("t1_c4", 0)):
+            db.upsert_aggregate(
+                {"reddit_fullname": fullname, "prompt_version": PROMPT_VERSION,
+                 "sarcastic_final": value}
+            )
+            db.upsert_lid(fullname, {"language": "taglish"})
+            # Blind first pass: matches the shipped label and the LID language.
+            first = dict.fromkeys(LABEL_KEYS) | {"sarcastic": value, "language": "taglish"}
+            db.upsert_human_review(
+                build_review_row(fullname, first, notes=None, is_gold=True, existing=None)
+            )
+            existing = db.get_human_review(fullname)
+            # The post-assist revision disagrees on everything.
+            revised = first | {"sarcastic": 1 - value, "language": "english"}
+            db.upsert_human_review(
+                build_review_row(fullname, revised, notes=None, is_gold=True, existing=existing)
+            )
+        db.commit()
+        lid = _lid_vs_human_gold(db)
+    assert lid == {"n": 2, "accuracy": 1.0}
+
+    report = build_eval_report(load_annotation_config(config_yaml), PROMPT_VERSION)
+    [shipped] = [r for r in report["vs_human"] if r["kind"] == "final"]
+    assert shipped["n"] == 2 and shipped["accuracy"] == 1.0

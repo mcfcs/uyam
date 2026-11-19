@@ -42,9 +42,14 @@ def test_old_database_gains_new_columns_and_tables(tmp_path: Path) -> None:
         AnnotationDatabase(db_path).close()
 
     assert "phatic" in _columns(db_path, "candidates")
-    assert {"sarcastic_span", "unsure", "first_pass_json", "assist_seen"} <= _columns(
-        db_path, "human_reviews"
-    )
+    assert {
+        "sarcastic_span",
+        "unsure",
+        "first_pass_json",
+        "assist_seen",
+        "votes_seen",
+        "first_reviewed_at",
+    } <= _columns(db_path, "human_reviews")
     assert "reddit_fullname" in _columns(db_path, "eval_annotations")
     assert "rationale" in _columns(db_path, "assist_suggestions")
     with AnnotationDatabase(db_path) as db:
@@ -70,6 +75,7 @@ def test_new_columns_are_written(tmp_path: Path) -> None:
                 "unsure": 1,
                 "first_pass_json": '{"sarcastic": 0}',
                 "assist_seen": 1,
+                "votes_seen": 1,
             }
         )
         cand = db.conn.execute("SELECT phatic FROM candidates").fetchone()
@@ -81,3 +87,32 @@ def test_new_columns_are_written(tmp_path: Path) -> None:
             1,
             1,
         )
+        assert review["first_pass_json"] == '{"sarcastic": 0}'
+        assert review["votes_seen"] == 1
+        assert review["first_reviewed_at"] == review["reviewed_at"]
+
+
+def test_migration_tolerates_a_column_added_concurrently(tmp_path: Path) -> None:
+    """Two processes opening an unmigrated DB: the slower one finds the column
+    already added between its PRAGMA and its ALTER, and must not crash."""
+    from uyam.annotate.db import _migrate
+
+    db_path = tmp_path / "race.sqlite3"
+    AnnotationDatabase(db_path).close()
+
+    class StalePragma:
+        """A connection whose PRAGMA still lists the columns from before the race."""
+
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self.conn = conn
+
+        def execute(self, sql: str, *args: object) -> object:
+            if sql.startswith("PRAGMA table_info"):
+                return iter([(0, "reddit_fullname")])
+            return self.conn.execute(sql, *args)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        _migrate(StalePragma(conn))  # type: ignore[arg-type]
+    finally:
+        conn.close()
