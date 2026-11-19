@@ -353,6 +353,31 @@ def eval_report(
         console.print(f"[green]Wrote[/green] {out}")
 
 
+@annotate_app.command(name="load-assist")
+def load_assist(
+    files: list[Path] = typer.Argument(..., help="Suggestion JSONL file(s)"),
+    source: str = typer.Option(..., help="Who produced them, e.g. claude-code:claude-opus-5-5"),
+    guideline_version: str = typer.Option("guideline-v1-draft", help="docs/GUIDELINE.md version"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Load reviewer-assist suggestions (shown only after a blind first-pass label)."""
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.assist import AssistValidationError, load_assist_suggestions
+
+    with AnnotationDatabase(cfg.db_path) as db:
+        try:
+            stats = load_assist_suggestions(
+                db, files, source=source, guideline_version=guideline_version
+            )
+        except AssistValidationError as exc:
+            typer.echo(f"Error: {exc} — nothing was loaded.", err=True)
+            raise typer.Exit(1) from exc
+    console.print(
+        f"[green]Loaded[/green] {stats['loaded']} suggestions from {stats['files']} file(s) "
+        f"({stats['sarcastic']} sarcastic)."
+    )
+
+
 @annotate_app.command(name="gold-sample")
 def gold_sample(
     size: int | None = typer.Option(None, help="Sample size (default: annotation.yaml gold_size)"),
