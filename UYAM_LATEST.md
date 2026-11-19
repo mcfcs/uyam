@@ -4,11 +4,15 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-19, uyam `07211e2` (plus this file's commit)
+- **Last updated:** 2026-11-19 (late), uyam `2d1079d` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
-- **Next dataset:** `dataset-v2`, **not exported yet**. The corpus is being
-  extended (see below). Numbers marked *provisional* will change before v2.
+- **Next dataset:** `dataset-v2`, **built and trial-verified, not exported
+  yet.** Per Gio (2026-11-19) the real export waits until leische says it's
+  ready: when `LEISCHE_LATEST.md` reports its v2 code changes done (results
+  under `results/v2/`, selectable dataset version, `keyword_oversampled`
+  masking), uyam runs `uyam annotate export --version v2` and announces it
+  here. **tsis: v2 numbers stay out of the manuscript until then.**
 
 > **For tsis editors:** don't put any *provisional* number into the
 > manuscript. Chapter 4 is computed on v1, and mixing v1 results with v2
@@ -25,10 +29,10 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 | Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months), *provisional* |
 | Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 (40,125 / 548,382), *provisional*; collection complete |
 | Distinct authors | 8,920 | 63,754, *provisional* |
-| Eligible after filters | 17,424 | not computed yet |
-| Annotated items | 15,000 | 15,000 (same labels; new items optional) |
+| Eligible after filters | 17,424 | 512,471 (of 588,507; 1,417 unlabeled phatic items excluded) |
+| Annotated items | 15,000 | **15,000, the same items with identical labels** (verified against v1); 120 flagged `phatic` |
 | Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated |
-| Preprocessing filters | 6 reasons (manuscript Table 3.1) | 7 reasons: adds `phatic` (§4) |
+| Preprocessing filters | 6 reasons (manuscript Table 3.1) | 7 reasons: adds `phatic` for unlabeled items; labeled ones are flagged, not dropped (§4) |
 | Keyword oversampling | not executed | search step redundant; optional at annotation (§5) |
 | Prompt / labels | `sarc-v2` | `sarc-v2` (no prompt change so far) |
 
@@ -141,18 +145,25 @@ Facts the methodology / ethics text will need (once v2 is final):
 - These are for Gio and the adviser / ethics reviewer to weigh. uyam
   doesn't decide them.
 
-## 4. Preprocessing change: `phatic` exclusion (code ready, not yet applied)
+## 4. Preprocessing change: `phatic` (applied 2026-11-19)
 
-A new filter excludes short social-ritual items with nothing else in them:
-happy-birthday, thanks, congrats, greetings, "commenting to follow". It
-applies only when a phatic phrase matches, the item is ≤ 10 tokens, and ≤ 2
-content tokens remain. Irony markers veto it ("edi congrats", "thanks for
-nothing", "ikaw na"). Phatic items that any annotator already voted
-sarcastic are **not dropped** but sent to human review.
+A filter for short social-ritual items with nothing else in them: happy
+birthday, thanks, congrats, greetings, "commenting to follow". It applies
+only when a phatic phrase matches, the item is ≤ 10 tokens, and ≤ 2 content
+tokens remain. Irony markers veto it ("edi congrats", "thanks for nothing",
+"ikaw na").
 
-Dry run on v1 data (2026-11-10): **107** items would be excluded (none labeled
-sarcastic) and **21** would go to review. It hasn't been applied to the real
-database yet, so manuscript Table 3.1 is still correct for v1.
+Applied to the full corpus on 2026-11-19 (after a database backup):
+- **1,417 unlabeled** items excluded (reason `phatic`).
+- **120 already-labeled** items are **kept with their labels and flagged**
+  (`flags.phatic` in the export). This follows leische's U9 and Gio's choice
+  of frozen labels. None of the 120 is labeled sarcastic.
+- Every one of the 15,000 labeled items stays eligible, and their labels,
+  context snapshots and Gio's 31 gold labels were compared against the backup:
+  0 changes.
+
+Manuscript Table 3.1 stays correct for v1. For v2 it gains a `phatic` row
+(1,417) and the v2 counts.
 
 ## 5. Keyword oversampling
 
@@ -187,28 +198,65 @@ executed". Status for v2 (2026-11-19):
   needed for collection** (every post in the window was collected) and was
   not applied at annotation.
 
-The 57 posts from the 2026-11-10 Shreddit trial that are wrongly tagged
-`keyword_oversampled` (they came from `/new`) are still to be re-tagged
-`natural`. leische asks for this (its U8). It rewrites raw JSONL, so it waits
-for Gio's yes.
+The 57 posts (and 543 comments) from the 2026-11-10 Shreddit trial that
+were wrongly tagged `keyword_oversampled` were **re-tagged `natural`** on
+2026-11-19 (`uyam retag-calendar-walk`, with Gio's OK). The rewritten files
+were backed up first, the change is noted in the three run manifests, and
+the corpus now has **no** `keyword_oversampled` records.
 
 ## 6. What hasn't changed
 
 - Annotation prompt (`sarc-v2`), the three annotator LLMs, the adjudicator,
   and the 15,000 labels.
-- Gold subset: **31 of 300** labeled by Gio (no Cohen's κ yet).
+- Gold subset: **31 of 300** labeled by Gio. The 269 unlabeled gold items
+  were **redrawn** on 2026-11-19 (Gio's OK): eligible, non-phatic items only,
+  stratified sarcasm × language × split vote × length band, proportional
+  (split votes ×2). The old strata forced ≥1 item from ~100 tiny cells, which
+  over-drew long submissions (20 → 4) and pulled in greeting posts (3 → 0).
+  Gold κ on sarcasm over the first 31 is −0.148, as leische measured.
 - Conversational context per labeled item is still the snapshot the
   annotators saw. New data adds **temporal** context (other posts by the same
   author), not new conversational context for existing items.
 
-### 6.1 Label definition gap (for the guideline, leische U3)
+### 6.1 Label definition gap and the new guideline (leische U3)
 
 The `sarc-v2` prompt defines `sarcastic` for "the TARGET" (intended meaning
 differs from literal, plus a cue). It never says whether a long post counts
 as sarcastic when only part of it is. Each annotator LLM chose for itself,
-which adds noise on long items. The gold guideline should fix the unit, e.g.
-"sarcastic if any part of the target is sarcastic", optionally marking which
-sentence. That gap is a limitation of the v1 labels.
+which adds noise on long items. That gap is a limitation of the v1 labels.
+
+**`docs/GUIDELINE.md` (draft v1, 2026-11-19)** now governs the human gold
+labels. A target is sarcastic if any author-voice sentence is, and that
+sentence is marked as the span. It has a Says/Means test, 13 hard-case
+rulings, and §1.1 lists every difference from `sarc-v2`. Decisions D1–D5 are
+open for Gio. The most consequential is D1: whether hyperbolic self-pity,
+*hugot* and playful elevation count as sarcasm. On the 31 existing gold
+items, the disagreements are mostly about humor and *hugot*, not mock praise.
+That matters for U2.
+
+Two notes for the thesis text (found while writing the guideline):
+- `03_methodology.tex` says the researcher labeled "using the same
+  definitions given to the models". Once the guideline is adopted, it should
+  say the definitions were made operational in a written guideline, and that
+  the first 31 items predate it.
+- "When all three annotators agreed on the sarcasm label, that label was
+  accepted" isn't exact. 341 rows with a unanimous sarcasm vote were still
+  adjudicated because another label split, and the adjudicator flipped the
+  sarcasm label on 52 of them.
+
+### 6.2 New review and evaluation tooling
+
+- **Blind-first assist (Claude Code):** suggestions for the gold items are
+  computed by Claude Code agents from the guideline only (no ensemble votes,
+  no human labels). The Review tab reveals them only **after** Gio saves his
+  own label. The first-pass label is kept (`first_pass_json`) and is what gold
+  κ uses. The export ships `human_gold.first_pass`, `sarcastic_span`,
+  `unsure` and `assist_seen`. The ethics text should mention that item text
+  is processed by a third-party model (§3.1).
+- **Evaluation-only annotators:** the adviser's suggested `nimble:9b` can be
+  run on the gold items (`uyam annotate evaluate --model nimble`, then
+  `eval-report`). Its votes live in a separate table and can never change the
+  dataset. Not run yet: the model must be pulled on the remote box first.
 
 ## 7. Manuscript passages affected (tsis, `CS 197A CS Thesis Template (LaTeX)-…/`)
 
@@ -219,27 +267,34 @@ is quick when it comes:
 |---|---|---|
 | `03_methodology.tex` §Data Collection, ¶2 | 20,573 records, 8,920 authors, 1 Aug – 4 Sep 2026, per-subreddit counts | v2 counts and window, two sources |
 | `03_methodology.tex` §Data Collection, ¶1 | "a Python pipeline" | mention the archive source and the 3-day reply horizon |
-| `03_methodology.tex` commented oversampling note | "implemented but not executed" | executed; tagged rows excluded from natural metrics |
+| `03_methodology.tex` commented oversampling note | "implemented but not executed" | not needed at collection (every post collected); applied at annotation only if Gio adds marker items (§5) |
 | `03_methodology.tex` §Preprocessing + Table `tab:exclusions` | 6 reasons, 3,149 excluded, 17,424 eligible | add `phatic`; v2 counts |
 | `03_methodology.tex` commented "Departures" list | "about five weeks instead of three months" | ~5 months: no longer a departure |
 | `01_introduction_05scopeandlimitations.tex` ¶3 | temporal context bounded by the window | still true, window wider; add archive caveats |
 | `04_results.tex` temporal-channel discussion | coverage measured on v1 (~35–37% within 48 h) | re-measured on v2 by leische |
+| `03_methodology.tex` §Annotation (human subset) | "same definitions given to the models"; stratified sample | written guideline (`docs/GUIDELINE.md`), redrawn sample, blind-first assist step (§6.1–6.2) |
 
 ## 8. leische's requests to uyam (`leische/suggestions/UYAM_CHANGE_BRIEF.md`, 2026-09-17)
 
 | Item | Request | Status in uyam |
 |---|---|---|
-| U1 | ship `sarcastic_majority` + `sarcasm_vote_share` | not started |
+| U1 | ship `sarcastic_majority` + `sarcasm_vote_share` | **done** (export + card `label_sets`; trial: 2,747 majority positives, 1,712 rows differ, κ 0.545, matching leische) |
 | U2 | adjudicator remit (`sarc-v3`, adjudicator only) | not started; needs Gio's choice of option |
-| U3 | written guideline + gold subset to ~300 | gold 31/300; guideline not written |
+| U3 | written guideline + gold subset to ~300 | guideline draft v1 written (decisions D1–D5 open); gold queue redrawn, 31/300 labeled |
 | U4 | export `context.rendered` verbatim | not started |
-| U5 | more author history for temporal context | **in progress** via the subreddit-wide archive backfill (not per-author); coverage to be reported in the v2 card |
+| U5 | more author history for temporal context | **done** (backfill complete; card `temporal_context_coverage.by_window`: 48 h 46.5%, 7 d 64.9%, 30 d 82.1%) |
 | U6 | make `needs_human` fire | not started |
 | U7 | deterministic `labels.language_lid` | not started |
-| U8 | run or drop keyword oversampling | search step redundant (natural pass complete); target-selection option open; 57 trial posts to re-tag (§5) |
+| U9 | keep the 15,000 labeled rows; flag `phatic` instead of dropping | **done** (120 flagged, 0 labels changed) |
+| U8 | run or drop keyword oversampling | 57 trial posts re-tagged `natural` (**done**); search step redundant; marker target-selection is Gio's call (§5) |
 
 ## 9. Change log
 
+- **2026-11-19 (late)**: v2 prepared, trial-exported and checked against v1
+  (same 15,000 items, 0 label changes). U1, U5, U8 and U9 done. Gold queue
+  redrawn. Guideline draft v1, blind-first assist, and evaluation-only
+  annotators (nimble) added. The real v2 export waits for leische's
+  readiness.
 - **2026-11-19 (evening)**: Added the ethics facts (§3.1; Reddit User
   Agreement clause verified) and the label-definition gap (§6.1).
 - **2026-11-19 (later)**: Keyword searches stopped as redundant. The marker
