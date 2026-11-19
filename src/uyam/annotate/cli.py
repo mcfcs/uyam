@@ -373,8 +373,8 @@ def load_assist(
             typer.echo(f"Error: {exc} — nothing was loaded.", err=True)
             raise typer.Exit(1) from exc
     console.print(
-        f"[green]Loaded[/green] {stats['loaded']} suggestions from {stats['files']} file(s) "
-        f"({stats['sarcastic']} sarcastic)."
+        # No verdict counts: the reviewer labels these items blind.
+        f"[green]Loaded[/green] {stats['loaded']} suggestions from {stats['files']} file(s)."
     )
 
 

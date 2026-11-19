@@ -9,7 +9,8 @@ JSON Lines, one object per item:
      "rationale": "...", "confidence": 0.0-1.0}
 
 The review tab shows a suggestion only after the reviewer has saved a blind
-first-pass label (review_workflow.revealable_assist). This module only
+first-pass label (review_workflow.revealable_assist), and nothing printed while
+loading (counts, error messages) hints at any item's verdict. This module only
 validates and stores; it never touches labels, votes, or the review queue.
 The whole file set is validated before anything is written.
 """
@@ -39,14 +40,15 @@ def _validate(item: Any, where: str, text: str | None) -> dict[str, Any]:
         raise AssistValidationError(f"{where}: sarcastic must be true or false")
     span = item["sarcastic_span"]
     if not item["sarcastic"] and span is not None:
-        raise AssistValidationError(f"{where}: a span is given but sarcastic is false")
+        raise AssistValidationError(f"{where}: sarcastic and sarcastic_span disagree")
     if span is not None:
         if not isinstance(span, str) or not span.strip():
             raise AssistValidationError(f"{where}: sarcastic_span must be a non-empty string")
         for part in span.split("\n"):
             if part.strip() and part not in text:
+                # No span text in the message: it would hint at the verdict.
                 raise AssistValidationError(
-                    f"{where}: span part is not an exact substring of the target: {part[:60]!r}"
+                    f"{where}: a sarcastic_span part is not an exact substring of the target"
                 )
     conf = item["confidence"]
     if not isinstance(conf, (int, float)) or isinstance(conf, bool) or not 0.0 <= conf <= 1.0:
