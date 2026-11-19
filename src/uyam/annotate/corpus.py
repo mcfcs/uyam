@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +106,38 @@ def _corpus_row(
     }
 
 
+def _index_lines(
+    db: AnnotationDatabase,
+    lines: Iterable[str],
+    rel_path: str,
+    bot_authors: set[str],
+    bot_hashes: set[str],
+    seen: set[str],
+    stats: dict[str, int],
+) -> None:
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            stats["skipped"] += 1
+            continue
+        if not isinstance(parsed, dict):
+            stats["skipped"] += 1
+            continue
+        row = _corpus_row(parsed, rel_path, bot_authors, bot_hashes)
+        if row is None:
+            stats["skipped"] += 1
+            continue
+        if row["reddit_fullname"] in seen:
+            continue
+        seen.add(row["reddit_fullname"])
+        db.upsert_corpus_record(row)
+        stats["records"] += 1
+
+
 def index_corpus(
     db: AnnotationDatabase,
     data_dir: Path,
@@ -124,32 +157,14 @@ def index_corpus(
 
     for filepath in sorted(raw_dir.glob("**/*.jsonl")):
         try:
-            text = filepath.read_text(encoding="utf-8")
+            # Streamed: one archive file holds ~385k records.
+            handle = filepath.open(encoding="utf-8")
         except OSError:
             continue
         stats["files"] += 1
         rel_path = str(filepath.relative_to(data_dir))
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError:
-                stats["skipped"] += 1
-                continue
-            if not isinstance(parsed, dict):
-                stats["skipped"] += 1
-                continue
-            row = _corpus_row(parsed, rel_path, bot_authors, bot_hashes)
-            if row is None:
-                stats["skipped"] += 1
-                continue
-            if row["reddit_fullname"] in seen:
-                continue
-            seen.add(row["reddit_fullname"])
-            db.upsert_corpus_record(row)
-            stats["records"] += 1
+        with handle:
+            _index_lines(db, handle, rel_path, bot_authors, bot_hashes, seen, stats)
     # Comments written before 2026-09-08 carry no sampling_strategy: inherit
     # the parent submission's tag so keyword-oversampled threads stay marked.
     cur = db.conn.execute(
