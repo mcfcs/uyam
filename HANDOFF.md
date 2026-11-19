@@ -28,6 +28,8 @@ U9): 1,601 sarcastic, unchanged and verified against the backup
 31 labeled by Gio, 269 to do. `assist_suggestions` holds 300 Claude Code
 suggestions (`claude-code:claude-opus-5-5`, `guideline-v1-draft`; 11
 sarcastic). `eval_annotations` is empty because nimble hasn't been run.
+The `human_reviews.votes_seen` and `first_reviewed_at` columns were added
+(backup first: `data/db/annotation-2026-11-19-pre-votes-seen.bak.sqlite3`).
 
 **Export (`data/annotated/`)**: still `dataset-v1` (2026-09-15). A trial v2
 export to the scratchpad matched v1 (same 15,000 items, 0 label changes;
@@ -153,6 +155,27 @@ guideline):
 - Half-meant joking quips (H4 step 4b).
 - H13 when the text itself describes the unseen video, or the target is
   someone the thread never introduces.
+
+**Code review (second-opinion subagent) and fixes:**
+- `2ca90ab`: eval-report and LID-vs-gold had read the revised label. All
+  gold scores now go through `db.blind_gold_labels()`. Also added
+  `votes_seen` and `first_reviewed_at`, a one-sentence span default, the
+  `first_pass` export shape, migration race tolerance, and tests that
+  actually discriminate.
+- `c034f1d`: raw rewrites split on newlines only (U+2028 could corrupt a
+  record), keeping other bytes.
+- `19fdc6f`: no verdict hints from load-assist.
+- `0969434`: documented the limits.
+- `9c8e87d`: contract plus UYAM_LATEST (mirrored as tsis `04cbc88`).
+- Tests: 331 → 338.
+- Not fixed, deliberately:
+  - L3: first_pass stays frozen even for a misclick fixed before any reveal.
+    This is now documented in GUIDELINE §6.4.
+  - L4: Claude's influence on low-confidence labels isn't exported. The
+    queue is empty.
+  - L7 handled by first_reviewed_at.
+  - L9: prompt-version-agnostic labeled set. It has no effect today: 0
+    sarc-v1-only items.
 
 **Left open:** everything in *Next steps*. Ask Gio whether the gold strata
 should over-weight sarcastic items: about 11–33 positives of 300 is thin for
