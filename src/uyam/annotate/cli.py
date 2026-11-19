@@ -439,6 +439,11 @@ def export(
     bundle: bool = typer.Option(
         True, help="Also write uyam-dataset-<version>.zip with every artifact + SHA256SUMS"
     ),
+    corpus_scope: str = typer.Option(
+        "labeled_authors",
+        help="Corpus dump: 'labeled_authors' (exported rows + everything by their authors) "
+        "or 'all' (the whole corpus, ~590k records)",
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
@@ -454,12 +459,14 @@ def export(
         formats=tuple(f.strip() for f in formats.split(",") if f.strip()),
         include_unresolved=include_unresolved,
         bundle=bundle,
+        corpus_scope=corpus_scope,
     )
     console.print(
         f"[green]Exported[/green] {result['rows']} rows "
         f"({result['skipped_unresolved']} unresolved skipped)\n"
         f"  dataset: {result['jsonl']}\n"
         + (f"  parquet: {result['parquet']}\n" if result["parquet"] else "")
-        + f"  corpus:  {result['corpus']}\n  card:    {result['card']}"
+        + f"  corpus:  {result['corpus']} ({result['corpus_rows']} records)\n"
+        + f"  card:    {result['card']}"
         + (f"\n  bundle:  {result['zip']}" if result.get("zip") else "")
     )

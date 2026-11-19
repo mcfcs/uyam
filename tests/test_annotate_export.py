@@ -181,3 +181,106 @@ def test_export_skips_items_no_longer_eligible(tmp_path: Path) -> None:
     assert card["counts"]["skipped_ineligible"] == 1
     assert card["counts"]["candidates"]["phatic"] == 1
     assert card["candidate_filters"]["exclude_phatic"] is True
+
+
+# ---------------------------------------------------------------------------
+# v2 export additions: U1 majority label, U9 phatic flag, review fields,
+# coverage by window, corpus scope
+# ---------------------------------------------------------------------------
+
+
+def test_majority_label_ties_fall_back_to_the_shipped_label() -> None:
+    from uyam.annotate.export import majority_label
+
+    assert majority_label([True, True, False], False) == (True, 0.6667)
+    assert majority_label([False, False, True], True) == (False, 0.3333)
+    assert majority_label([True, False], False) == (False, 0.5)  # tie -> shipped
+    assert majority_label([True, False], True) == (True, 0.5)
+    assert majority_label([], True) == (True, None)
+
+
+def _rows(path: str) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines()]
+
+
+def test_export_ships_majority_flags_and_review_fields(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.conn.execute("UPDATE candidates SET phatic = 1 WHERE reddit_fullname = 't1_c2'")
+        db.upsert_human_review(
+            {
+                "reddit_fullname": "t1_c1",
+                "sarcastic": 1,
+                "is_gold": 1,
+                "sarcastic_span": "Ang galing mo naman",
+                "unsure": 1,
+                "first_pass_json": json.dumps({"sarcastic": 0}),
+                "assist_seen": 1,
+            }
+        )
+        db.commit()
+    result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
+    rows = {r["reddit_fullname"]: r for r in _rows(result["jsonl"])}
+
+    # FakeClient: three unanimous "not sarcastic" votes on every item.
+    c1 = rows["t1_c1"]
+    assert c1["labels"]["sarcastic_majority"] is False
+    assert c1["labels"]["sarcasm_vote_share"] == 0.0
+    assert rows["t1_c2"]["flags"] == {"phatic": True}
+    assert c1["flags"] == {"phatic": False}
+    gold = c1["human_gold"]
+    assert gold["sarcastic_span"] == "Ang galing mo naman"
+    assert gold["unsure"] is True and gold["assist_seen"] is True
+    assert gold["first_pass"] == {"sarcastic": 0}
+
+    card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))
+    assert card["counts"]["phatic_flagged_rows"] == 1
+    sets = card["label_sets"]
+    assert sets["n"] == len(rows) and sets["rows_that_differ"] == 0
+    assert sets["cohen_kappa_shipped_vs_majority"] is None  # single class: undefined
+    cov = card["temporal_context_coverage"]
+    assert set(cov["by_window"]) == {"48h", "7d", "30d", "unbounded"}
+    assert cov["share_with_at_least_1"] == cov["by_window"]["48h"]["share_with_at_least_1"]
+
+
+def test_corpus_dump_scope(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    labeled = run_export(cfg, PROMPT_VERSION, dataset_version="va", formats=("jsonl",))
+    everything = run_export(
+        cfg, PROMPT_VERSION, dataset_version="vb", formats=("jsonl",), corpus_scope="all"
+    )
+    with AnnotationDatabase(cfg.db_path) as db:
+        total = db.corpus_counts()["total"]
+        authors = {
+            str(r["author_hash"])
+            for r in _rows(labeled["jsonl"])
+            if r.get("author_hash")
+        }
+    assert everything["corpus_rows"] == total
+    dumped = _rows(labeled["corpus"])
+    assert labeled["corpus_rows"] == len(dumped) <= total
+    exported = {r["reddit_fullname"] for r in _rows(labeled["jsonl"])}
+    for rec in dumped:
+        assert rec["reddit_fullname"] in exported or rec["author_hash"] in authors
+    assert exported <= {rec["reddit_fullname"] for rec in dumped}
+    # dataset_card.json is the latest export; each version keeps its own copy.
+    card = json.loads(Path(labeled["card_versioned"]).read_text(encoding="utf-8"))
+    assert card["corpus_dump_scope"] == "labeled_authors"
+    latest = json.loads(Path(everything["card"]).read_text(encoding="utf-8"))
+    assert latest["dataset_version"] == "vb" and latest["corpus_dump_scope"] == "all"
+    import pytest
+
+    with pytest.raises(ValueError):
+        run_export(cfg, PROMPT_VERSION, dataset_version="vc", corpus_scope="some")
+
+
+def test_coverage_windows_widen_monotonically(tmp_path: Path) -> None:
+    from uyam.annotate.export import temporal_context_coverage
+
+    cfg = _run_pipeline(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        fullnames = [str(r["reddit_fullname"]) for r in db.all_aggregates(PROMPT_VERSION)]
+        cov = temporal_context_coverage(db, fullnames)
+    windows = ("48h", "7d", "30d", "unbounded")
+    shares = [cov["by_window"][w]["share_with_at_least_1"] for w in windows]
+    assert shares == sorted(shares)

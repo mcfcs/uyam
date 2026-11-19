@@ -5,6 +5,7 @@ Produces, under data/annotated/:
   dataset-<version>.parquet  same rows (needs pandas+pyarrow; skipped otherwise)
   corpus-<version>.jsonl     pseudonymized corpus dump (temporal-context source)
   dataset_card.json          counts, distributions, agreement stats, provenance
+  dataset_card-<version>.json  the same card, kept per version
   uyam-dataset-<version>.zip all of the above + SHA256SUMS.txt, one download
 
 Every row is built from an explicit whitelist — the raw JSONL contains real
@@ -87,6 +88,30 @@ def _annotation_view(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def majority_label(
+    annotator_votes: list[bool], shipped: bool | None
+) -> tuple[bool | None, float | None]:
+    """U1: (majority of the annotator sarcasm votes, share voting sarcastic).
+
+    Ties (and no votes) fall back to the shipped label, as leische specified.
+    """
+    if not annotator_votes:
+        return shipped, None
+    yes = sum(1 for v in annotator_votes if v)
+    share = round(yes / len(annotator_votes), 4)
+    no = len(annotator_votes) - yes
+    if yes == no:
+        return shipped, share
+    return yes > no, share
+
+
+def _phatic_flag(db: AnnotationDatabase, fullname: str) -> bool:
+    row = db.conn.execute(
+        "SELECT phatic FROM candidates WHERE reddit_fullname = ?", (fullname,)
+    ).fetchone()
+    return bool(row and row["phatic"])
+
+
 def build_export_row(
     db: AnnotationDatabase, agg: dict[str, Any], dataset_version: str
 ) -> dict[str, Any] | None:
@@ -116,6 +141,17 @@ def build_export_row(
         "SELECT * FROM tx_sentiment WHERE reddit_fullname = ?", (fullname,)
     ).fetchone()
     human = db.get_human_review(fullname)
+    shipped = None if agg.get("sarcastic_final") is None else bool(agg["sarcastic_final"])
+    majority, vote_share = majority_label(
+        [bool(r["sarcastic"]) for r in raw_annotators if r.get("sarcastic") is not None],
+        shipped,
+    )
+    first_pass: Any = None
+    if human is not None and human.get("first_pass_json"):
+        try:
+            first_pass = json.loads(str(human["first_pass_json"]))
+        except ValueError:
+            first_pass = None
 
     return {
         "reddit_fullname": fullname,
@@ -136,9 +172,10 @@ def build_export_row(
         "selftext": record.get("selftext"),
         "text": record["text"],
         "labels": {
-            "sarcastic": (
-                None if agg.get("sarcastic_final") is None else bool(agg["sarcastic_final"])
-            ),
+            "sarcastic": shipped,
+            # U1: the annotators' own majority (ties -> shipped) and vote share.
+            "sarcastic_majority": majority,
+            "sarcasm_vote_share": vote_share,
             "language": agg.get("language_final"),
             "literal_sentiment": agg.get("literal_final"),
             "intended_sentiment": agg.get("intended_final"),
@@ -164,6 +201,13 @@ def build_export_row(
                 "intended_sentiment": human.get("intended_sentiment"),
                 "cues": {name: bool(human.get(col) or 0) for name, col in _CUE_COLS.items()},
                 "notes": human.get("notes"),
+                # The sarcastic sentence(s), an "unsure" mark, and the blind
+                # first-pass labels (kappa uses these) if the reviewer later
+                # revised after revealing the assist suggestion.
+                "sarcastic_span": human.get("sarcastic_span"),
+                "unsure": bool(human.get("unsure") or 0),
+                "first_pass": first_pass,
+                "assist_seen": bool(human.get("assist_seen") or 0),
             }
             if human is not None and human.get("is_gold")
             else None
@@ -194,6 +238,9 @@ def build_export_row(
             ),
         },
         "context": context,
+        # U9: a phatic item (greeting / thanks / HBD only) that was already
+        # labeled is kept with its label and flagged, never dropped.
+        "flags": {"phatic": _phatic_flag(db, fullname)},
         "provenance": {
             "prompt_version": agg.get("prompt_version"),
             "dataset_version": dataset_version,
@@ -234,17 +281,32 @@ def _parse_utc(value: Any) -> datetime | None:
         return None
 
 
+# Windows reported next to the thesis rule (48 h): the history window is a
+# leische/method decision, and with the 2026-06 -> 11 backfill it decides how
+# much of the corpus can reach the model (UYAM_LATEST.md §2.1).
+COVERAGE_WINDOWS_HOURS: tuple[float | None, ...] = (48.0, 7 * 24.0, 30 * 24.0, None)
+
+
+def _window_label(hours: float | None) -> str:
+    if hours is None:
+        return "unbounded"
+    return f"{hours / 24:g}d" if hours >= 24 and hours % 24 == 0 and hours != 48 else f"{hours:g}h"
+
+
 def temporal_context_coverage(
     db: AnnotationDatabase,
     fullnames: list[str],
     *,
     window_hours: float = 48.0,
     max_posts: int = 5,
+    extra_windows: tuple[float | None, ...] = COVERAGE_WINDOWS_HOURS,
 ) -> dict[str, Any]:
     """Thesis §3.4(2): up to `max_posts` same-author posts within `window_hours`
     BEFORE the target, drawn from the collected corpus only. Reports what share
     of the exported rows actually have that history — the temporal channel is
-    only as thick as the collection window (handoff H8)."""
+    only as thick as the collection window (handoff H8). The top-level keys
+    are the thesis rule; `by_window` repeats the measurement for wider windows
+    (None = no time limit), from the same author index."""
     import bisect
     from collections import defaultdict
     from datetime import timedelta
@@ -260,30 +322,42 @@ def temporal_context_coverage(
     for stamps in by_author.values():
         stamps.sort()
 
-    counts: list[int] = []
+    targets: list[tuple[datetime | None, str | None]] = []
     for fullname in fullnames:
         record = db.get_record(fullname)
         if record is None:
             continue
-        ts = _parse_utc(record.get("created_utc"))
         author = record.get("author_hash")
-        if ts is None or not author:
-            counts.append(0)
-            continue
-        stamps = by_author.get(str(author), [])
-        lo = bisect.bisect_left(stamps, ts - timedelta(hours=window_hours))
-        hi = bisect.bisect_left(stamps, ts)
-        counts.append(min(max_posts, max(0, hi - lo)))
+        targets.append((_parse_utc(record.get("created_utc")), str(author) if author else None))
 
-    n = len(counts)
-    share = lambda k: (round(sum(1 for c in counts if c >= k) / n, 4) if n else None)  # noqa: E731
+    def measure(hours: float | None) -> dict[str, Any]:
+        counts: list[int] = []
+        for ts, author in targets:
+            if ts is None or not author:
+                counts.append(0)
+                continue
+            stamps = by_author.get(author, [])
+            lo = 0 if hours is None else bisect.bisect_left(stamps, ts - timedelta(hours=hours))
+            hi = bisect.bisect_left(stamps, ts)
+            counts.append(min(max_posts, max(0, hi - lo)))
+        n = len(counts)
+
+        def share(k: int) -> float | None:
+            return round(sum(1 for c in counts if c >= k) / n, 4) if n else None
+
+        return {
+            "n_rows": n,
+            "share_with_at_least_1": share(1),
+            "share_with_at_least_3": share(3),
+            "share_with_full_5": share(max_posts),
+            "mean_available": round(sum(counts) / n, 3) if n else None,
+        }
+
+    base = measure(window_hours)
     return {
         "rule": f"<= {max_posts} same-author posts within {window_hours:g} h before the target",
-        "n_rows": n,
-        "share_with_at_least_1": share(1),
-        "share_with_at_least_3": share(3),
-        "share_with_full_5": share(max_posts),
-        "mean_available": round(sum(counts) / n, 3) if n else None,
+        **base,
+        "by_window": {_window_label(h): measure(h) for h in extra_windows},
     }
 
 
@@ -342,6 +416,35 @@ def _label_distributions(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "sarcastic_per_label_resolution": count_by(
             lambda r: r["reliability"]["per_label"]["sarcastic"]
         ),
+    }
+
+
+def _label_sets(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """U1: shipped (adjudicated) vs annotator-majority sarcasm labels."""
+    pairs = [
+        (r["labels"]["sarcastic"], r["labels"]["sarcastic_majority"])
+        for r in rows
+        if r["labels"]["sarcastic"] is not None and r["labels"]["sarcastic_majority"] is not None
+    ]
+    n = len(pairs)
+    if not n:
+        return {"n": 0}
+    both = sum(1 for a, b in pairs if a and b)
+    shipped_pos = sum(1 for a, _ in pairs if a)
+    majority_pos = sum(1 for _, b in pairs if b)
+    agree = sum(1 for a, b in pairs if a == b)
+    p_o = agree / n
+    p_e = (shipped_pos / n) * (majority_pos / n) + (1 - shipped_pos / n) * (1 - majority_pos / n)
+    kappa = None if p_e == 1 else round((p_o - p_e) / (1 - p_e), 4)
+    return {
+        "n": n,
+        "shipped_positives": shipped_pos,
+        "majority_positives": majority_pos,
+        "both_positive": both,
+        "rows_that_differ": n - agree,
+        "cohen_kappa_shipped_vs_majority": kappa,
+        "note": "labels.sarcastic is the adjudicated (shipped) label; "
+        "labels.sarcastic_majority is the annotators' own majority, ties -> shipped.",
     }
 
 
@@ -406,7 +509,10 @@ def run_export(
     formats: tuple[str, ...] = ("jsonl", "parquet"),
     include_unresolved: bool = False,
     bundle: bool = True,
+    corpus_scope: str = "labeled_authors",
 ) -> dict[str, Any]:
+    if corpus_scope not in ("labeled_authors", "all"):
+        raise ValueError(f"corpus_scope must be 'labeled_authors' or 'all', got {corpus_scope!r}")
     out_dir = cfg.export.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -446,6 +552,7 @@ def run_export(
                         **{k: v for k, v in row.items() if not isinstance(v, dict)},
                         **{f"label_{k}": v for k, v in row["labels"].items() if k != "cues"},
                         **{f"cue_{k}": v for k, v in row["labels"]["cues"].items()},
+                        "flag_phatic": row["flags"]["phatic"],
                         "resolved_by": row["reliability"]["resolved_by"],
                         "sarcasm_votes": row["reliability"]["sarcasm_votes"],
                         "mean_confidence": row["reliability"]["mean_confidence"],
@@ -461,11 +568,28 @@ def run_export(
                 logger.warning("parquet_skipped_missing_pandas_pyarrow")
                 parquet_path = None
 
+        # The corpus dump only feeds the temporal channel (same-author
+        # history); conversational context ships in each row's snapshot. With
+        # ~590k records, the default keeps the exported rows plus everything
+        # by their authors (leische's own loader plan, 2026-11-17).
         corpus_path = out_dir / f"corpus-{dataset_version}.jsonl"
-        corpus_rows = db.conn.execute("SELECT * FROM corpus_index").fetchall()
+        exported = {str(r["reddit_fullname"]) for r in rows}
+        authors = {str(r["author_hash"]) for r in rows if r.get("author_hash")}
+        corpus_written = 0
+        reader = db.conn.cursor()
+        reader.execute("SELECT * FROM corpus_index")
         with corpus_path.open("w", encoding="utf-8") as fh:
-            for record in corpus_rows:
-                fh.write(json.dumps(_corpus_dump_row(dict(record)), ensure_ascii=False) + "\n")
+            while batch := reader.fetchmany(5000):
+                for record in batch:
+                    rec = dict(record)
+                    keep = (
+                        corpus_scope == "all"
+                        or rec["reddit_fullname"] in exported
+                        or (rec.get("author_hash") and str(rec["author_hash"]) in authors)
+                    )
+                    if keep:
+                        fh.write(json.dumps(_corpus_dump_row(rec), ensure_ascii=False) + "\n")
+                        corpus_written += 1
 
         annotator_provenance = [
             dict(r)
@@ -497,7 +621,11 @@ def run_export(
             "exported_rows": len(rows),
             "skipped_unresolved": skipped_unresolved,
             "skipped_ineligible": skipped_ineligible,
+            "phatic_flagged_rows": sum(1 for r in rows if r["flags"]["phatic"]),
+            "corpus_dump_rows": corpus_written,
         },
+        "corpus_dump_scope": corpus_scope,
+        "label_sets": _label_sets(rows),
         "label_distributions": _label_distributions(rows) if rows else {},
         "agreement": agreement,
         "readiness": _readiness(rows, agreement),
@@ -531,15 +659,24 @@ def run_export(
             "reliability.resolved_by is the joint resolution of all four.",
         ],
     }
+    # dataset_card.json is always the latest export (readers expect that name);
+    # dataset_card-<version>.json keeps each version's card side by side.
+    card_text = json.dumps(card, indent=2, ensure_ascii=False)
     card_path = out_dir / "dataset_card.json"
-    card_path.write_text(json.dumps(card, indent=2, ensure_ascii=False), encoding="utf-8")
+    card_path.write_text(card_text, encoding="utf-8")
+    versioned_card_path = out_dir / f"dataset_card-{dataset_version}.json"
+    versioned_card_path.write_text(card_text, encoding="utf-8")
 
     zip_path: Path | None = None
     if bundle:
         zip_path = write_bundle(
             out_dir,
             dataset_version,
-            [p for p in (jsonl_path, parquet_path, corpus_path, card_path) if p is not None],
+            [
+                p
+                for p in (jsonl_path, parquet_path, corpus_path, card_path, versioned_card_path)
+                if p is not None
+            ],
         )
 
     return {
@@ -549,6 +686,8 @@ def run_export(
         "jsonl": str(jsonl_path),
         "parquet": str(parquet_path) if parquet_path else None,
         "corpus": str(corpus_path),
+        "corpus_rows": corpus_written,
         "card": str(card_path),
+        "card_versioned": str(versioned_card_path),
         "zip": str(zip_path) if zip_path else None,
     }
