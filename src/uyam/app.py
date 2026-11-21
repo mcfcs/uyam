@@ -819,7 +819,13 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
     tab_runs,
     tab_review,
 ) = st.tabs(
-    [
+    key="main_tabs",
+    # Lazy tabs: only the open tab's body runs on a rerun (each body is under
+    # `if tab_x.open:`). Before this, every click in Annotation Review re-ran
+    # all nine tabs, including the Annotation status queries and the whole-corpus
+    # Data Browser.
+    on_change="rerun",
+    tabs=[
         _reminders_label,
         "Collection",
         "Proxies",
@@ -836,268 +842,271 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
 # Tab 0: Reminders (Gio's to-do list; ticks persist in data/reminders.json)
 # ===========================================================================
 with tab_reminders:
-    try:
-        from uyam.reminders_ui import render_reminders_tab
+    if tab_reminders.open:
+        try:
+            from uyam.reminders_ui import render_reminders_tab
 
-        render_reminders_tab(REMINDERS_CONFIG, REMINDERS_STATE, DATA_DIR)
-    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
-        st.error(f"Reminders unavailable: {exc}")
+            render_reminders_tab(REMINDERS_CONFIG, REMINDERS_STATE, DATA_DIR)
+        except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+            st.error(f"Reminders unavailable: {exc}")
 
 # ===========================================================================
 # Proxies (view / test / replace proxies.txt; backups in data/proxy-backups/)
 # ===========================================================================
 with tab_proxies:
-    try:
-        from uyam.proxies_ui import render_proxies_tab
+    if tab_proxies.open:
+        try:
+            from uyam.proxies_ui import render_proxies_tab
 
-        render_proxies_tab(PROXIES_PATH, DATA_DIR / "proxy-backups")
-    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
-        st.error(f"Proxy manager unavailable: {exc}")
+            render_proxies_tab(PROXIES_PATH, DATA_DIR / "proxy-backups")
+        except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+            st.error(f"Proxy manager unavailable: {exc}")
 
 # ===========================================================================
 # Tab 1: Collection
 # ===========================================================================
 with tab_collect:
-    if run_btn and selected_subs:
-        listing_type = "search" if search_q else listing_opt
-        max_comments_arg = _max_comments_arg(
-            collect_comments, all_replies, int(max_comments_val)
-        )
-
-        if source_type == "fixture":
-            logs: list[str] = []
-            results: list[dict[str, Any]] = []
-            handler = _ListHandler(logs)
-            handler.setLevel(logging.INFO)
-            handler.setFormatter(
-                logging.Formatter("%(levelname)-5s %(name)s — %(message)s")
+    if tab_collect.open:
+        if run_btn and selected_subs:
+            listing_type = "search" if search_q else listing_opt
+            max_comments_arg = _max_comments_arg(
+                collect_comments, all_replies, int(max_comments_val)
             )
-            for noisy in ("urllib3", "prawcore", "praw", "playwright", "patchright"):
-                logging.getLogger(noisy).setLevel(logging.WARNING)
-            root_logger = logging.getLogger()
-            root_logger.addHandler(handler)
-            root_logger.setLevel(logging.INFO)
-            try:
-                reddit_source: Any = FixtureRedditSource()
-                db = DedupDatabase(DB_PATH)
+
+            if source_type == "fixture":
+                logs: list[str] = []
+                results: list[dict[str, Any]] = []
+                handler = _ListHandler(logs)
+                handler.setLevel(logging.INFO)
+                handler.setFormatter(
+                    logging.Formatter("%(levelname)-5s %(name)s — %(message)s")
+                )
+                for noisy in ("urllib3", "prawcore", "praw", "playwright", "patchright"):
+                    logging.getLogger(noisy).setLevel(logging.WARNING)
+                root_logger = logging.getLogger()
+                root_logger.addHandler(handler)
+                root_logger.setLevel(logging.INFO)
                 try:
-                    with st.status("Collecting fixtures…", expanded=True):
-                        for sub in selected_subs:
-                            st.write(f"r/{sub} — fetching…")
-                            run_id = make_collection_run_id()
-                            request = CollectionRequest(
-                                subreddit=sub,
-                                listing_type=listing_type,
-                                collection_run_id=run_id,
-                                limit=int(limit_val),
-                                sort=cfg.collection.sort,
-                                time_filter=cfg.collection.time_filter,
-                                search_query=search_q,
-                                max_comments_per_submission=(
-                                    None if max_comments_arg < 0 else max_comments_arg
-                                ),
-                                max_depth=cfg.comments.max_depth,
-                                include_deleted=cfg.comments.include_deleted,
-                                comment_sort=cfg.comments.sort,
-                                replace_more_limit=cfg.comments.replace_more_limit,
-                                sampling_strategy="natural",
-                                max_seconds=max_seconds_val,
-                                calendar_since=calendar_since_val,
-                                calendar_until=calendar_until_val,
-                                posts_per_day=posts_per_day_val,
-                            )
-                            ctx = run_collection(
-                                reddit_source,
-                                request,
-                                data_dir=DATA_DIR,
-                                db=db,
-                                source_type=source_type,
-                            )
-                            results.append(
-                                {
-                                    "subreddit": sub,
-                                    "submissions": ctx.actual_submissions_stored,
-                                    "comments": ctx.comments_stored,
-                                    "duplicates": ctx.duplicates_skipped,
-                                }
-                            )
-                            st.write(
-                                f"r/{sub} — "
-                                f"{ctx.actual_submissions_stored} submissions, "
-                                f"{ctx.comments_stored} comments stored "
-                                f"({ctx.duplicates_skipped} duplicates skipped)"
-                            )
-                            if (
-                                "stopped_by_user" in ctx.errors
-                                or "time_limit_reached" in ctx.errors
-                            ):
-                                st.warning("Collection stopped (stop or time limit).")
-                                break
+                    reddit_source: Any = FixtureRedditSource()
+                    db = DedupDatabase(DB_PATH)
+                    try:
+                        with st.status("Collecting fixtures…", expanded=True):
+                            for sub in selected_subs:
+                                st.write(f"r/{sub} — fetching…")
+                                run_id = make_collection_run_id()
+                                request = CollectionRequest(
+                                    subreddit=sub,
+                                    listing_type=listing_type,
+                                    collection_run_id=run_id,
+                                    limit=int(limit_val),
+                                    sort=cfg.collection.sort,
+                                    time_filter=cfg.collection.time_filter,
+                                    search_query=search_q,
+                                    max_comments_per_submission=(
+                                        None if max_comments_arg < 0 else max_comments_arg
+                                    ),
+                                    max_depth=cfg.comments.max_depth,
+                                    include_deleted=cfg.comments.include_deleted,
+                                    comment_sort=cfg.comments.sort,
+                                    replace_more_limit=cfg.comments.replace_more_limit,
+                                    sampling_strategy="natural",
+                                    max_seconds=max_seconds_val,
+                                    calendar_since=calendar_since_val,
+                                    calendar_until=calendar_until_val,
+                                    posts_per_day=posts_per_day_val,
+                                )
+                                ctx = run_collection(
+                                    reddit_source,
+                                    request,
+                                    data_dir=DATA_DIR,
+                                    db=db,
+                                    source_type=source_type,
+                                )
+                                results.append(
+                                    {
+                                        "subreddit": sub,
+                                        "submissions": ctx.actual_submissions_stored,
+                                        "comments": ctx.comments_stored,
+                                        "duplicates": ctx.duplicates_skipped,
+                                    }
+                                )
+                                st.write(
+                                    f"r/{sub} — "
+                                    f"{ctx.actual_submissions_stored} submissions, "
+                                    f"{ctx.comments_stored} comments stored "
+                                    f"({ctx.duplicates_skipped} duplicates skipped)"
+                                )
+                                if (
+                                    "stopped_by_user" in ctx.errors
+                                    or "time_limit_reached" in ctx.errors
+                                ):
+                                    st.warning("Collection stopped (stop or time limit).")
+                                    break
+                    finally:
+                        db.close()
+                except Exception as exc:
+                    st.error(f"Collection failed: {exc}")
+                    logs.append(f"ERROR — {exc}")
                 finally:
-                    db.close()
-            except Exception as exc:
-                st.error(f"Collection failed: {exc}")
-                logs.append(f"ERROR — {exc}")
-            finally:
-                root_logger.removeHandler(handler)
-            st.session_state["logs"] = logs
-            st.session_state["last_results"] = results
-            _load_runs.clear()
-        else:
-            try:
-                pid = _start_background_collect(
-                    source=source_type,
-                    subreddits=selected_subs,
-                    listing=listing_type,
-                    limit=int(limit_val),
-                    search=search_q,
-                    max_comments=max_comments_arg,
-                    headed=headed,
-                    captcha_wait=(
-                        float(captcha_wait_val) if wait_for_captcha and headed else 0.0
+                    root_logger.removeHandler(handler)
+                st.session_state["logs"] = logs
+                st.session_state["last_results"] = results
+                _load_runs.clear()
+            else:
+                try:
+                    pid = _start_background_collect(
+                        source=source_type,
+                        subreddits=selected_subs,
+                        listing=listing_type,
+                        limit=int(limit_val),
+                        search=search_q,
+                        max_comments=max_comments_arg,
+                        headed=headed,
+                        captcha_wait=(
+                            float(captcha_wait_val) if wait_for_captcha and headed else 0.0
+                        ),
+                        max_seconds=max_seconds_val,
+                        workers=int(workers_val),
+                        calendar_since=calendar_since_val,
+                        calendar_until=calendar_until_val,
+                        posts_per_day=posts_per_day_val,
+                        oversample_only=bool(oversample_only),
+                    )
+                    limit_note = (
+                        f" Time limit: {int(max_seconds_val)}s."
+                        if max_seconds_val
+                        else ""
+                    )
+                    st.session_state["collect_notice"] = (
+                        f"Live scrape started (pid {pid}) for "
+                        + ", ".join(f"r/{s}" for s in selected_subs)
+                        + "."
+                        + limit_note
+                        + " Already-stored posts/comments are skipped (no duplicates)."
+                        + " This page stays up — counters and logs refresh below."
+                    )
+                    # Re-render with the fast live interval and the Start button disabled.
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not start collection: {exc}")
+
+        notice = st.session_state.get("collect_notice")
+        if notice:
+            st.success(notice)
+
+        @st.fragment(run_every=LIVE_INTERVAL)
+        def _live_scrape_panel() -> None:
+            running = scrape_is_running()
+            ctrl = get_control()
+            status = read_status()
+            st.subheader("Live scrape")
+
+            stats = _load_stats()
+            n_sub = sum(int(s["submissions"] or 0) for s in stats)
+            n_com = sum(int(s["comments"] or 0) for s in stats)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Posts in dataset", n_sub)
+            m2.metric("Comments in dataset", n_com)
+            m3.metric("Total records", n_sub + n_com)
+            if stats:
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "subreddit": s["subreddit"],
+                                "posts": int(s["submissions"] or 0),
+                                "comments": int(s["comments"] or 0),
+                            }
+                            for s in stats
+                        ]
                     ),
-                    max_seconds=max_seconds_val,
-                    workers=int(workers_val),
-                    calendar_since=calendar_since_val,
-                    calendar_until=calendar_until_val,
-                    posts_per_day=posts_per_day_val,
-                    oversample_only=bool(oversample_only),
+                    width="stretch",
+                    hide_index=True,
                 )
-                limit_note = (
-                    f" Time limit: {int(max_seconds_val)}s."
-                    if max_seconds_val
-                    else ""
+
+            if running:
+                state = "paused" if ctrl == "pause" else "running"
+                msg = (status or {}).get("message") or (
+                    "Pause waits between posts; Stop ends the run."
                 )
-                st.session_state["collect_notice"] = (
-                    f"Live scrape started (pid {pid}) for "
-                    + ", ".join(f"r/{s}" for s in selected_subs)
-                    + "."
-                    + limit_note
-                    + " Already-stored posts/comments are skipped (no duplicates)."
-                    + " This page stays up — counters and logs refresh below."
+                st.info(f"Scraper is **{state}**. {msg}")
+                b1, b2, b3 = st.columns(3)
+                if b1.button("Pause", disabled=ctrl == "pause", key="scrape_pause"):
+                    set_control("pause")
+                    st.rerun(scope="fragment")
+                if b2.button("Resume", disabled=ctrl == "run", key="scrape_resume"):
+                    set_control("run")
+                    st.rerun(scope="fragment")
+                if b3.button("Stop", type="primary", key="scrape_stop"):
+                    request_stop_and_kill()
+                    st.rerun()
+                warn_slot = st.empty()
+                img_slot = st.empty()
+                _refresh_captcha_preview(warn_slot, img_slot)
+            elif status and status.get("state") in {"idle", "stopped"}:
+                st.caption(status.get("message") or "Last scrape finished.")
+            else:
+                st.caption("No live scrape running. Start one from the sidebar.")
+
+            st.markdown("#### Scraper log")
+            if LOG_FILE.exists():
+                tail = _tail_text(LOG_FILE)
+                st.caption(
+                    "last lines — auto-refreshes while collecting"
+                    if running
+                    else "last lines of the previous run"
                 )
-                # Re-render with the fast live interval and the Start button disabled.
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not start collection: {exc}")
+                st.code(tail or "(empty)", language=None)
+            else:
+                st.caption("No collect.log yet.")
 
-    notice = st.session_state.get("collect_notice")
-    if notice:
-        st.success(notice)
+            preview = _latest_records(8)
+            if preview:
+                st.markdown("#### Latest records")
+                st.dataframe(
+                    pd.DataFrame(
+                        [
+                            {
+                                "type": r.get("record_type"),
+                                "id": r.get("id") or r.get("reddit_id"),
+                                "subreddit": r.get("subreddit"),
+                                "author_hash": str(r.get("author_hash") or "")[:10],
+                                "collected_at": r.get("collected_at") or r.get("retrieved_at_utc"),
+                                "title_or_body": (
+                                    r.get("title")
+                                    or (str(r.get("body") or "")[:80])
+                                ),
+                            }
+                            for r in preview
+                        ]
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
 
-    @st.fragment(run_every=LIVE_INTERVAL)
-    def _live_scrape_panel() -> None:
-        running = scrape_is_running()
-        ctrl = get_control()
-        status = read_status()
-        st.subheader("Live scrape")
+        _live_scrape_panel()
 
-        stats = _load_stats()
-        n_sub = sum(int(s["submissions"] or 0) for s in stats)
-        n_com = sum(int(s["comments"] or 0) for s in stats)
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Posts in dataset", n_sub)
-        m2.metric("Comments in dataset", n_com)
-        m3.metric("Total records", n_sub + n_com)
-        if stats:
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "subreddit": s["subreddit"],
-                            "posts": int(s["submissions"] or 0),
-                            "comments": int(s["comments"] or 0),
-                        }
-                        for s in stats
-                    ]
-                ),
-                width="stretch",
-                hide_index=True,
-            )
+        prev_results: list[dict[str, Any]] = st.session_state["last_results"]
+        if prev_results:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Submissions stored", sum(r["submissions"] for r in prev_results))
+            c2.metric("Comments stored", sum(r["comments"] for r in prev_results))
+            c3.metric("Duplicates skipped", sum(r["duplicates"] for r in prev_results))
+            st.markdown("---")
+            for r in prev_results:
+                st.markdown(
+                    f"**r/{r['subreddit']}** — "
+                    f"{r['submissions']} submissions · "
+                    f"{r['comments']} comments · "
+                    f"{r['duplicates']} duplicates skipped"
+                )
+        elif not run_btn and not scraping_now and not st.session_state.get("collect_notice"):
+            st.info("Configure subreddits in the sidebar and click **Start Collection**.")
 
-        if running:
-            state = "paused" if ctrl == "pause" else "running"
-            msg = (status or {}).get("message") or (
-                "Pause waits between posts; Stop ends the run."
-            )
-            st.info(f"Scraper is **{state}**. {msg}")
-            b1, b2, b3 = st.columns(3)
-            if b1.button("Pause", disabled=ctrl == "pause", key="scrape_pause"):
-                set_control("pause")
-                st.rerun(scope="fragment")
-            if b2.button("Resume", disabled=ctrl == "run", key="scrape_resume"):
-                set_control("run")
-                st.rerun(scope="fragment")
-            if b3.button("Stop", type="primary", key="scrape_stop"):
-                request_stop_and_kill()
-                st.rerun()
-            warn_slot = st.empty()
-            img_slot = st.empty()
-            _refresh_captcha_preview(warn_slot, img_slot)
-        elif status and status.get("state") in {"idle", "stopped"}:
-            st.caption(status.get("message") or "Last scrape finished.")
-        else:
-            st.caption("No live scrape running. Start one from the sidebar.")
-
-        st.markdown("#### Scraper log")
-        if LOG_FILE.exists():
-            tail = _tail_text(LOG_FILE)
-            st.caption(
-                "last lines — auto-refreshes while collecting"
-                if running
-                else "last lines of the previous run"
-            )
-            st.code(tail or "(empty)", language=None)
-        else:
-            st.caption("No collect.log yet.")
-
-        preview = _latest_records(8)
-        if preview:
-            st.markdown("#### Latest records")
-            st.dataframe(
-                pd.DataFrame(
-                    [
-                        {
-                            "type": r.get("record_type"),
-                            "id": r.get("id") or r.get("reddit_id"),
-                            "subreddit": r.get("subreddit"),
-                            "author_hash": str(r.get("author_hash") or "")[:10],
-                            "collected_at": r.get("collected_at") or r.get("retrieved_at_utc"),
-                            "title_or_body": (
-                                r.get("title")
-                                or (str(r.get("body") or "")[:80])
-                            ),
-                        }
-                        for r in preview
-                    ]
-                ),
-                width="stretch",
-                hide_index=True,
-            )
-
-    _live_scrape_panel()
-
-    prev_results: list[dict[str, Any]] = st.session_state["last_results"]
-    if prev_results:
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Submissions stored", sum(r["submissions"] for r in prev_results))
-        c2.metric("Comments stored", sum(r["comments"] for r in prev_results))
-        c3.metric("Duplicates skipped", sum(r["duplicates"] for r in prev_results))
-        st.markdown("---")
-        for r in prev_results:
-            st.markdown(
-                f"**r/{r['subreddit']}** — "
-                f"{r['submissions']} submissions · "
-                f"{r['comments']} comments · "
-                f"{r['duplicates']} duplicates skipped"
-            )
-    elif not run_btn and not scraping_now and not st.session_state.get("collect_notice"):
-        st.info("Configure subreddits in the sidebar and click **Start Collection**.")
-
-    log_lines: list[str] = st.session_state["logs"]
-    if log_lines:
-        with st.expander(f"Fixture logs ({len(log_lines)} lines)", expanded=False):
-            st.code("\n".join(log_lines), language=None)
+        log_lines: list[str] = st.session_state["logs"]
+        if log_lines:
+            with st.expander(f"Fixture logs ({len(log_lines)} lines)", expanded=False):
+                st.code("\n".join(log_lines), language=None)
 
 
 # ===========================================================================
@@ -1175,224 +1184,234 @@ def _csv_bytes(
 
 
 with tab_data:
-    with st.expander("Clear previous scrapes", expanded=False):
-        st.caption(
-            "Deletes all JSONL, manifests, and the SQLite index. "
-            "Does not delete the Chrome profile."
-        )
-        if scraping_now:
-            st.warning("Stop the live scrape before clearing.")
-        else:
-            confirm_clear = st.text_input(
-                "Type CLEAR to enable delete",
-                key="clear_confirm",
+    if tab_data.open:
+        with st.expander("Clear previous scrapes", expanded=False):
+            st.caption(
+                "Deletes all JSONL, manifests, and the SQLite index. "
+                "Does not delete the Chrome profile."
             )
-            if st.button(
-                "Clear previous scrapes",
-                type="primary",
-                disabled=confirm_clear.strip() != "CLEAR",
-            ):
-                stats = clear_collected_data(DATA_DIR)
-                st.session_state["last_results"] = []
-                st.session_state["logs"] = []
-                _records_for_signature.clear()
-                _load_runs.clear()
-                st.success(
-                    f"Deleted {stats['jsonl_files']} JSONL files, "
-                    f"{stats['manifests']} manifests, "
-                    f"{stats['db_files']} DB files."
-                )
-                st.rerun()
-
-    raw_sig = _raw_signature()
-    if not raw_sig:
-        st.info("No records yet. Run a collection first.")
-    else:
-        head_l, head_r = st.columns([5, 1])
-        with head_r:
-            if st.button("Refresh table", key="data_refresh", use_container_width=True):
-                _records_for_signature.clear()
-                _browser_frame.clear()
-                _thread_tree_text.clear()
-                _csv_bytes.clear()
-                st.rerun()
-        with head_l:
             if scraping_now:
-                st.caption(
-                    "A scrape is running — the table is a snapshot; click Refresh table "
-                    "to pick up new rows."
-                )
-
-        records = _load_jsonl_records()
-        all_subs = sorted(
-            {str(r.get("subreddit") or "") for r in records if r.get("subreddit")}
-        )
-
-        fcol1, fcol2, fcol3 = st.columns([3, 2, 1])
-        filter_subs = fcol1.multiselect(
-            "Subreddit", all_subs, default=all_subs, key="data_filter_subs"
-        )
-        filter_type = fcol2.radio(
-            "Record type",
-            ["all", "submission", "comment"],
-            horizontal=True,
-            key="data_filter_type",
-        )
-        fcol3.metric("Total records", len(records))
-
-        df = _browser_frame(raw_sig, tuple(filter_subs), str(filter_type))
-        st.caption(
-            f"{len(df)} unique records match (duplicates by reddit_fullname dropped). "
-            "Comments include post_id / post_url (which post) and "
-            "parent_comment_id / parent_url (reply-to-reply)."
-        )
-        page_df = _paginate(df, key="data_page")
-        st.dataframe(
-            page_df,
-            width="stretch",
-            height=560,
-            column_config={
-                "title": st.column_config.TextColumn("title", width="medium"),
-                "selftext": st.column_config.TextColumn("selftext", width="medium"),
-                "body": st.column_config.TextColumn("body", width="medium"),
-                "post_title": st.column_config.TextColumn("post_title", width="medium"),
-                "permalink": st.column_config.LinkColumn("permalink"),
-                "url": st.column_config.LinkColumn("url"),
-                "post_url": st.column_config.LinkColumn("post_url"),
-                "parent_url": st.column_config.LinkColumn("parent_url"),
-                "comment_url": st.column_config.LinkColumn("comment_url"),
-            },
-        )
-
-        if st.checkbox(
-            "Show thread tree (post → replies → replies-to-replies)",
-            value=False,
-            key="data_show_tree",
-        ):
-            thread_text = _thread_tree_text(raw_sig, tuple(filter_subs))
-            if thread_text:
-                st.text(thread_text)
+                st.warning("Stop the live scrape before clearing.")
             else:
-                st.caption("No threads for the current subreddit filter.")
+                confirm_clear = st.text_input(
+                    "Type CLEAR to enable delete",
+                    key="clear_confirm",
+                )
+                if st.button(
+                    "Clear previous scrapes",
+                    type="primary",
+                    disabled=confirm_clear.strip() != "CLEAR",
+                ):
+                    stats = clear_collected_data(DATA_DIR)
+                    st.session_state["last_results"] = []
+                    st.session_state["logs"] = []
+                    _records_for_signature.clear()
+                    _load_runs.clear()
+                    st.success(
+                        f"Deleted {stats['jsonl_files']} JSONL files, "
+                        f"{stats['manifests']} manifests, "
+                        f"{stats['db_files']} DB files."
+                    )
+                    st.rerun()
 
-        st.download_button(
-            "Download all matching rows as CSV",
-            data=_csv_bytes(raw_sig, tuple(filter_subs), str(filter_type)),
-            file_name="uyam_export.csv",
-            mime="text/csv",
-            key="data_download_csv",
-        )
+        raw_sig = _raw_signature()
+        if not raw_sig:
+            st.info("No records yet. Run a collection first.")
+        else:
+            head_l, head_r = st.columns([5, 1])
+            with head_r:
+                if st.button("Refresh table", key="data_refresh", use_container_width=True):
+                    _records_for_signature.clear()
+                    _browser_frame.clear()
+                    _thread_tree_text.clear()
+                    _csv_bytes.clear()
+                    st.rerun()
+            with head_l:
+                if scraping_now:
+                    st.caption(
+                        "A scrape is running — the table is a snapshot; click Refresh table "
+                        "to pick up new rows."
+                    )
+
+            records = _load_jsonl_records()
+            all_subs = sorted(
+                {str(r.get("subreddit") or "") for r in records if r.get("subreddit")}
+            )
+
+            fcol1, fcol2, fcol3 = st.columns([3, 2, 1])
+            filter_subs = fcol1.multiselect(
+                "Subreddit", all_subs, default=all_subs, key="data_filter_subs"
+            )
+            filter_type = fcol2.radio(
+                "Record type",
+                ["all", "submission", "comment"],
+                horizontal=True,
+                key="data_filter_type",
+            )
+            fcol3.metric("Total records", len(records))
+
+            df = _browser_frame(raw_sig, tuple(filter_subs), str(filter_type))
+            st.caption(
+                f"{len(df)} unique records match (duplicates by reddit_fullname dropped). "
+                "Comments include post_id / post_url (which post) and "
+                "parent_comment_id / parent_url (reply-to-reply)."
+            )
+            page_df = _paginate(df, key="data_page")
+            st.dataframe(
+                page_df,
+                width="stretch",
+                height=560,
+                column_config={
+                    "title": st.column_config.TextColumn("title", width="medium"),
+                    "selftext": st.column_config.TextColumn("selftext", width="medium"),
+                    "body": st.column_config.TextColumn("body", width="medium"),
+                    "post_title": st.column_config.TextColumn("post_title", width="medium"),
+                    "permalink": st.column_config.LinkColumn("permalink"),
+                    "url": st.column_config.LinkColumn("url"),
+                    "post_url": st.column_config.LinkColumn("post_url"),
+                    "parent_url": st.column_config.LinkColumn("parent_url"),
+                    "comment_url": st.column_config.LinkColumn("comment_url"),
+                },
+            )
+
+            if st.checkbox(
+                "Show thread tree (post → replies → replies-to-replies)",
+                value=False,
+                key="data_show_tree",
+            ):
+                thread_text = _thread_tree_text(raw_sig, tuple(filter_subs))
+                if thread_text:
+                    st.text(thread_text)
+                else:
+                    st.caption("No threads for the current subreddit filter.")
+
+            st.download_button(
+                "Download all matching rows as CSV",
+                data=_csv_bytes(raw_sig, tuple(filter_subs), str(filter_type)),
+                file_name="uyam_export.csv",
+                mime="text/csv",
+                key="data_download_csv",
+            )
 
 
 # ===========================================================================
 # Tab 3: Run History
 # ===========================================================================
 with tab_history:
-    @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
-    def _live_history() -> None:
-        if scraping_now:
-            _load_runs.clear()
-        runs = _load_runs()
-        if not runs:
-            st.info("No collection runs yet.")
-            return
-        df_runs = pd.DataFrame(runs)
-        df_runs["run_id"] = df_runs["collection_run_id"].str[:8] + "…"
-        df_runs = df_runs.drop(columns=["collection_run_id", "manifest_path"], errors="ignore")
-        preferred_cols = [
-            "run_id", "source_type", "subreddit", "started_at_utc", "finished_at_utc",
-            "submissions_stored", "comments_stored", "duplicates_skipped",
-            "submissions_seen", "comments_seen", "validation_failures",
-        ]
-        df_runs = df_runs[[c for c in preferred_cols if c in df_runs.columns]]
-        st.dataframe(_paginate(df_runs, key="history_page"), width="stretch")
-        st.caption(
-            f"{len(df_runs)} runs total — "
-            + ("auto-refreshes during the scrape" if scraping_now else "use Refresh data to reload")
-        )
+    if tab_history.open:
+        @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
+        def _live_history() -> None:
+            if scraping_now:
+                _load_runs.clear()
+            runs = _load_runs()
+            if not runs:
+                st.info("No collection runs yet.")
+                return
+            df_runs = pd.DataFrame(runs)
+            df_runs["run_id"] = df_runs["collection_run_id"].str[:8] + "…"
+            df_runs = df_runs.drop(columns=["collection_run_id", "manifest_path"], errors="ignore")
+            preferred_cols = [
+                "run_id", "source_type", "subreddit", "started_at_utc", "finished_at_utc",
+                "submissions_stored", "comments_stored", "duplicates_skipped",
+                "submissions_seen", "comments_seen", "validation_failures",
+            ]
+            df_runs = df_runs[[c for c in preferred_cols if c in df_runs.columns]]
+            st.dataframe(_paginate(df_runs, key="history_page"), width="stretch")
+            st.caption(
+                f"{len(df_runs)} runs total — "
+                + (
+                    "auto-refreshes during the scrape"
+                    if scraping_now
+                    else "use Refresh data to reload"
+                )
+            )
 
-    _live_history()
+        _live_history()
 
 
 # ===========================================================================
 # Tab 4: Stats
 # ===========================================================================
 with tab_stats:
-    @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
-    def _live_stats() -> None:
-        stats = _load_stats()
-        if not stats:
-            st.info("No data collected yet.")
-            return
-        cols = st.columns(max(len(stats), 1))
-        for i, s in enumerate(stats):
-            with cols[i]:
-                st.metric(
-                    f"r/{s['subreddit']}",
-                    f"{s['submissions']} posts",
-                    delta=f"{s['comments']} comments",
-                )
+    if tab_stats.open:
+        @st.fragment(run_every=LIVE_INTERVAL if scraping_now else None)
+        def _live_stats() -> None:
+            stats = _load_stats()
+            if not stats:
+                st.info("No data collected yet.")
+                return
+            cols = st.columns(max(len(stats), 1))
+            for i, s in enumerate(stats):
+                with cols[i]:
+                    st.metric(
+                        f"r/{s['subreddit']}",
+                        f"{s['submissions']} posts",
+                        delta=f"{s['comments']} comments",
+                    )
 
-        st.divider()
-        st.subheader("Submissions vs Comments")
-        df_chart = pd.DataFrame(stats).set_index("subreddit")[["submissions", "comments"]]
-        st.bar_chart(df_chart)
+            st.divider()
+            st.subheader("Submissions vs Comments")
+            df_chart = pd.DataFrame(stats).set_index("subreddit")[["submissions", "comments"]]
+            st.bar_chart(df_chart)
 
-        st.divider()
-        st.subheader("Last collection times")
-        df_last = pd.DataFrame(stats)[["subreddit", "last_collection"]]
-        df_last["last_collection"] = df_last["last_collection"].str[:19]
-        st.dataframe(df_last, width="stretch", hide_index=True)
+            st.divider()
+            st.subheader("Last collection times")
+            df_last = pd.DataFrame(stats)[["subreddit", "last_collection"]]
+            df_last["last_collection"] = df_last["last_collection"].str[:19]
+            st.dataframe(df_last, width="stretch", hide_index=True)
 
-    _live_stats()
+        _live_stats()
 
 
 # ===========================================================================
 # Tab 5: Annotation (pipeline control — index/select/lid/sentiment/LLM runs)
 # ===========================================================================
 with tab_annotate:
-    try:
-        from uyam.annotate.pipeline_ui import render_annotation_tab
+    if tab_annotate.open:
+        try:
+            from uyam.annotate.pipeline_ui import render_annotation_tab
 
-        render_annotation_tab()
-    except ImportError as exc:
-        st.info(
-            "Annotation pipeline needs the annotate extras: `pip install -e .[annotate]` "
-            f"({exc})"
-        )
-    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
-        st.error(f"Annotation pipeline unavailable: {exc}")
+            render_annotation_tab()
+        except ImportError as exc:
+            st.info(
+                "Annotation pipeline needs the annotate extras: `pip install -e .[annotate]` "
+                f"({exc})"
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+            st.error(f"Annotation pipeline unavailable: {exc}")
 
 
 # ===========================================================================
 # Runs & Datasets (every annotation run side by side + every exported version)
 # ===========================================================================
 with tab_runs:
-    try:
-        from uyam.annotate.runs_ui import render_runs_tab
+    if tab_runs.open:
+        try:
+            from uyam.annotate.runs_ui import render_runs_tab
 
-        render_runs_tab()
-    except ImportError as exc:
-        st.info(
-            "Runs & Datasets needs the annotate extras: `pip install -e .[annotate]` "
-            f"({exc})"
-        )
-    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
-        st.error(f"Runs & Datasets unavailable: {exc}")
+            render_runs_tab()
+        except ImportError as exc:
+            st.info(
+                "Runs & Datasets needs the annotate extras: `pip install -e .[annotate]` "
+                f"({exc})"
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+            st.error(f"Runs & Datasets unavailable: {exc}")
 
 
 # ===========================================================================
 # Tab 6: Annotation Review (gold subset + low-confidence queue)
 # ===========================================================================
 with tab_review:
-    try:
-        from uyam.annotate.review_ui import render_review_tab
+    if tab_review.open:
+        try:
+            from uyam.annotate.review_ui import render_review_tab
 
-        render_review_tab()
-    except ImportError as exc:
-        st.info(
-            "Annotation review needs the annotate extras: `pip install -e .[annotate]` "
-            f"({exc})"
-        )
-    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
-        st.error(f"Annotation review unavailable: {exc}")
+            render_review_tab()
+        except ImportError as exc:
+            st.info(
+                "Annotation review needs the annotate extras: `pip install -e .[annotate]` "
+                f"({exc})"
+            )
+        except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+            st.error(f"Annotation review unavailable: {exc}")
