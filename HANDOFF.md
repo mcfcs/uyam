@@ -9,7 +9,7 @@ a chat (see [RULES.md §1](RULES.md)).
 
 ---
 
-## Current state (as of 2026-11-19, end of session)
+## Current state (as of 2026-11-22, end of session)
 
 **Corpus (raw JSONL, `data/raw/`)**: **588,507 records** (40,125
 submissions, 548,382 comments) from r/Philippines, r/CasualPH and
@@ -24,28 +24,32 @@ and re-selected 2026-11-19: **512,471 eligible**, 1,417 unlabeled items
 excluded as `phatic`, 120 labeled items flagged `phatic` (labels kept). The
 15,000 aggregated items and their labels are **frozen** (Gio, for leische
 U9): 1,601 sarcastic, unchanged and verified against the backup
-`data/db/annotation-2026-11-19.bak.sqlite3`. Gold queue redrawn: 300 items,
-31 labeled by Gio, 269 to do. `assist_suggestions` holds 300 Claude Code
-suggestions (`claude-code:claude-opus-5-5`, `guideline-v1-draft`; 11
-sarcastic). `eval_annotations` is empty because nimble hasn't been run.
+`data/db/annotation-2026-11-19.bak.sqlite3`. Gold queue redrawn again on
+2026-11-22 with split and shipped-sarcastic strata each ×2: 300 items, 62
+ensemble-sarcastic, 31 labeled by Gio, 269 to do (backup
+`annotation-2026-11-22-pre-gold-redraw.bak.sqlite3`). `assist_suggestions`
+holds 300 Claude Code suggestions (`claude-code:claude-opus-5-5`,
+`guideline-v1.1`, 24 sarcastic, 4 of them D1-tagged). On Gio's 31 items they
+agree on 29. `eval_annotations` is empty because nimble hasn't been run.
 The `human_reviews.votes_seen` and `first_reviewed_at` columns were added
 (backup first: `data/db/annotation-2026-11-19-pre-votes-seen.bak.sqlite3`).
 
 **Export (`data/annotated/`)**: still `dataset-v1` (2026-09-15). A trial v2
 export to the scratchpad matched v1 (same 15,000 items, 0 label changes;
 majority positives 2,747, rows differing 1,712, κ shipped vs majority 0.545,
-48 h coverage 46.5%). **The real v2 export waits for leische to say it's
-ready** (Gio, 2026-11-19), when `../tsis/LEISCHE_LATEST.md` reports its v2 code
-changes done.
+48 h coverage 46.5%). **Not exported yet.** leische's LEISCHE_LATEST waits on
+uyam's export, so waiting for leische's readiness left both sides waiting.
+Exporting now is recommended; Gio runs `uyam annotate export --version v2`.
+The v1 card is preserved as `data/annotated/dataset_card-v1.json`.
 
 **Known gaps the thesis must address**: data didn't come through Reddit's
-official API (ethics reminder); gold κ on 31 items is −0.148; the guideline
-decisions D1–D5 are open.
+official API (ethics reminder); gold κ on 31 items is −0.148; guideline
+decisions D2, D3 and D5 are open (D1 broad, D4 done).
 
 ## In progress
 
-Nothing is running. Waiting on Gio for the D1–D5 decisions and gold labels,
-and on leische for v2 readiness.
+Nothing is running. Gio is labeling the 269 gold items. The v2 export waits on
+Gio's go, then a leische chat (brief: `docs/briefs/LEISCHE_BRIEF.md`).
 
 ## Next steps (for Gio unless marked)
 
@@ -53,19 +57,18 @@ These are also the to-dos in the Streamlit **Reminders** tab
 (`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
 records which ones are done.
 
-1. **Settle guideline decisions D1–D5** (`docs/GUIDELINE.md` §7). D1 (hugot,
-   self-pity, playful elevation) decides whether Claude's suggestions match
-   how Gio labels: on his 31 items they agree on 26 but miss 5 of his 6
-   positives. If he takes the broad reading, an agent updates the guideline
-   and regenerates the suggestions (below).
-2. **Label the 269 gold items** in Annotation Review: blind first, then
-   optionally reveal Claude's suggestion.
+1. **Label the 269 gold items** in Annotation Review (guideline v1.1): blind
+   first, write `D1` in notes for wry-pose items, then optionally reveal
+   Claude's suggestion. D2, D3 and D5 are open but don't block labeling.
+2. **v2 export** (`uyam annotate export --version v2`), then transfer the
+   bundle (Download bundle from the leische device over Tailscale, or
+   Taildrop) and paste `docs/briefs/LEISCHE_BRIEF.md` into a leische chat.
 3. **nimble** on the remote box: `ollama pull nimble:9b`, then
    `uyam annotate evaluate --model nimble` and `uyam annotate eval-report`.
-4. **Agent, when LEISCHE_LATEST says ready:** `uyam annotate export --version
-   v2`, check the card against the trial numbers above, update UYAM_LATEST.md
-   §1/§9, and mirror it to tsis. Gio then sends the bundle (Annotation tab →
-   Download bundle).
+4. **Agent, after the export:** check the card against the trial numbers
+   above, update UYAM_LATEST.md §1/§9, and mirror it to tsis. Once the gold
+   set is labeled, re-export (same version label only if training labels are
+   unchanged; human_gold changes alone don't change the training labels).
 5. Thesis text (reminders in the *Thesis manuscript* section): Arctic Shift
    method and ethics, window and phatic filter, guideline and blind-first
    assist.
@@ -107,6 +110,55 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-22 — D1 broad, sarcastic-weighted gold redraw, v2 unblocked
+
+**Decisions (Gio):**
+- D1 uses the broad reading: hugot, self-pity and playful praise may count as
+  sarcasm.
+- Weight sarcastic items in the gold set.
+- He will label the 269 gold items himself.
+- Manuscript revisions come later.
+- The Reddit API application is still pending.
+
+**Done:**
+- `2f42212`: `review.gold_sarcastic_oversample` (2.0), multiplied with the
+  split weight. Redrawn after a backup: 62 of 300 are ensemble-sarcastic,
+  the 31 labels were kept, and labels and reviews were unchanged.
+- `5841142`: GUIDELINE v1.1, D1 broad, with the `D1` notes tag so κ can be
+  reported both ways.
+- Old `guideline-v1-draft` suggestions were deleted. 300 new ones were made
+  by 5 blind agents and loaded (`guideline-v1.1`, 24 sarcastic, 8 under 0.6
+  confidence).
+- `9f2b9a4`: the Download bundle button works from any browser (falls back
+  to the newest zip on disk), and the app's export version defaults to v2,
+  not the frozen v1.
+- `0f3db3e`: new leische v2 brief and reminder updates.
+- Reminders ticked in `data/reminders.json`: backup, backfill, proxies,
+  latest days, keyword searches, retag, reindex, low-confidence review.
+- `8d02e92`: UYAM_LATEST, mirrored as tsis `f8c444c`.
+
+**Findings:**
+- The two repos were waiting on each other: leische's LEISCHE_LATEST
+  (2026-11-17) waits on uyam's export.
+- The v2 bundle contains a file named `dataset_card.json`. Unzipped into
+  leische `data/`, it would overwrite the v1 card, so the brief says to unzip
+  into `data/incoming-v2/`.
+- Ethics: all 15,000 labeled items came from the live Shreddit scrape, so
+  "a public archive was used" can't describe them (reminder updated). If the
+  API is approved, re-fetching the labeled ids through it is a mitigation to
+  report.
+- Guideline gaps the new agents raised (for a v1.2):
+  - a silver-lining joke vs D1 playful elevation
+  - parody in someone else's imagined voice
+  - /s on a playful joke (H8 vs H4)
+  - absurd one-up proposals and fake games used to ridicule
+  - stock ironic phrases ("the world is healing")
+  - polite gratitude toward concern-trolling
+  - mock concessions whose words are literally true
+
+**Left open:** the export (Gio), the leische chat, gold labeling, and D2, D3
+and D5.
 
 ### 2026-11-19 (late) — v2 prep: phatic flag, retag, gold redraw, guideline, assist, nimble
 
