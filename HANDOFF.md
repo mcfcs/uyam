@@ -49,10 +49,23 @@ decisions D2, D3 and D5 are open (D1 broad, D4 done).
 
 ## In progress
 
-Nothing is running in uyam. **dataset-v3 is set up and piloted**, and the
-full run waits on Gio's go:
-`uyam annotate pipeline --config-path config/annotation-v3.yaml`
-(~28 h of laptop GPU, local only). Gio is labeling the 269 gold items in the
+**dataset-v3 full run STARTED 2026-11-22 02:50 PHT** (Gio's go). It is
+detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
+- Command: `uyam annotate pipeline --config-path config/annotation-v3.yaml
+  --skip-prep --skip-gold`. Prep was skipped because the v3 copy is already
+  indexed and selected, and a full LID pass over ~495k items would add RAM
+  pressure next to Gio's apps.
+- Logs: `data/.v3-pipeline.log` and `data/logs/` job logs.
+- Order: llamasealion (20,900 left, ~27 items/min, ~13 h), then qwen3
+  (6,000), then sealion (6,000). Roughly 27–30 h in total. Sentiment for the
+  6,000 new items is done.
+- It shares the laptop GPU with Gio's ComfyUI and GPT-SoVITS (manabi) and
+  runs next to arbit (CPU/RAM). **Don't close those apps** (Gio).
+- To stop: kill the orchestrator and the lane job. To resume: re-run the
+  same command (finished items are skipped).
+- Still to do before export: LID for the 6,000 new items (needs a
+  `--target` option on `annotate lid`), the gold sync, `--retry-failed` for
+  qwen3's 2 old failures, then aggregate and export. Gio is labeling the 269 gold items in the
 main DB. leische's v2 runs are paused at 1 of 11 (watch tsis
 LEISCHE_LATEST.md).
 
