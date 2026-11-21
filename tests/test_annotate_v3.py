@@ -190,6 +190,8 @@ def _source(tmp_path: Path) -> Any:
             for key in ("a1", "a2", "a3"):
                 db.insert_llm_annotation(_ann(f, key, sarcastic=int(f == "t1_c3")))
         db.insert_llm_annotation(_ann("t1_c3", "adj", role="adjudicator", sarcastic=1))
+        # A kept model's vote under an older prompt version (a pilot) must go too.
+        db.insert_llm_annotation(_ann("t1_c1", "a1") | {"prompt_version": "sarc-v0"})
         db.enqueue_review("t1_c2", "gold")
         db.upsert_human_review({"reddit_fullname": "t1_c2", "sarcastic": 0, "is_gold": 1})
         db.commit()
@@ -223,9 +225,9 @@ def test_fork_keeps_the_lineup_gold_and_pins_the_target_set(tmp_path: Path) -> N
     assert stats["target_total"] == 11
 
     with AnnotationDatabase(dst) as db:
-        keys = {(str(r[0]), str(r[1])) for r in db.conn.execute(
-            "SELECT DISTINCT model_key, role FROM llm_annotations")}
-        assert keys == {("a1", "annotator"), ("a2", "annotator")}
+        keys = {(str(r[0]), str(r[1]), str(r[2])) for r in db.conn.execute(
+            "SELECT DISTINCT model_key, role, prompt_version FROM llm_annotations")}
+        assert keys == {("a1", "annotator", PROMPT_VERSION), ("a2", "annotator", PROMPT_VERSION)}
         assert db.conn.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0] == 0
         gold = db.get_human_review("t1_c2")
         assert gold is not None and gold["is_gold"] == 1  # gold labels carry over

@@ -7,9 +7,10 @@ database. It writes a new SQLite file that:
 - keeps everything shared (corpus index, candidates, context snapshots, LID,
   transformer sentiment, the human gold reviews and queue, assist
   suggestions), so the new lineup sees exactly the context the old one saw;
-- keeps only the annotator votes of the models that stay in the lineup, and
-  drops every other annotator's and the adjudicator's votes and failures,
-  plus the aggregates (recomputed under the new rules);
+- keeps only the annotator votes of the models that stay in the lineup
+  under the current prompt version, and drops every other vote and failure
+  (other annotators, the adjudicator, older prompt versions), plus the
+  aggregates (recomputed under the new rules);
 - pins the target set with `target_priority`: the items the source shipped
   (priority 2) plus a seeded random sample of not-yet-labeled eligible,
   non-phatic items per calendar month (priority 1). Sampling is uniform
@@ -85,14 +86,16 @@ def fork_for_reannotation(
             )
         ]
         stats["base"] = len(base)
+        # Everything but the kept lineup's votes under this prompt version goes,
+        # including votes left over from older prompt versions (pilots).
         stats["dropped_votes"] = conn.execute(
-            f"DELETE FROM llm_annotations WHERE prompt_version = ? "
-            f"AND (role != 'annotator' OR model_key NOT IN ({marks}))",
+            f"DELETE FROM llm_annotations WHERE NOT (prompt_version = ? "
+            f"AND role = 'annotator' AND model_key IN ({marks}))",
             (prompt_version, *keep),
         ).rowcount
         stats["dropped_failures"] = conn.execute(
-            f"DELETE FROM llm_failures WHERE prompt_version = ? "
-            f"AND (role != 'annotator' OR model_key NOT IN ({marks}))",
+            f"DELETE FROM llm_failures WHERE NOT (prompt_version = ? "
+            f"AND role = 'annotator' AND model_key IN ({marks}))",
             (prompt_version, *keep),
         ).rowcount
         stats["dropped_aggregates"] = conn.execute("DELETE FROM aggregates").rowcount
