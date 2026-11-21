@@ -34,13 +34,14 @@ agree on 29. `eval_annotations` is empty because nimble hasn't been run.
 The `human_reviews.votes_seen` and `first_reviewed_at` columns were added
 (backup first: `data/db/annotation-2026-11-19-pre-votes-seen.bak.sqlite3`).
 
-**Export (`data/annotated/`)**: still `dataset-v1` (2026-09-15). A trial v2
-export to the scratchpad matched v1 (same 15,000 items, 0 label changes;
-majority positives 2,747, rows differing 1,712, κ shipped vs majority 0.545,
-48 h coverage 46.5%). **Not exported yet.** leische's LEISCHE_LATEST waits on
-uyam's export, so waiting for leische's readiness left both sides waiting.
-Exporting now is recommended; Gio runs `uyam annotate export --version v2`.
-The v1 card is preserved as `data/annotated/dataset_card-v1.json`.
+**Export (`data/annotated/`)**: **`dataset-v2` exported** by Gio on
+2026-11-22 00:34 PHT (`uyam_commit` `39b1500`; `dataset_card-v2.json`,
+`uyam-dataset-v2.zip`). It is verified identical to v1 on all 15,000 labels.
+The card numbers match the trial (majority positives 2,747, rows differing
+1,712, κ 0.545, 48 h coverage 46.5%), and the corpus dump has 281,275
+records. leische received it and verified the checksums, and its v2 runs are
+paused at 1 of 11. `dataset-v1` files and `dataset_card-v1.json` are kept;
+`dataset_card.json` is now the v2 card.
 
 **Known gaps the thesis must address**: data didn't come through Reddit's
 official API (ethics reminder); gold κ on 31 items is −0.148; guideline
@@ -48,8 +49,8 @@ decisions D2, D3 and D5 are open (D1 broad, D4 done).
 
 ## In progress
 
-Nothing is running. Gio is labeling the 269 gold items. The v2 export waits on
-Gio's go, then a leische chat (brief: `docs/briefs/LEISCHE_BRIEF.md`).
+Nothing is running in uyam. Gio is labeling the 269 gold items. leische's
+v2 runs are paused at 1 of 11 (watch tsis LEISCHE_LATEST.md).
 
 ## Next steps (for Gio unless marked)
 
@@ -60,9 +61,9 @@ records which ones are done.
 1. **Label the 269 gold items** in Annotation Review (guideline v1.1): blind
    first, write `D1` in notes for wry-pose items, then optionally reveal
    Claude's suggestion. D2, D3 and D5 are open but don't block labeling.
-2. **v2 export** (`uyam annotate export --version v2`), then transfer the
-   bundle (Download bundle from the leische device over Tailscale, or
-   Taildrop) and paste `docs/briefs/LEISCHE_BRIEF.md` into a leische chat.
+2. **Re-export after the gold labels** so leische gets the new
+   `human_gold` labels. The training labels are unchanged, so leische's v2
+   runs remain valid.
 3. **nimble** on the remote box: `ollama pull nimble:9b`, then
    `uyam annotate evaluate --model nimble` and `uyam annotate eval-report`.
 4. **Agent, after the export:** check the card against the trial numbers
@@ -110,6 +111,23 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-22 (later) — v2 exported and delivered; tsis-first sync rule
+
+**Decisions (Gio):** every session pulls tsis first, to stay in sync with
+leische.
+
+**Done:**
+- Gio exported v2 and delivered it to leische. I verified it against v1:
+  the same 15,000 ids, and 0 differences in sarcastic, language, both
+  sentiments or cues. The card matches the trial.
+- `c47263b`: RULES §1.1 and §9.1, the tsis-first rule.
+- `b1e3be4`: UYAM_LATEST announces v2 (mirrored as tsis `905c9ab`).
+- Reminders `export-dataset-v2` and `send-v2-to-leische` ticked.
+
+**leische (LEISCHE_LATEST 2026-11-22, leische `7c7e291`):** v2 received,
+readiness done, runs paused at 1 of 11, nothing quotable yet. No new
+requests to uyam. Its RULES now also pull tsis first (`1ddc9e8`).
 
 ### 2026-11-22 — D1 broad, sarcastic-weighted gold redraw, v2 unblocked
 
