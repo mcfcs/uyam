@@ -244,8 +244,9 @@ reminders:
     title: Prepare the adviser meeting (questions to settle)
     details: >
       Status of every adviser item is in UYAM_LATEST.md §10. Questions to bring:
-      (1) Is the second annotator meant for all 300 items or a subset (≥100)?
-      Who will it be, and does the ethics clearance need to name them?
+      (1) Tell him the second annotator doesn't fit the time. Is a single
+      annotator plus an intra-annotator check (D5) acceptable as a stated
+      limitation?
       (2) Equal-size re-annotation: is replacing only gemma3:27b with a ~9B
       model (one new model, majority vote, no adjudicator) acceptable? Does it
       need to finish before the final defense, or can it be future work?
@@ -257,27 +258,34 @@ reminders:
 
   - id: second-annotator-2026-11
     section: Adviser items (meeting Wed 2026-11-25)
-    title: Recruit a second human annotator for the gold set
+    title: "Not now: second human annotator (doesn't fit the time; Gio, 2026-11-22)"
     details: >
-      A native Filipino/English speaker labels the gold items blind (no model
-      votes, no Claude assist) using docs/GUIDELINE.md. That gives
-      inter-annotator κ and a consensus label where you disagree. uyam needs
-      a small tooling change first (a per-annotator review table and an
-      annotator picker in the Review tab), and an agent can build it once you
-      say go. The annotator can work in the app over Tailscale, or on a copy
-      of the queue.
+      Deferred. Tell the adviser on Wednesday, and state it as a limitation:
+      a single annotator, so no inter-annotator κ. The partial substitute is
+      D5, a blind re-label of the first 31 items at least two weeks later,
+      which gives an intra-annotator κ. If it becomes possible later: a
+      native Filipino/English speaker labels the gold items blind (no votes,
+      no Claude assist), and uyam needs a per-annotator review table first
+      (an agent can build it). Tick this off once you've told the adviser.
 
   - id: decide-equal-size-reannotation-2026-11
     section: Adviser items (meeting Wed 2026-11-25)
-    title: Decide on the equal-size LLM re-annotation (would become dataset-v3)
+    title: "Start the full dataset-v3 re-annotation (laptop GPU, ~28 h)"
     details: >
-      The adviser wants model size removed as a hidden variable. Cheapest route:
-      keep the qwen3:8b and SEA-LION 9B votes and replace gemma3:27b with a
-      ~9B annotator on all 15,000 items, using the same sarc-v2 prompt and
-      majority vote. It runs entirely on this PC's 8 GB GPU, not the gaming
-      PC. It is a new dataset version, so v1/v2 and leische's results stay
-      untouched. A 100-item pilot comes first to time it. Agents won't
-      start it without your go (RULES §6).
+      Decided 2026-11-22: re-annotate with equal-size models and add ~6,000
+      items from Jun, Jul, Oct and Nov 1-10. The v3 database is already forked
+      (data/db/annotation-v3.sqlite3, 21,000 pinned targets). The lineup is
+      qwen3:8b + Gemma-SEA-LION-v3-9B + Llama-SEA-LION-v3-8B, all on this
+      laptop. The 100-item pilot of the new model passed: 0 failures, 2.3 s
+      per item, sarcasm agreement 86-90% with the other annotators.
+      Remaining work: Llama-SEA-LION on the other 20,900 (about 13.5 h), then
+      qwen3 and SEA-LION on the 6,000 new items (about 4.7 h + 9.5 h), plus
+      LID and sentiment for the new items (minutes). The laptop must stay on,
+      plugged in and awake, and games on the laptop GPU will slow it. It is
+      safe to stop and resume, and the gaming PC is never used. When it ends:
+      `uyam annotate aggregate --config-path config/annotation-v3.yaml`, then
+      an agent checks it and exports v3.
+    command: uyam annotate pipeline --config-path config/annotation-v3.yaml
 
   - id: reddit-api-application-2026-11
     section: Adviser items (meeting Wed 2026-11-25)

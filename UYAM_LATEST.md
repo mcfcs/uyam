@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-22 (evening), uyam `62168c0` (plus this file's commit)
+- **Last updated:** 2026-11-22 (night), uyam `b0d64ac` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -20,6 +20,15 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   training labels unchanged. **tsis: the v2 dataset figures below are final
   for v2, but keep them out of the manuscript until leische has v2
   results, so the chapters don't mix datasets.**
+- **`dataset-v3` is in preparation** (equal-size re-annotation, the adviser's
+  item 5; see §10). It is a separate database
+  (`data/db/annotation-v3.sqlite3`), so v1/v2 are untouched. Its 21,000
+  targets are the 15,000 v2 items plus 6,000 new items: 1,600 each from
+  June, July and October, and 1,200 from Nov 1–10. The lineup is three
+  ~8–9B models: qwen3:8b, Gemma-SEA-LION-v3-9B and Llama-SEA-LION-v3-8B, all
+  q4 on the laptop GPU. Labels are by majority vote, with no adjudicator.
+  The 100-item pilot passed. The full run (~28 h of laptop GPU) waits on
+  Gio's go. Nothing to quote yet.
 
 > **For tsis editors:** don't put any *provisional* number into the
 > manuscript. Chapter 4 is computed on v1, and mixing v1 results with v2
@@ -337,10 +346,10 @@ these requests reach them without uyam editing their repos.
 | # | Item | Owner | Where it stands (2026-11-22) |
 |---|---|---|---|
 | 1 | Finish the gold set (31 → 300) under a written guideline/codebook | Gio (uyam) | **On track.** `docs/GUIDELINE.md` v1.1 is the codebook: definition, Says/Means procedure, cue rules, 13 hard cases, span and unsure fields, decision log. The 300-item queue is drawn (62 ensemble-sarcastic) and 31 are labeled. To mark it final: D2, D3 and D5 |
-| 2 | A second human annotator | Gio + uyam | **Not started; needs a person and tooling.** The review DB holds one human label per item. Plan: a second native speaker labels the 300 (or at least 100) blind, with no model votes and no Claude assist, under the same guideline. That gives inter-annotator κ, and human disagreements get a consensus label. It also informs the adviser's "majority vote vs no-override of 3-0" question (leische U2). The ethics clearance should cover this person |
+| 2 | A second human annotator | Gio | **Deferred (Gio, 2026-11-22: doesn't fit the time).** It will be stated as a limitation: a single human annotator, so no inter-annotator κ. The partial substitute is D5, a blind re-label of the first 31 items after at least two weeks, for an intra-annotator κ. The adviser's "majority vote vs no-override of 3-0" question then rests on the single-annotator gold set and on the equal-size re-annotation (row 5) |
 | 3 | Re-run the 3 main conditions on majority-vote labels | leische | **Data ready:** `labels.sarcastic_majority` is in v2 (U1; 2,747 positives vs 1,601 shipped) |
 | 4 | Zero-shot LLM and simple text-concatenation baselines | leische | Not started. A zero-shot LLM scored against LLM-made labels is partly circular (more so if it shares a family with the annotators), so it should be scored mainly against the human gold and should use a model outside the annotator lineup. Running it needs Gio's OK (RULES §6) |
-| 5 | Re-annotate with equal-size LLMs (remove model size as a hidden variable) | uyam, Gio's decision | **Conflicts with the frozen v2 labels, so it must be a separate version (`dataset-v3`); v1/v2 stay as they are.** Current lineup: qwen3:8b, SEA-LION v3 9B, gemma3:27b (plus a qwen3:32b adjudicator). Cheapest equal-size route: keep the two ~8–9B models' votes and replace only gemma3:27b with a ~9B annotator on all 15,000 items, using the same `sarc-v2` prompt. All three then fit the local 8 GB GPU, so the gaming PC isn't needed. Three binary votes always have a majority, so the sarcasm label needs no adjudicator (this fits row 3). Cost: one model × 15,000 items, to be timed with a 100-item pilot first. Needs Gio's go |
+| 5 | Re-annotate with equal-size LLMs (remove model size as a hidden variable) | uyam (**decided by Gio 2026-11-22: yes, plus new months**) | **Conflicts with the frozen v2 labels, so it must be a separate version (`dataset-v3`); v1/v2 stay as they are.** Current lineup: qwen3:8b, SEA-LION v3 9B, gemma3:27b (plus a qwen3:32b adjudicator). Cheapest equal-size route: keep the two ~8–9B models' votes and replace only gemma3:27b with a ~9B annotator on all 15,000 items, using the same `sarc-v2` prompt. All three then fit the local 8 GB GPU, so the gaming PC isn't needed. Three binary votes always have a majority, so the sarcasm label needs no adjudicator (this fits row 3). Cost: one model × 15,000 items, to be timed with a 100-item pilot first. Needs Gio's go |
 | 6 | RQ3 across all folds with proper controls | leische | leische has fold 0 only (`results/rq3-fold0.csv`). The human gold carries intended sentiment for a human check |
 | 7 | Re-run on items with real context only (don't force retrieval) | leische | The data supports it. Conversational context exists for comments, not submissions. Author history within 48 h exists for 46.5% of v2 items (64.9% at 7 d). uyam can add per-row context flags to the export if leische wants them |
 | 8 | Reddit API access | Gio | Application pending. **uyam collection is frozen until it is approved** (RULES §5.10). If approved, re-fetching the labeled ids through the API is a provenance and deletion check worth reporting |
@@ -350,6 +359,18 @@ these requests reach them without uyam editing their repos.
 
 ## 11. Change log
 
+- **2026-11-22 (night)**: dataset-v3 set up. The DB is forked (the 15,000
+  v2 items + 6,000 new Jun/Jul/Oct/Nov items; qwen3 and SEA-LION votes
+  kept, gemma3 and the 32B adjudicator dropped). Majority vote with a
+  confidence tie-break, no adjudicator. The new annotator is
+  Llama-SEA-LION-v3-8B (Llama 3.1 family, Filipino-tuned). Pilot on 100
+  v2 items: 0 failures, 2.3 s per item, sarcasm agreement with qwen3 /
+  gemma3 / SEA-LION 90 / 86 / 90%. On those 100 the v3 majority gives 10
+  positives where v2 shipped 4: majority vote ships more positives than
+  unanimity-or-adjudicate. The second human annotator is deferred (Gio:
+  doesn't fit the time). The new items have more same-author history
+  (≈58–64% at 48 h vs 46.5% for the v2 items). The gold set covers only the
+  Aug–Sep items, which is a stated limitation.
 - **2026-11-22 (evening)**: The adviser's action items were recorded with
   their status (§10), and requests to the tsis and leische sessions added
   (§9). New uyam rules: ask before any LLM run (the remote box is Gio's
