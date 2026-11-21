@@ -284,8 +284,9 @@ Two notes for the thesis text (found while writing the guideline):
   2026-11-22) `assist_before_first_pass`: Gio can opt to see Claude's
   suggestion before labeling, as a second judgement. Those first passes are
   Claude-informed, still counted in κ, and their number is reported. 300
-  suggestions under `guideline-v1.1` are loaded for the redrawn queue (24
-  sarcastic). On Gio's 31 labeled items they agree with him on 29 (26 under
+  full-label suggestions under `guideline-v1.1` are loaded for the redrawn
+  queue (2026-11-22: sarcasm, span, language, both sentiments and cues; 25
+  sarcastic). With the opt-in toggle, the review form starts from them. On Gio's 31 labeled items they agree with him on 29 (26 under
   the strict v1 draft). The ethics text should mention
   that item text is processed by a third-party model (§3.1).
 - **Evaluation-only annotators:** the adviser's suggested `nimble:9b` can be

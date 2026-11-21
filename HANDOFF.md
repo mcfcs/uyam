@@ -62,6 +62,17 @@ detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
   also a labeling-only site, `run-label-app.bat` → http://100.71.83.125:8502
   (`931192a`), and an opt-in "Claude's suggestion before I label" toggle
   (`8e1d38d`, recorded as `assist_before_first_pass`).
+- **Review form (`bb73abc`):** Claude's take now carries every label (300
+  full-label suggestions loaded: 25 sarcastic; vs Gio's 32, sarcasm 30/32 and
+  language 30/32). The upfront toggle prefills the form from it. "Not
+  sarcastic" disables the span and cues and makes intended = literal (S3)
+  unless "differs" is ticked. New guideline gaps the agents raised:
+  - S1 on long mixed targets: whole target or the sarcastic span?
+  - Intended sentiment of D1 items: wry amusement → neutral, self-pity →
+    negative?
+  - L4 with a repeated particle ("po … po"): does it count twice?
+  - A Cebuano + English target: there is no label for it (taglish was used).
+  - Parody in someone else's voice; mock advice; feigned surrender.
 - **Runs & Datasets** tab: every run side by side (the original v1/v2 run stays
   untouched in annotation.sqlite3 as the fallback), a label browser per run, and
   every exported version (v1, v2, ...). All read-only.
