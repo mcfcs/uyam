@@ -238,3 +238,76 @@ reminders:
       Only if you want more labels, not just more temporal context. Raise
       `pipeline.target_items` in config/annotation.yaml, then Start ALL.
     command: uyam annotate pipeline
+
+  - id: adviser-meeting-2026-11-25
+    section: Adviser items (meeting Wed 2026-11-25)
+    title: Prepare the adviser meeting (questions to settle)
+    details: >
+      Status of every adviser item is in UYAM_LATEST.md §10. Questions to bring:
+      (1) Is the second annotator meant for all 300 items or a subset (≥100)?
+      Who will it be, and does the ethics clearance need to name them?
+      (2) Equal-size re-annotation: is replacing only gemma3:27b with a ~9B
+      model (one new model, majority vote, no adjudicator) acceptable? Does it
+      need to finish before the final defense, or can it be future work?
+      (3) Language naming: keep three profiles renamed English / Filipino /
+      Filipino–English code-switched? The Chapter 4 by-language result needs
+      them kept separate. (4) Is the archive (Arctic Shift) also covered by
+      "API approval before collection continues"? Collection is complete and
+      frozen either way.
+
+  - id: second-annotator-2026-11
+    section: Adviser items (meeting Wed 2026-11-25)
+    title: Recruit a second human annotator for the gold set
+    details: >
+      A native Filipino/English speaker labels the gold items blind (no model
+      votes, no Claude assist) using docs/GUIDELINE.md. That gives
+      inter-annotator κ and a consensus label where you disagree. uyam needs
+      a small tooling change first (a per-annotator review table and an
+      annotator picker in the Review tab), and an agent can build it once you
+      say go. The annotator can work in the app over Tailscale, or on a copy
+      of the queue.
+
+  - id: decide-equal-size-reannotation-2026-11
+    section: Adviser items (meeting Wed 2026-11-25)
+    title: Decide on the equal-size LLM re-annotation (would become dataset-v3)
+    details: >
+      The adviser wants model size removed as a hidden variable. Cheapest route:
+      keep the qwen3:8b and SEA-LION 9B votes and replace gemma3:27b with a
+      ~9B annotator on all 15,000 items, using the same sarc-v2 prompt and
+      majority vote. It runs entirely on this PC's 8 GB GPU, not the gaming
+      PC. It is a new dataset version, so v1/v2 and leische's results stay
+      untouched. A 100-item pilot comes first to time it. Agents won't
+      start it without your go (RULES §6).
+
+  - id: reddit-api-application-2026-11
+    section: Adviser items (meeting Wed 2026-11-25)
+    title: "Reddit API access (pending): collection stays frozen until approved"
+    details: >
+      Adviser: the headed-browser scraper is not API-compliant, and approval is
+      required before data collection continues. uyam won't run any
+      collection until it is approved and the ethics clearance is done
+      (RULES §5.10). If approved, re-fetching the 15,000 labeled ids through
+      the API is a provenance and deletion check worth reporting.
+
+  - id: leische-adviser-items-2026-11
+    section: Adviser items (meeting Wed 2026-11-25)
+    title: Have a leische chat take the model-side adviser items
+    details: >
+      Re-run the 3 main conditions on majority-vote labels; add zero-shot LLM
+      and text-concatenation baselines; run RQ3 on all folds with controls;
+      re-run on items with real context only. The data for all four is in
+      dataset-v2, and leische sees them in UYAM_LATEST §9–§10 at session
+      start. Score the zero-shot LLM mainly against the human gold (scoring
+      it against LLM labels is circular), and run it only with your OK on
+      which machine.
+
+  - id: tsis-terminology-filipino-2026-11
+    section: Thesis manuscript
+    title: Terminology - "Taglish" to "Filipino"; define code-switching
+    details: >
+      Adviser: replace "Taglish" with "Filipino" and define Filipino and
+      intra-sentential code-switching. Data note for the definition: the
+      label marks a target that meaningfully mixes both languages (neither
+      ≥ ~90%), per target, so it covers intra- AND inter-sentential
+      switching. Keep the three profiles and rename them in the text. Done in
+      a tsis chat (UYAM_LATEST §10 row 11).

@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-22 (later), uyam `c47263b` (plus this file's commit)
+- **Last updated:** 2026-11-22 (evening), uyam `62168c0` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -311,7 +311,51 @@ is quick when it comes:
 | U9 | keep the 15,000 labeled rows; flag `phatic` instead of dropping | **done** (120 flagged, 0 labels changed) |
 | U8 | run or drop keyword oversampling | 57 trial posts re-tagged `natural` (**done**); search step redundant; marker target-selection is Gio's call (§5) |
 
-## 9. Change log
+## 9. Requests to the tsis and leische sessions
+
+Both sessions read this file at session start (their tsis-first rules), so
+these requests reach them without uyam editing their repos.
+
+- **To tsis and leische, from Gio (2026-11-22): end every chat with ALL of
+  Gio's open action items.** Every open step on his end, not just this
+  chat's: your repo's to-dos, the adviser's items in §10 that you own, and
+  anything another repo is waiting on. Group them by urgency, and say which
+  ones an agent can do once he says go. Please add this to your RULES.md.
+  It is uyam RULES §1.3.
+- **To tsis and leische: ask Gio before any LLM run on `100.102.10.69`**
+  (the 24 GB box is his gaming PC). It is uyam RULES §6.
+- **To tsis:** put the adviser's action items (§10) into tsis's own HANDOFF
+  / next steps. They drive the manuscript revisions: the terminology change
+  (Filipino, code-switching), the second annotator, ethics and API status,
+  and the guideline as an appendix.
+- **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
+  are yours. Their data is already in `dataset-v2`. Record them in
+  LEISCHE_LATEST.md with a status.
+
+## 10. Adviser action items (Gio's October meeting; next meeting 2026-11-25, before the final defense)
+
+| # | Item | Owner | Where it stands (2026-11-22) |
+|---|---|---|---|
+| 1 | Finish the gold set (31 → 300) under a written guideline/codebook | Gio (uyam) | **On track.** `docs/GUIDELINE.md` v1.1 is the codebook: definition, Says/Means procedure, cue rules, 13 hard cases, span and unsure fields, decision log. The 300-item queue is drawn (62 ensemble-sarcastic) and 31 are labeled. To mark it final: D2, D3 and D5 |
+| 2 | A second human annotator | Gio + uyam | **Not started; needs a person and tooling.** The review DB holds one human label per item. Plan: a second native speaker labels the 300 (or at least 100) blind, with no model votes and no Claude assist, under the same guideline. That gives inter-annotator κ, and human disagreements get a consensus label. It also informs the adviser's "majority vote vs no-override of 3-0" question (leische U2). The ethics clearance should cover this person |
+| 3 | Re-run the 3 main conditions on majority-vote labels | leische | **Data ready:** `labels.sarcastic_majority` is in v2 (U1; 2,747 positives vs 1,601 shipped) |
+| 4 | Zero-shot LLM and simple text-concatenation baselines | leische | Not started. A zero-shot LLM scored against LLM-made labels is partly circular (more so if it shares a family with the annotators), so it should be scored mainly against the human gold and should use a model outside the annotator lineup. Running it needs Gio's OK (RULES §6) |
+| 5 | Re-annotate with equal-size LLMs (remove model size as a hidden variable) | uyam, Gio's decision | **Conflicts with the frozen v2 labels, so it must be a separate version (`dataset-v3`); v1/v2 stay as they are.** Current lineup: qwen3:8b, SEA-LION v3 9B, gemma3:27b (plus a qwen3:32b adjudicator). Cheapest equal-size route: keep the two ~8–9B models' votes and replace only gemma3:27b with a ~9B annotator on all 15,000 items, using the same `sarc-v2` prompt. All three then fit the local 8 GB GPU, so the gaming PC isn't needed. Three binary votes always have a majority, so the sarcasm label needs no adjudicator (this fits row 3). Cost: one model × 15,000 items, to be timed with a 100-item pilot first. Needs Gio's go |
+| 6 | RQ3 across all folds with proper controls | leische | leische has fold 0 only (`results/rq3-fold0.csv`). The human gold carries intended sentiment for a human check |
+| 7 | Re-run on items with real context only (don't force retrieval) | leische | The data supports it. Conversational context exists for comments, not submissions. Author history within 48 h exists for 46.5% of v2 items (64.9% at 7 d). uyam can add per-row context flags to the export if leische wants them |
+| 8 | Reddit API access | Gio | Application pending. **uyam collection is frozen until it is approved** (RULES §5.10). If approved, re-fetching the labeled ids through the API is a provenance and deletion check worth reporting |
+| 9 | Ethics clearance | Gio | Pending. It must cover: the headed-browser scrape with rotating proxies (the v1 core, all 15,000 labeled items), the Arctic Shift archive (v2 history), pseudonymization, Claude processing the gold text, the second annotator, and retention and deletion (§3.1) |
+| 10 | Release the dataset only after the labels are validated and the manuscript is revised | all | **In place:** RULES §5.11. Exports go to leische only, by direct transfer, never GitHub |
+| 11 | Manuscript: "Taglish" → "Filipino"; define code-switching (including intra-sentential) | tsis | Note on the data: the label `taglish` means the target "meaningfully mixes both" (neither language ≥ ~90% of its words). It is assigned per target, so it covers **both intra- and inter-sentential** switching without telling them apart. Recommended: keep the three profiles and rename them in the text (English / Filipino / Filipino–English code-switched). The Chapter 4 by-language result depends on keeping them separate. If the manuscript needs the intra-sentential share, uyam can measure it with the token-level LID |
+
+## 11. Change log
+
+- **2026-11-22 (evening)**: The adviser's action items were recorded with
+  their status (§10), and requests to the tsis and leische sessions added
+  (§9). New uyam rules: ask before any LLM run (the remote box is Gio's
+  gaming PC); end every chat with all of Gio's action items; collection
+  frozen until API access and ethics clearance; no release before
+  validation.
 
 - **2026-11-22 (later)**: `dataset-v2` exported by Gio (uyam `39b1500`) and
   received by leische (checksums verified; v2 runs paused at 1 of 11).
