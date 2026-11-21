@@ -1,8 +1,8 @@
 # Sarcasm annotation guideline (human gold labels)
 
-**Status: draft v1, 2026-11-19, for Gio's review.** Not adopted yet. Until Gio
-signs it off, nothing here changes how existing labels are read.
-Version string for `assist_suggestions.guideline_version`: `guideline-v1-draft`.
+**Status: draft v1.1, 2026-11-22.** D1 (broad reading) and D4 are decided;
+D2, D3 and D5 are still open (§7). Nothing here changes the v1 dataset labels.
+Version string for `assist_suggestions.guideline_version`: `guideline-v1.1`.
 
 All examples in this file are **made up** or heavily paraphrased. No Reddit
 text is quoted (this repository is public). The real gold items these rules
@@ -55,7 +55,7 @@ definition sits from this one.
 | 3 | What counts as a gap | "intended meaning differs from the literal one AND at least one cue" | same, plus: what the author *means* must be a real attitude, not just "I'm kidding" (§3, step 4) | slightly stricter than the prompt's wording |
 | 4 | Gap without a polarity flip (mock praise, a fake apology, feigned agreement) | covered: polarity inversion is one cue of four, and rhetorical intent lists mock praise and feigned agreement | same as the prompt | **looser than how the adjudicator applied the prompt**: its rationales demand a strict inversion of the literal meaning |
 | 5 | Hyperbole alone | a cue; still needs intended ≠ literal | never enough on its own (H2) | same, made explicit |
-| 6 | Self-deprecation | silent | ironic self-deprecation is sarcasm; sincere self-criticism and *hugot* are not (H3) | a new specification |
+| 6 | Self-deprecation, *hugot*, playful elevation | silent; its jokes rule excludes jokes that mean what they say | ironic self-deprecation, wry *hugot* / self-pity poses and playful mock-elevation **are** sarcasm when the author clearly doesn't hold the literal evaluation (D1, broad reading); sincere self-criticism is not (H1, H3, H4) | **looser than `sarc-v2`**: more human positives than the ensemble, by design. Tag these items `D1` in `notes` |
 | 7 | Quoted or reported sarcasm | silent | not sarcastic unless the author re-uses it ironically (T3) | a new specification |
 | 8 | Phatic items | silent (the candidate filter now excludes unannotated phatic items) | not sarcastic unless an irony marker is present (H11) | same in practice |
 | 9 | Image, link, or deleted parent | "judge only from the given text and context" | same, plus the unsure flag (H13) | same |
@@ -70,7 +70,9 @@ say the definitions were *made operational in a written guideline*, cite it
 (for example as an appendix), state that the first 31 items were labeled
 before it existed, and describe the assist flow (§6.4). Rows 1, 6, 7 and 12
 of the table are where the human label can differ from the ensemble purely
-because of the guideline.
+because of the guideline. Row 6 (D1) is the largest such difference, so gold
+κ should be reported twice: on all items, and with the `D1`-tagged items
+counted as not sarcastic (the `sarc-v2` construct).
 
 ---
 
@@ -156,9 +158,13 @@ Work through these steps in order for every item.
    - (a) *Says* ≠ *Means*. A sincere statement, a complaint, an insult, an
      apt comparison, or a joke that means what it says fails here (H4, H10).
    - (b) *Means* is an attitude the author really holds: criticism,
-     mockery, a complaint, resentment, contempt, or (rarely) affection
-     hidden behind a mock insult. If *Means* is only "I'm kidding" or "I'm
-     playing along", it fails (H4).
+     mockery, a complaint, resentment, contempt, wry self-pity or
+     amusement, or affection hidden behind a mock insult. Under D1 (broad
+     reading), a wry pose counts: an exaggerated self-put-down (*hugot*),
+     self-pity or a playfully elevated description, when the author clearly
+     doesn't hold the literal evaluation. Tag such items `D1` in `notes`.
+     If *Means* is only "I'm kidding" or "I'm playing along" (an absurd
+     scenario with no evaluation in it), it fails (H4).
    - (c) At least one cue makes the gap visible to an ordinary reader of the
      thread (table below). If you can only reach *Means* by speculating about
      the author, it fails.
@@ -192,12 +198,13 @@ means not. Square brackets give the thread context.
 
 **Ruling:** sarcastic when the context or a marker shows the praise isn't
 meant (it is criticism or mockery wearing praise). Not sarcastic when the
-praise fits the situation. A playful, elevated description that the author
-actually means is a joke (H4), not mock praise.
+praise fits the situation. Under D1 (broad reading), a **playfully elevated
+description** is sarcastic too: grand praise for something ordinary or
+faulty that the author clearly doesn't mean literally (tag `D1`).
 
 - ✔ [OP scraped the car on the gate during their first week of driving] *"Ang galing mo naman, pang-F1 ka na talaga."* Says: you're a great driver. Means: you're a bad driver. Cues: polarity inversion, rhetorical intent, contextual incongruity.
 - ✘ [OP shows the first cake they ever baked, and it looks good] *"Ang galing mo naman! Parang binili sa bakery."* This is sincere.
-- ✘ [OP says their dog refuses dog food] *"Pang-mayaman ang panlasa ng aso niyo, ayaw ng dog food haha."* The author means it: the dog has fancy taste. Nothing in the thread withdraws the "praise". (This is the strict reading; see open decision D1.)
+- ✔ (`D1`) [OP says their dog refuses dog food] *"Pang-mayaman ang panlasa ng aso niyo, ayaw ng dog food haha."* Says: your dog has refined taste. Means: your dog is being picky, and that's funny. The elevation is a pose, not a belief. Cues: rhetorical intent and hyperbole.
 
 ### H2. Hyperbole alone vs hyperbole with inverted intent
 
@@ -215,11 +222,14 @@ attitude is one the author doesn't hold, and another cue shows that.
 **Ruling:** it depends on whether the self-put-down is meant.
 
 - **Sincere self-criticism → not sarcastic.** ✘ *"Ang tanga ko talaga, naiwan ko na naman yung ID ko."*
-- **Self-deprecating humor or *hugot* that the author half-means → not
-  sarcastic**, even when it's exaggerated (this is hyperbole alone, H2).
-  ✘ *"Taga-heart react na lang talaga ako sa engagement photos ng iba, yun na role ko 🥲"*
-  ✘ [thread about being judged in a hobby] *"Sasali sana ako, pero baka ako pa yung magmukhang creep haha."*
-  (This is the strict reading; see open decision D1.)
+- **Wry *hugot*, self-pity or self-deprecating humor → sarcastic under D1**
+  (broad reading, tag `D1`), when the self-assessment is a pose the author
+  wouldn't stand by literally. The real attitude is self-pity, rueful
+  amusement or a complaint about their situation.
+  ✔ (`D1`) *"Taga-heart react na lang talaga ako sa engagement photos ng iba, yun na role ko 🥲"* Says: my role in life is reacting to others' engagements. Means: I feel left behind (wry self-pity). Cues: hyperbole, rhetorical intent.
+  ✔ (`D1`) [thread about being judged in a hobby] *"Sasali sana ako, pero baka ako pa yung magmukhang creep haha."* A self-put-down offered as a wry pose.
+  ✘ An exaggerated complaint about the world, not about the self (H2), is
+  still emphasis: *"Sobrang init, parang oven."*
 - **Ironic self-deprecation → sarcastic.** The author pretends to accept a
   low status or blame they actually reject, as a way to criticise someone or
   something else.
@@ -227,18 +237,21 @@ attitude is one the author doesn't hold, and another cue shows that.
   ✔ *"Ay oo, kasalanan ko na naman. Ako lang naman kasi ang empleyado dito 🙃"*
 - **Ironic self-praise → sarcastic** (T4). ✔ *"Galing ko talaga, tatlong beses ko nang nakalimutan yung password ko."*
 
-Quick test: who is the criticism really aimed at, and does the author believe
-the words? A put-down the author believes, about themselves, is not
-sarcasm. A put-down they don't believe, used to hit something else, is.
+Quick test: does the author believe the words? A put-down the author
+believes, about themselves, is not sarcasm. A put-down they don't believe is
+sarcasm: used to hit something else (no tag), or as a wry pose about
+their own situation (tag `D1`).
 
 ### H4. Jokes, banter, and playful teasing
 
-**Ruling: keep the `sarc-v2` jokes rule.** Jokes, banter, and teasing whose
-literal meaning *is* the intended meaning are not sarcasm, however funny or
-mocking they are. This guideline adds that **kidding statements with nothing
-behind them** (playing along, absurd claims, "charot" retractions of a
-tease) are not sarcasm either, because they fail step 4(b). A joke **is**
-sarcasm when it works by saying the opposite of a real evaluation.
+**Ruling: keep the core of the `sarc-v2` jokes rule.** Jokes, banter, and
+teasing whose literal meaning *is* the intended meaning are not sarcasm,
+however funny or mocking they are. **Kidding statements with no evaluation
+in them** (playing along, absurd scenarios, "charot" retractions of a tease)
+are not sarcasm either, because they fail step 4(b). A joke **is** sarcasm
+when it works by saying the opposite of a real evaluation, and, under D1,
+when it is a playful elevation or wry self-put-down the author doesn't hold
+(H1, H3; tag `D1`).
 
 - ✘ *"Mukhang uling yung kape mo haha."* (the `sarc-v2` example) The author really thinks the coffee looks like charcoal.
 - ✘ [OP shows new native chickens. Parent: *"Ang ganda nila, pang-tinola na. Joke!"*] *"Shh, baka marinig ka nila 😂"* This is playing along with a joke. *Means* is "I'm joking too."
@@ -246,10 +259,10 @@ sarcasm when it works by saying the opposite of a real evaluation.
 - ✔ Same thread: *"Galing ng quality control nila, collector's item talaga 🙄"* The praise is aimed at the brand and is withdrawn: mock praise.
 - ✔ *"Ang bango ng kwarto mo, parang medyas na isang linggong hindi nilabhan 😂"* Playful, but it says the opposite of the real evaluation.
 
-Why keep the rule: it is in the prompt the v1 labels came from, and it was
+Why keep the core: it is in the prompt the v1 labels came from, and it was
 added because the pilot showed a model over-flagging humor (base rate 21% vs
-11%). Loosening it for humans alone would make the gold labels measure a
-different construct from the reference labels.
+11%). D1 loosens it only for wry poses. That is why those items carry the
+`D1` tag: κ can then be reported with and without them (§1.1).
 
 ### H5. Rhetorical questions
 
@@ -343,9 +356,11 @@ See D4 for whether they should count toward the 300.
 
 ### H12. Very long confessional posts
 
-**Ruling:** read the whole target. Most vents are sincere: bitterness,
-self-pity, and *hugot* are not sarcasm (H3, H10). Look for sentences that
-pretend an attitude, which in vents is usually mock praise of a third party
+**Ruling:** read the whole target. Most vents are sincere: plain bitterness
+and sincere self-pity are not sarcasm (H10). A vent's overall sad tone is not
+a D1 pose either: under D1 a single sentence must be a wry self-put-down the
+author doesn't hold (H3). Look for sentences that pretend an attitude, which
+in vents is usually mock praise of a third party
 (✔ *"Ang galing talaga ng HR namin, tatlong buwan na wala pa ring sweldo."*).
 One such sentence makes the target sarcastic (T2), with that sentence as the
 span. Don't label a long post sarcastic because of its overall tone. If the
@@ -444,7 +459,7 @@ ships `human_gold.first_pass`, `sarcastic_span`, `unsure`, `assist_seen` and
 - follows §3 step by step and writes a rationale of one or two sentences
   that contains the *Says / Means* pair and the rule IDs it used;
 - fills `sarcastic`, `sarcastic_span`, `rationale`, `confidence`,
-  `source` (the model id), and `guideline_version = "guideline-v1-draft"`;
+  `source` (the model id), and `guideline_version = "guideline-v1.1"`;
 - follows §6.1 too: in a 50/50 case it outputs no, with low confidence.
 
 Running the assist sends item text to a third-party model provider. That is
@@ -455,20 +470,20 @@ a processing step the thesis's ethics text should state (UYAM_LATEST §3.1).
 ## 7. Open decisions for Gio
 
 - **D1. Hyperbolic self-pity, *hugot*, and playful mock-elevated
-  description.** This draft says these are **not** sarcastic (H1, H3, H4),
-  in line with the `sarc-v2` jokes rule. A looser variant would count them
-  whenever the author clearly doesn't mean the literal words. The looser
-  variant matches more of the first 31 human labels, but it moves the gold
-  labels away from the prompt the reference labels came from.
-  `data/guideline_examples.md` shows which items flip either way.
+  description. Resolved 2026-11-22 (Gio): broad reading.** They count as
+  sarcasm when the author clearly doesn't hold the literal evaluation (H1,
+  H3, H4, step 4b). This matches most of the first 31 human labels, and it
+  moves the gold labels away from `sarc-v2`. The reviewer tags such items
+  `D1` in `notes` so κ can be reported with and without them.
 - **D2. The author retelling their own earlier sarcastic remark** (*"sabi
   ko sa kanya, 'wow, ang aga mo ah'"*). Draft: not sarcastic (T3), but mark
   it in `notes`.
 - **D3. 50/50 defaults to "no".** The alternative is to give the best guess
   even at 50/50 and rely on `unsure` alone.
-- **D4. Phatic items in the gold sample. Resolved 2026-11-19:** the 269
-  unlabeled gold items were redrawn from eligible, non-phatic items
-  (stratified by sarcasm × language × split vote × length). The two phatic
+- **D4. Phatic items in the gold sample. Resolved 2026-11-19:** the
+  unlabeled gold items are drawn from eligible, non-phatic items only
+  (stratified by sarcasm × language × split vote × length; since 2026-11-22
+  the split and shipped-sarcastic strata are each weighted ×2). The two phatic
   items among the first 31 keep their labels; the export flags them
   (`flags.phatic`), so κ can be reported with and without them.
 - **D5. Re-label the first 31 under this guideline.** A blind second pass
@@ -482,4 +497,5 @@ a processing step the thesis's ethics text should state (UYAM_LATEST §3.1).
 
 | Version | Date | Change |
 |---|---|---|
+| v1.1 draft | 2026-11-22 | D1 resolved (broad reading): wry *hugot*, self-pity and playful elevation count, tagged `D1` (step 4b, H1, H3, H4, §1.1 row 6). The gold queue was redrawn with shipped-sarcastic strata weighted ×2. Assist suggestions were regenerated under `guideline-v1.1`. |
 | v1 draft | 2026-11-19 | First written version, for Gio's review. Starts from `sarc-v2`. Adds the any-part rule and the sarcastic span (T2), quoted sarcasm (T3), the *Says/Means* gap test with the "real attitude" condition, cue sufficiency, hard cases H1–H13, the language counting rules, the `unsure` flag, and the blind-first assist flow. Checked against the 31 existing gold items (private: `data/guideline_examples.md`). |
