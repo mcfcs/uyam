@@ -28,6 +28,8 @@ from typing import Any
 from uyam.annotate.aggregate import compute_agreement, per_label_resolution
 from uyam.annotate.config import AggregationConfig, AnnotationConfig
 from uyam.annotate.db import AnnotationDatabase
+from uyam.annotate.media import load_post_urls, media_context
+from uyam.annotate.media import summarize as summarize_media
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,55 @@ def _human_labels(labels: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _media_context(
+    db: AnnotationDatabase,
+    record: dict[str, Any],
+    context: dict[str, Any],
+    post_urls: dict[str, str] | None,
+) -> dict[str, Any]:
+    is_post = record.get("record_type") == "submission"
+    post_fullname = str(
+        record.get("reddit_fullname") if is_post else record.get("submission_fullname")
+    )
+    post = record if is_post else db.get_record(post_fullname)
+    return media_context(
+        is_post=is_post,
+        target_text=record.get("text"),
+        post_is_self=(post or {}).get("is_self"),
+        post_url=(post_urls or {}).get(post_fullname),
+        post_body=None if is_post else (post or {}).get("selftext"),
+        parent_texts=[str(p.get("text") or "") for p in context.get("parent_chain") or []],
+    )
+
+
+def _gold_kappa_by_media(db: AnnotationDatabase, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Human-vs-shipped sarcasm kappa on the gold items, text-only vs media-dependent.
+
+    A much lower kappa under image/video posts would mean the LLM labels there
+    are guesses about content nobody saw (the blind first pass, as elsewhere).
+    """
+    from uyam.annotate.evaluation import cohen_kappa
+
+    gold, _ = db.blind_gold_labels()
+    out: dict[str, Any] = {}
+    for name, keep in (("text_only", True), ("media_dependent", False)):
+        pairs = [
+            (int(gold[r["reddit_fullname"]]["sarcastic"]), int(bool(r["labels"]["sarcastic"])))
+            for r in rows
+            if r["reddit_fullname"] in gold
+            and gold[r["reddit_fullname"]].get("sarcastic") is not None
+            and r["labels"].get("sarcastic") is not None
+            and bool((r.get("media_context") or {}).get("text_only")) is keep
+        ]
+        out[name] = {
+            "n": len(pairs),
+            "sarcastic_kappa": cohen_kappa([h for h, _ in pairs], [e for _, e in pairs])
+            if len(pairs) >= 2
+            else None,
+        }
+    return out
+
+
 def _phatic_flag(db: AnnotationDatabase, fullname: str) -> bool:
     row = db.conn.execute(
         "SELECT phatic FROM candidates WHERE reddit_fullname = ?", (fullname,)
@@ -132,6 +183,7 @@ def build_export_row(
     *,
     aggregation: AggregationConfig | None = None,
     annotator_keys: list[str] | None = None,
+    post_urls: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """One dataset row. ``annotator_keys`` limits the shipped annotator votes to
     the configured lineup, and ``aggregation`` sets how per-label resolution is
@@ -274,6 +326,9 @@ def build_export_row(
         # U9: a phatic item (greeting / thanks / HBD only) that was already
         # labeled is kept with its label and flagged, never dropped.
         "flags": {"phatic": _phatic_flag(db, fullname)},
+        # What kind of post the item hangs on, and whether media appears in
+        # it or its thread: nobody (annotators or model) saw images or video.
+        "media_context": _media_context(db, record, context, post_urls),
         "provenance": {
             "prompt_version": agg.get("prompt_version"),
             "dataset_version": dataset_version,
@@ -568,6 +623,7 @@ def run_export(
         rows: list[dict[str, Any]] = []
         skipped_unresolved = 0
         skipped_ineligible = 0
+        post_urls = load_post_urls(cfg.data_dir)
         for agg in aggregates:
             if agg["reddit_fullname"] not in eligible:
                 skipped_ineligible += 1
@@ -581,6 +637,7 @@ def run_export(
                 dataset_version,
                 aggregation=cfg.aggregation,
                 annotator_keys=cfg.annotator_keys,
+                post_urls=post_urls,
             )
             if row is not None:
                 rows.append(row)
@@ -657,6 +714,10 @@ def run_export(
         exported_fullnames = [str(r["reddit_fullname"]) for r in rows]
         collection_window = _collection_window(db, exported_fullnames)
         temporal_coverage = temporal_context_coverage(db, exported_fullnames)
+        media_summary = {
+            **summarize_media(rows),
+            "gold_kappa": _gold_kappa_by_media(db, rows),
+        }
 
     agreement = compute_agreement(cfg, prompt_version)
     card = {
@@ -675,6 +736,7 @@ def run_export(
         },
         "corpus_dump_scope": corpus_scope,
         "label_sets": _label_sets(rows),
+        "media_context": media_summary,
         "label_distributions": _label_distributions(rows) if rows else {},
         "agreement": agreement,
         "readiness": _readiness(rows, agreement),

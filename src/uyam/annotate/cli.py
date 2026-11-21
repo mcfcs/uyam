@@ -378,6 +378,47 @@ def load_assist(
     )
 
 
+@annotate_app.command(name="media-context")
+def media_context_cmd(
+    version: str = typer.Option(..., "--version", help="Dataset version the file goes with"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Write media_context-<version>.jsonl for an already exported dataset (read-only).
+
+    One line per labeled item (reddit_fullname + media_context), so the model
+    side can slice an existing export by post type without a re-export.
+    """
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.export import _media_context
+    from uyam.annotate.media import load_post_urls, summarize
+
+    post_urls = load_post_urls(cfg.data_dir)
+    out = cfg.export.out_dir / f"media_context-{version}.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    with AnnotationDatabase(cfg.db_path) as db, out.open("w", encoding="utf-8") as fh:
+        for agg in db.all_aggregates(cfg.prompt_version):
+            if agg.get("sarcastic_final") is None:
+                continue
+            record = db.get_record(str(agg["reddit_fullname"]))
+            if record is None:
+                continue
+            ctx_row = db.get_context(str(agg["reddit_fullname"]))
+            ctx = json.loads(str(ctx_row["context_json"])) if ctx_row else {}
+            flags = _media_context(db, record, ctx, post_urls)
+            row = {"reddit_fullname": agg["reddit_fullname"], "media_context": flags}
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            rows.append(row | {"labels": {"sarcastic": bool(agg["sarcastic_final"])}})
+    summary = summarize(rows)
+    console.print(f"[green]Wrote[/green] {len(rows)} rows to {out}")
+    for kind, v in summary["by_post_type"].items():
+        console.print(f"  {kind:8s} {v['rows']:6d} rows, sarcastic {v['sarcastic_rate']:.1%}")
+    console.print(
+        f"  text-only slice: {summary['text_only_rows']} rows, "
+        f"{summary['text_only_sarcastic']} sarcastic"
+    )
+
+
 @annotate_app.command(name="fork")
 def fork(
     to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),
