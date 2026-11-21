@@ -112,6 +112,38 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-22 (evening) — adviser action items recorded; LLM-run and end-of-chat rules
+
+**Context (Gio):** pasted his adviser's next steps and action items. He meets
+the adviser on Wed 2026-11-25, before the final defense.
+
+**Done:**
+- `62168c0`: RULES. §1.3: every chat ends with ALL of Gio's open action
+  items. §6: always ask before any LLM run, especially on 100.102.10.69
+  (Gio's gaming PC; also noted in annotation.yaml). §5.10: collection frozen
+  until API access and ethics clearance. §5.11: no release before
+  validation.
+- `23f36e5`: UYAM_LATEST §9 (requests to the tsis and leische sessions,
+  including Gio's end-of-chat rule for their RULES) and §10 (every adviser
+  item with its owner and status). Mirrored as tsis `e22cb4d`. Six new
+  reminders.
+- Memory: ask-before-llm-runs, end-with-action-items.
+
+**How the adviser's items fit what exists:**
+- Gold set, guideline, majority-vote labels, context-only data and the
+  no-release rule are already supported.
+- Second annotator: not supported yet. The DB keeps one human label per
+  item, so it needs a per-annotator table and an annotator picker.
+- Equal-size re-annotation: conflicts with the frozen v2 labels, so it
+  would be a separate `dataset-v3`. The cheapest route replaces only
+  gemma3:27b with a ~9B model, runs entirely on the local GPU, and uses
+  majority vote with no adjudicator.
+- "Taglish" → "Filipino": a wording change only. The `taglish` label covers
+  both intra- and inter-sentential switching.
+
+**Left open:** everything in the Reminders tab's *Adviser items* section.
+Second-annotator tooling and the v3 pilot wait on Gio's go.
+
 ### 2026-11-22 (later) — v2 exported and delivered; tsis-first sync rule
 
 **Decisions (Gio):** every session pulls tsis first, to stay in sync with
