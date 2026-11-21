@@ -168,6 +168,42 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-22 (late night) — media blind spot measured and flagged; labeling UX
+
+**Context (Gio):** labeling felt slow; asked for a separate labeling site,
+Claude's take before labeling with all fields, form rules, language rules,
+and what the thesis says about images. On the media question: "do what is
+apt".
+
+**Done:**
+- Speed and labeling UX:
+  - `1294a88`: lazy tabs; a Review rerun went from ~10 s to 0.1 s.
+  - `931192a`: labeling-only site on :8502.
+  - `8e1d38d`, `bb73abc`: an opt-in Claude toggle that prefills the form
+    from a full-label suggestion (recorded as `assist_before_first_pass`).
+    "Not sarcastic" disables span and cues, and intended follows literal
+    (S3).
+  - 300 full-label suggestions loaded.
+- Media:
+  - Audit: 43% of the labels reply to image or video posts (63% of
+    positives).
+  - The manuscript excludes image-only posts as targets (filter iv, scope
+    §1.5) but says nothing about their comments.
+  - leische v1 F1 is not lower there (it shares the labels' blindness).
+  - Decision: keep everything, flag it, slice it. No text-only rebuild,
+    which would remove most positives.
+  - `bbcfbfe`: `media_context` on every exported row, card stats per slice
+    including gold κ, and `uyam annotate media-context --version v2` →
+    `data/annotated/media_context-v2.jsonl` (written: 15,000 rows, text-only
+    7,798 / 565 positives).
+  - `cc35236`: contract, UYAM_LATEST §9 request and §9.1 finding, guideline
+    L4b and the H13 scale note, plus a reminder to send the side file to
+    leische.
+
+**Left open:** Gio sends `media_context-v2.jsonl` to the leische machine.
+leische reports text-only slices. The manuscript limitation goes in a tsis
+chat.
+
 ### 2026-11-22 (night) — dataset-v3: equal-size re-annotation set up and piloted
 
 **Decisions (Gio):**
