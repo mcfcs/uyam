@@ -4,15 +4,18 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-19 (night), uyam `0969434` (plus this file's commit)
+- **Last updated:** 2026-11-22, uyam `0f3db3e` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **Next dataset:** `dataset-v2`, **built and trial-verified, not exported
-  yet.** Per Gio (2026-11-19) the real export waits until leische says it's
-  ready: when `LEISCHE_LATEST.md` reports its v2 code changes done (results
-  under `results/v2/`, selectable dataset version, `keyword_oversampled`
-  masking), uyam runs `uyam annotate export --version v2` and announces it
-  here. **tsis: v2 numbers stay out of the manuscript until then.**
+  yet.** On 2026-11-19 the export was set to wait until leische was ready,
+  but leische's LEISCHE_LATEST waits on uyam's export, so each side was
+  waiting on the other. Exporting now is recommended (2026-11-22). It writes
+  new v2 files only, and leische won't train on them until its own v2 code
+  changes are done (`docs/briefs/LEISCHE_BRIEF.md`). Gio runs
+  `uyam annotate export --version v2`. When it exists, this section announces
+  it. **tsis: v2 numbers stay out of the manuscript until leische has v2
+  results.**
 
 > **For tsis editors:** don't put any *provisional* number into the
 > manuscript. Chapter 4 is computed on v1, and mixing v1 results with v2
@@ -209,11 +212,16 @@ the corpus now has **no** `keyword_oversampled` records.
 - Annotation prompt (`sarc-v2`), the three annotator LLMs, the adjudicator,
   and the 15,000 labels.
 - Gold subset: **31 of 300** labeled by Gio. The 269 unlabeled gold items
-  were **redrawn** on 2026-11-19 (Gio's OK): eligible, non-phatic items only,
-  stratified sarcasm × language × split vote × length band, proportional
-  (split votes ×2). The old strata forced ≥1 item from ~100 tiny cells, which
-  over-drew long submissions (20 → 4) and pulled in greeting posts (3 → 0).
-  Gold κ on sarcasm over the first 31 is −0.148, as leische measured.
+  were **redrawn** (Gio's OK): eligible, non-phatic items only, stratified
+  sarcasm × language × split vote × length band. On 2026-11-19 the redraw was
+  proportional with split votes ×2. The old strata had forced ≥1 item from
+  ~100 tiny cells, which over-drew long submissions (20 → 4) and pulled in
+  greeting posts (3 → 0). On **2026-11-22** the strata the ensemble shipped as
+  sarcastic were also weighted ×2 (Gio), so **62 of the 300 are
+  ensemble-sarcastic** (about 33 under the earlier draw). That gives a usable
+  κ on the sarcastic class. **The gold sample is not at natural prevalence**:
+  weight back when estimating it. Gold κ on sarcasm over the first 31 is
+  −0.148, as leische measured.
 - Conversational context per labeled item is still the snapshot the
   annotators saw. New data adds **temporal** context (other posts by the same
   author), not new conversational context for existing items.
@@ -225,14 +233,19 @@ differs from literal, plus a cue). It never says whether a long post counts
 as sarcastic when only part of it is. Each annotator LLM chose for itself,
 which adds noise on long items. That gap is a limitation of the v1 labels.
 
-**`docs/GUIDELINE.md` (draft v1, 2026-11-19)** now governs the human gold
+**`docs/GUIDELINE.md` (draft v1.1, 2026-11-22)** now governs the human gold
 labels. A target is sarcastic if any author-voice sentence is, and that
 sentence is marked as the span. It has a Says/Means test, 13 hard-case
-rulings, and §1.1 lists every difference from `sarc-v2`. Decisions D1–D5 are
-open for Gio. The most consequential is D1: whether hyperbolic self-pity,
-*hugot* and playful elevation count as sarcasm. On the 31 existing gold
-items, the disagreements are mostly about humor and *hugot*, not mock praise.
-That matters for U2.
+rulings, and §1.1 lists every difference from `sarc-v2`. **D1 is decided:
+the broad reading** (Gio, 2026-11-22). Wry *hugot*, self-pity and playful
+mock-elevation count as sarcasm when the author clearly doesn't hold the
+literal evaluation. This is looser than `sarc-v2`, so the human labels
+will have more positives than the ensemble by design. Such items are tagged
+`D1` in the review notes, so the gold κ can be reported twice: as labeled,
+and with the D1 items treated as not sarcastic (the `sarc-v2` construct).
+D2, D3 and D5 are still open. This bears on leische's U2 (the
+adjudicator's definition), which stays deferred until ~150 gold items are
+labeled.
 
 Two notes for the thesis text (found while writing the guideline):
 - `03_methodology.tex` says the researcher labeled "using the same
@@ -255,7 +268,9 @@ Two notes for the thesis text (found while writing the guideline):
   save are recorded (`votes_seen`) and left out of those scores. The export
   ships `human_gold.first_pass` (same shape as the other human labels),
   `sarcastic_span`, `unsure`, `assist_seen` and `votes_seen`. 300
-  suggestions are loaded for the gold queue. The ethics text should mention
+  suggestions under `guideline-v1.1` are loaded for the redrawn queue (24
+  sarcastic). On Gio's 31 labeled items they agree with him on 29 (26 under
+  the strict v1 draft). The ethics text should mention
   that item text is processed by a third-party model (§3.1).
 - **Evaluation-only annotators:** the adviser's suggested `nimble:9b` can be
   run on the gold items (`uyam annotate evaluate --model nimble`, then
@@ -294,6 +309,14 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-22**: Guideline D1 decided (broad reading, tagged `D1`), and the
+  guideline is now v1.1. The gold queue was redrawn with sarcastic strata ×2
+  (62 of 300), and the assist suggestions were regenerated. The v2 export is
+  now recommended without waiting: leische's LEISCHE_LATEST waits on uyam,
+  so both repos were waiting on each other. A new leische brief
+  (`docs/briefs/LEISCHE_BRIEF.md`) covers the bundle transfer (not GitHub)
+  and how to unzip it without overwriting the v1 card. No labels or data
+  changed.
 - **2026-11-19 (night)**: A code review of the day's changes led to fixes.
   Every gold score now uses the blind first pass, `votes_seen` was added, and
   raw-JSONL rewrites now split on newlines only (the retag that already ran
