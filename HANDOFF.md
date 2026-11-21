@@ -49,8 +49,27 @@ decisions D2, D3 and D5 are open (D1 broad, D4 done).
 
 ## In progress
 
-Nothing is running in uyam. Gio is labeling the 269 gold items. leische's
-v2 runs are paused at 1 of 11 (watch tsis LEISCHE_LATEST.md).
+Nothing is running in uyam. **dataset-v3 is set up and piloted**, and the
+full run waits on Gio's go:
+`uyam annotate pipeline --config-path config/annotation-v3.yaml`
+(~28 h of laptop GPU, local only). Gio is labeling the 269 gold items in the
+main DB. leische's v2 runs are paused at 1 of 11 (watch tsis
+LEISCHE_LATEST.md).
+
+**dataset-v3 (`data/db/annotation-v3.sqlite3`, `config/annotation-v3.yaml`):**
+- The fork of annotation.sqlite3 was made 2026-11-22 (`uyam annotate fork`,
+  seed 13). It holds 21,000 pinned targets in `target_priority`: the 15,000 v2
+  items (priority 2) plus 1,600 Jun / 1,600 Jul / 1,600 Oct / 1,200 Nov 1–10
+  (priority 1).
+- Kept votes: qwen3 14,998 and SEA-LION 15,000 (sarc-v2). New annotator
+  `llamasealion` (Llama-SEA-LION-v3-8B q4_k_m) has 100 pilot votes.
+- Majority vote with a confidence tie-break, no adjudicator, no remote
+  endpoint.
+- Before export: sync Gio's gold labels from the main DB, since the fork
+  copied the 31 that existed then. That needs a small `sync-reviews` command,
+  not built yet. Then `uyam annotate aggregate --config-path
+  config/annotation-v3.yaml` and `uyam annotate export --version v3
+  --config-path config/annotation-v3.yaml`.
 
 ## Next steps (for Gio unless marked)
 
@@ -111,6 +130,40 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-22 (night) — dataset-v3: equal-size re-annotation set up and piloted
+
+**Decisions (Gio):**
+- Re-annotate (leische retrains anyway). Keep the 15,000 and add about
+  6,000 items from other months.
+- Installing models on the laptop is OK, and so is a 100-item pilot there.
+- The second human annotator is deferred (it doesn't fit the time).
+
+**Done:**
+- Model choice: Llama-SEA-LION-v3-8B-IT q4_k_m (Llama 3.1 family,
+  Filipino-tuned, 4.9 GB) replaces gemma3:27b. The lineup is now 8B / 9B /
+  8B across three families, two of them Filipino-tuned, all fitting the 8 GB
+  RTX 4070. I checked ollama.com/aisingapore.
+- `32f859a`: AggregationConfig (majority / confidence), lineup filtering in
+  aggregation, agreement and export, the target_priority table, `uyam
+  annotate fork`, an optional adjudicator, `config/annotation-v3.yaml`, and
+  `tests/test_annotate_v3.py`.
+- `00afe06`: the fork also drops older-prompt-version votes. The first
+  fork had kept 117 sarc-v1 pilot votes, so it was re-made.
+- `b0d64ac`: **a safety bug fixed before any v3 pipeline ran.** Pipeline
+  child jobs didn't get `--config-path`, so a v3 pipeline would have run the
+  default config: the main DB, gemma3 and the 32B adjudicator on the gaming
+  PC. Jobs now inherit it and are prefixed `annotation-v3-`.
+- Pilot of llamasealion on 100 v2 items: 0 failures, mean 2.32 s/item,
+  sarcasm agreement with qwen3 / gemma3 / SEA-LION 90 / 86 / 90, and a 9%
+  sarcastic rate. On those items the v3 majority has 10 positives against 4
+  shipped in v2. The main DB was confirmed untouched.
+- Measured: unlabeled items in every month have 58–64% same-author history
+  at 48 h, against 46.5% for the v2 labeled items.
+- `8548884`: UYAM_LATEST and reminders.
+
+**Left open:** the full v3 run (Gio's go), the gold sync command for v3,
+then the v3 aggregate and export.
 
 ### 2026-11-22 (evening) — adviser action items recorded; LLM-run and end-of-chat rules
 
