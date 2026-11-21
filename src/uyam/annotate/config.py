@@ -77,6 +77,10 @@ class ReviewConfig:
     # (2-1, 1-1): that is where the disagreement lives, so the human sample
     # over-represents them (1.0 = proportional).
     gold_split_oversample: float = 2.0
+    # Gold strata weight for items the ensemble shipped as sarcastic: at a ~11%
+    # base rate a proportional 300 holds too few positives for a stable kappa
+    # on the sarcastic class. Multiplies with the split weight.
+    gold_sarcastic_oversample: float = 1.0
 
 
 @dataclass
@@ -254,9 +258,12 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         gold_size=int(rev_raw.get("gold_size", 300)),
         adjudicator_confidence_floor=float(rev_raw.get("adjudicator_confidence_floor", 0.6)),
         gold_split_oversample=float(rev_raw.get("gold_split_oversample", 2.0)),
+        gold_sarcastic_oversample=float(rev_raw.get("gold_sarcastic_oversample", 1.0)),
     )
     if review.gold_split_oversample <= 0:
         raise ValueError("annotation.yaml review.gold_split_oversample must be > 0")
+    if review.gold_sarcastic_oversample <= 0:
+        raise ValueError("annotation.yaml review.gold_sarcastic_oversample must be > 0")
 
     exp_raw: dict[str, Any] = raw.get("export") or {}
     export = ExportConfig(out_dir=_resolve(Path(exp_raw.get("out_dir", "data/annotated"))))

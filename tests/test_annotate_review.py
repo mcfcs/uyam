@@ -123,3 +123,27 @@ def test_redraw_keeps_labeled_gold_and_skips_phatic_and_ineligible(tmp_path: Pat
 
     again = sample_gold_subset(cfg, PROMPT_VERSION, size=4)
     assert again["sampled"] == 0  # the queue is full: nothing added
+
+
+def test_gold_sample_oversamples_sarcastic_items(tmp_path: Path) -> None:
+    cfg = make_config(tmp_path)
+    write_raw_corpus(cfg.data_dir)
+    with AnnotationDatabase(cfg.db_path) as db:
+        index_corpus(db, cfg.data_dir)
+        select_candidates(db, cfg.candidate_filters)
+        # Three unanimous "no" and three unanimous "yes": no splits involved.
+        for fullname, value in (
+            ("t1_c1", 0), ("t1_c2", 0), ("t1_c3", 0), ("t1_c4", 1), ("t1_c5", 1), ("t3_sub1", 1)
+        ):
+            for key in ("a1", "a2", "a3"):
+                db.insert_llm_annotation(_ann(fullname, key, sarcastic=value))
+    run_aggregation(cfg, PROMPT_VERSION)
+    assert cfg.review.gold_sarcastic_oversample == 1.0  # proportional unless configured
+
+    heavy = sample_gold_subset(cfg, PROMPT_VERSION, size=2, sarcastic_oversample=100.0)
+    assert heavy["sampled"] == 2 and heavy["sarcastic_sampled"] == 2
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.conn.execute("DELETE FROM review_queue")
+        db.commit()
+    flat = sample_gold_subset(cfg, PROMPT_VERSION, size=2, sarcastic_oversample=1.0)
+    assert flat["sampled"] == 2 and flat["sarcastic_sampled"] == 1

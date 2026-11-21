@@ -401,7 +401,8 @@ def gold_sample(
     console.print(
         f"[green]Gold sample[/green] +{stats['sampled']} items ({stats['kept']} already queued) "
         f"across {stats['strata']} strata (population {stats['population']}); "
-        f"split votes {stats['split_sampled']}, length bands {stats['bands']}. "
+        f"split votes {stats['split_sampled']}, shipped sarcastic {stats['sarcastic_sampled']}, "
+        f"length bands {stats['bands']}. "
         "Label them in the Streamlit 'Annotation Review' tab."
     )
 

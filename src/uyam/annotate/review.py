@@ -7,7 +7,11 @@ x split x length band, with exact proportional allocation (largest remainder)
 and a fixed seed. `split` marks items whose base annotators disagreed on
 sarcasm (2-1 / 1-1, later decided by the adjudicator); those strata are
 weighted by review.gold_split_oversample so the human sample concentrates
-where the ensemble is least certain.
+where the ensemble is least certain, and strata the ensemble shipped as
+sarcastic by review.gold_sarcastic_oversample (the two multiply) so the
+sample holds enough positives for a kappa on the sarcastic class. Report
+gold statistics with these weights in mind; reweight to the natural
+prevalence when estimating it.
 
 Only eligible, non-phatic items are drawn. Until 2026-11-19 the strata also
 split on record_type and subreddit with a forced minimum of one item per
@@ -95,6 +99,7 @@ def sample_gold_subset(
     size: int | None = None,
     seed: int = 7,
     split_oversample: float | None = None,
+    sarcastic_oversample: float | None = None,
     redraw: bool = False,
 ) -> dict[str, Any]:
     """Fill review_queue(reason='gold') up to the target size.
@@ -112,6 +117,11 @@ def sample_gold_subset(
     target = size or cfg.review.gold_size
     weight_split = (
         cfg.review.gold_split_oversample if split_oversample is None else split_oversample
+    )
+    weight_sarcastic = (
+        cfg.review.gold_sarcastic_oversample
+        if sarcastic_oversample is None
+        else sarcastic_oversample
     )
     with AnnotationDatabase(cfg.db_path) as db:
         removed = 0
@@ -144,6 +154,7 @@ def sample_gold_subset(
             "strata": 0,
             "population": len(rows),
             "split_sampled": 0,
+            "sarcastic_sampled": 0,
             "kept": kept,
             "removed_unlabeled": removed,
             "bands": {},
@@ -166,7 +177,10 @@ def sample_gold_subset(
             return stats
 
         sizes = {k: len(v) for k, v in strata.items()}
-        weights = {k: n * (weight_split if k[2] else 1.0) for k, n in sizes.items()}
+        weights = {
+            k: n * (weight_split if k[2] else 1.0) * (weight_sarcastic if k[0] else 1.0)
+            for k, n in sizes.items()
+        }
         quota = _allocate(weights, sizes, min(need, sum(sizes.values())))
         rng = random.Random(seed)
         sampled: list[str] = []
@@ -176,6 +190,7 @@ def sample_gold_subset(
         rng.shuffle(sampled)
 
         split_set = {f for key, members in strata.items() if key[2] for f in members}
+        sarcastic_set = {f for key, members in strata.items() if key[0] for f in members}
         band_of = {f: key[3] for key, members in strata.items() for f in members}
         for fullname in sampled:
             db.enqueue_review(fullname, "gold")
@@ -186,6 +201,7 @@ def sample_gold_subset(
         stats.update(
             sampled=len(sampled),
             split_sampled=sum(1 for f in sampled if f in split_set),
+            sarcastic_sampled=sum(1 for f in sampled if f in sarcastic_set),
             bands=dict(bands),
         )
         return stats
