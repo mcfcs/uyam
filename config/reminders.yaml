@@ -115,41 +115,44 @@ reminders:
     title: Finish the gold subset (300 items)
     details: >
       "Annotation Review" tab → gold queue. Needed for the human-vs-ensemble
-      Cohen's κ (leische H1/U3). The 269 unlabeled items were redrawn on
-      2026-11-19 (no greeting posts, far fewer long submissions); your 31 are
-      kept. Label each item first, using docs/GUIDELINE.md: tick the
-      sarcastic sentence(s), or "unsure". After you save, you can toggle on
-      Claude's suggestion and revise. Your first pass is kept and is what κ
-      uses. Settle the guideline decisions D1–D5 (next reminder) first, so
-      the 269 are labeled under one rule.
+      Cohen's κ (leische H1/U3). Redrawn 2026-11-22 with sarcastic and split
+      items weighted ×2: 62 of the 300 are ensemble-sarcastic. Your 31 labels
+      are kept. Label each item blind first, using docs/GUIDELINE.md v1.1:
+      tick the sarcastic sentence(s), or "unsure". If an item is sarcastic
+      only because of a wry hugot, self-pity or playful-praise pose (D1),
+      write D1 in notes. After you save, you can toggle on Claude's
+      suggestion and revise. Your first pass is kept and is what κ uses.
+      Don't tick "Reveal model votes" before saving.
     check: gold_progress
 
   - id: guideline-decisions-d1-d5
     section: Annotation
-    title: Settle the guideline decisions D1–D5 (docs/GUIDELINE.md §7)
+    title: Settle the remaining guideline decisions D2, D3, D5 (GUIDELINE §7)
     details: >
-      The draft guideline leaves five calls to you. D1 matters most:
-      whether hyperbolic self-pity, *hugot* and playful elevation count as
-      sarcasm. Claude's suggestions follow the strict reading. On your 31
-      existing gold items they agree with you on 26, but they miss 5 of
-      your 6 positives, mostly hugot and humor. If you take the broad
-      reading, say so and the guideline (and the suggestions) get updated
-      before you label the rest. The suggestion agents also raised cases
-      the guideline doesn't cover: a dismissive "good luck", leading
-      rhetorical questions, mocking "daw" next to a stated rebuttal, scare
-      quotes in a sincere argument, and parody that quotes other people.
-      These are listed in HANDOFF.md.
+      D1 is decided (2026-11-22, broad reading: hugot, self-pity and playful
+      praise can count, tagged D1) and so is D4. Still open, but none of
+      them blocks labeling: D2 (retelling your own earlier sarcastic line),
+      D3 (whether a 50/50 call defaults to "no"; the draft says yes), and D5
+      (a blind second pass over the first 31, at least two weeks later, for
+      intra-annotator κ). The assist agents also flagged uncovered cases: a
+      dismissive "good luck", leading rhetorical questions, mocking "daw"
+      next to a rebuttal, scare quotes, and parody quotes. These are listed
+      in HANDOFF.md.
 
   - id: export-dataset-v2
     section: Handoff to leische
-    title: Export dataset v2 once leische says it's ready
+    title: Export dataset v2 (leische is waiting for it)
     details: >
-      Waits on leische (your call, 2026-11-19). Run it when tsis's
-      LEISCHE_LATEST.md says the v2 code changes are done: results under
-      results/v2/, a selectable dataset version, and keyword_oversampled
-      masking. A trial export on 2026-11-19 matched v1 exactly (same 15,000
-      items, 0 label changes, κ shipped vs majority 0.545, 48 h coverage
-      46.5% vs v1's ~35%). A uyam agent can run it and update UYAM_LATEST.md.
+      leische's LEISCHE_LATEST says it will re-run the temporal conditions
+      "once uyam exports", so waiting for leische to be ready leaves both
+      repos waiting on each other. The export is safe now: it writes new v2
+      files and never touches v1, and leische won't train on v2 until its own
+      code changes are done (results/v2/, selectable version, masking). A
+      trial export on 2026-11-19 matched v1 exactly (same 15,000 items, 0
+      label changes, κ shipped vs majority 0.545, 48 h coverage 46.5% vs
+      ~35%). Gold labels can follow later as a re-export. Then send the
+      bundle (next reminder) and paste docs/briefs/LEISCHE_BRIEF.md into a
+      leische chat.
     command: uyam annotate export --version v2
     check: export_v2
 
@@ -157,9 +160,13 @@ reminders:
     section: Handoff to leische
     title: Send the v2 bundle to the leische machine
     details: >
-      Open this app at http://<tailscale-ip>:8501 from the leische device →
-      Annotation tab → Download bundle (.zip), then
-      `sha256sum -c SHA256SUMS.txt`. Tell leische the version changed.
+      The data never goes through GitHub (uyam is public and data/ is
+      gitignored). Either open http://100.71.83.125:8501 from the leische
+      device → Annotation tab → Download bundle (.zip), or send it with
+      Taildrop from this PC (`tailscale file cp
+      data\annotated\uyam-dataset-v2.zip <leische-device>:`, then
+      `tailscale file get .` on the leische device). Then unzip and run
+      `sha256sum -c SHA256SUMS.txt`. The leische chat brief has the rest.
 
   - id: thesis-arctic-shift-method
     section: Thesis manuscript
@@ -180,7 +187,12 @@ reminders:
       prohibits scraping without prior written consent. The thesis should
       describe the real method, drop the "public API" reason in Scope ¶1,
       disclose proxy rotation, and state a deletion policy for archived
-      content. See UYAM_LATEST.md §3.1.
+      content. See UYAM_LATEST.md §3.1. Every one of the 15,000 labeled items
+      came from the live Shreddit scrape, so "a public archive was used" is
+      not true for them and can't replace the disclosure. If the API
+      application is approved, the labeled ids can be re-fetched through it
+      (provenance check, deletions honoured). That is a mitigation to report,
+      not a substitute.
 
   - id: thesis-window-and-phatic
     section: Thesis manuscript
