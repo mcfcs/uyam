@@ -487,6 +487,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def latest_bundle(out_dir: Path) -> Path | None:
+    """The most recently written uyam-dataset-*.zip in out_dir, or None.
+
+    Lets the app offer the bundle to any browser (e.g. the leische machine over
+    Tailscale), not only to the session that ran the export.
+    """
+    bundles = [p for p in out_dir.glob("uyam-dataset-*.zip") if p.is_file()]
+    return max(bundles, key=lambda p: p.stat().st_mtime) if bundles else None
+
+
 def write_bundle(out_dir: Path, dataset_version: str, members: Sequence[Path]) -> Path:
     """Zip every export artifact into one file for transfer to the leische device.
 

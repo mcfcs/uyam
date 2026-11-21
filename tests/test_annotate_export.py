@@ -388,3 +388,18 @@ def test_single_class_gold_gives_null_kappa_and_strict_json(tmp_path: Path) -> N
     gold = card["agreement"]["gold_vs_ensemble_cohen_kappa"]
     assert gold["n_gold_items"] == 3
     assert gold["sarcastic"] is None
+
+
+def test_latest_bundle_picks_the_newest_zip(tmp_path: Path) -> None:
+    import os
+
+    from uyam.annotate.export import latest_bundle
+
+    assert latest_bundle(tmp_path) is None
+    old = tmp_path / "uyam-dataset-v1.zip"
+    new = tmp_path / "uyam-dataset-v2.zip"
+    for path, mtime in ((old, 1_000_000), (new, 2_000_000)):
+        path.write_bytes(b"zip")
+        os.utime(path, (mtime, mtime))
+    (tmp_path / "uyam-dataset-v3.zip.tmp").write_bytes(b"partial")  # never offered
+    assert latest_bundle(tmp_path) == new

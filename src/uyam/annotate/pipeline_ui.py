@@ -352,23 +352,30 @@ def _bundle_bytes(path: str, size: int, mtime: float) -> bytes:
     return Path(path).read_bytes()
 
 
-def _render_export_download() -> None:
+def _render_export_download(out_dir: Path) -> None:
     """Offer the last export as one .zip download.
 
     Streamlit serves the bytes to whichever browser is viewing the app, so
     opening the app at http://<tailscale-ip>:8501 from the training machine
     downloads the bundle straight onto that device — nothing has to be copied
-    off this box by hand.
+    off this box by hand. Without an export in this browser session (the
+    export ran from the CLI or another browser), the newest bundle on disk is
+    offered.
     """
+    from uyam.annotate.export import latest_bundle
+
     result = st.session_state.get("export_result")
-    if not result:
-        return
-    st.json(result, expanded=False)
-    zip_str = result.get("zip")
-    zip_path = Path(zip_str) if zip_str else None
-    if zip_path is None or not zip_path.exists():
-        st.warning("Bundle missing — re-run the export.")
-        return
+    if result:
+        st.json(result, expanded=False)
+        zip_str = result.get("zip")
+        zip_path = Path(zip_str) if zip_str else None
+        if zip_path is None or not zip_path.exists():
+            st.warning("Bundle missing — re-run the export.")
+            return
+    else:
+        zip_path = latest_bundle(out_dir)
+        if zip_path is None:
+            return
     stat = zip_path.stat()
     st.download_button(
         f"Download bundle (.zip, {stat.st_size / 1e6:.1f} MB)",
@@ -734,7 +741,9 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
             f"Human queue: {snap['queue_gold']} gold, {snap['queue_low_conf']} low-confidence"
         )
     with col_3:
-        version = st.text_input("Dataset version", value="v1", key="export_version")
+        # v1 is frozen (leische's results and tsis's checks read it): never
+        # default to re-exporting over it.
+        version = st.text_input("Dataset version", value="v2", key="export_version")
         if st.button(
             "Export dataset",
             help="dataset.jsonl + parquet + corpus dump + card, bundled into one .zip.",
@@ -745,7 +754,7 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
                 result = run_export(cfg, cfg.prompt_version, dataset_version=version)
             st.session_state["export_result"] = result
             st.success(f"Exported {result['rows']} rows")
-        _render_export_download()
+        _render_export_download(cfg.export.out_dir)
 
     st.divider()
 
