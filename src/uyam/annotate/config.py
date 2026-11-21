@@ -134,6 +134,9 @@ class AnnotationConfig:
     # Deliberately NOT returned by annotator(): `annotate run` cannot reach them.
     evaluators: list[AnnotatorConfig] = field(default_factory=list)
     aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+    # The file this config was loaded from. The pipeline passes it to every
+    # child job, so a job never falls back to the default annotation.yaml.
+    source_path: Path | None = None
 
     @property
     def annotator_keys(self) -> list[str]:
@@ -340,4 +343,5 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         pipeline=pipeline,
         evaluators=evaluators,
         aggregation=aggregation,
+        source_path=path.resolve(),
     )

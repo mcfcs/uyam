@@ -89,6 +89,24 @@ def _lane_args(keys: list[str], target: int, retry_failed: bool) -> list[str]:
     return args
 
 
+def _job(cfg: AnnotationConfig, name: str, args: list[str]) -> tuple[str, list[str]]:
+    """Job name and args for a child job of this config.
+
+    Every child gets ``--config-path`` (without it, a v3 job would silently run
+    the default annotation.yaml: the main DB and the remote box). Jobs of a
+    non-default database get its name as a prefix, so a v3 pipeline never
+    adopts a running v2 job of the same name.
+    """
+    if cfg.source_path is not None:
+        args = [*args, "--config-path", str(cfg.source_path)]
+    return _job_name(cfg, name), args
+
+
+def _job_name(cfg: AnnotationConfig, name: str) -> str:
+    stem = cfg.db_path.stem
+    return name if stem == "annotation" else f"{stem}-{name}"
+
+
 def _start_or_adopt(backend: JobBackend, name: str, args: list[str]) -> None:
     if backend.is_running(name):
         console.print(f"[yellow]{name}[/yellow] is already running — adopting it.")
@@ -172,16 +190,23 @@ def run_pipeline(
         console.print(f"lane [bold]{ep}[/bold] ({kind}): {' → '.join(lanes[ep])}")
 
     # Remote lanes do not touch the local GPU: start them right away.
+    lane_jobs: dict[str, str] = {}
     for ep in remote_eps:
-        _start_or_adopt(backend, lane_job_name(ep), _lane_args(lanes[ep], target, retry_failed))
+        job_name, job_args = _job(
+            cfg, lane_job_name(ep), _lane_args(lanes[ep], target, retry_failed)
+        )
+        lane_jobs[ep] = job_name
+        _start_or_adopt(backend, job_name, job_args)
 
     # ------------------------------------------------------------------ 3
     if skip_sentiment:
         _phase("3/6 transformer sentiment — skipped (--skip-sentiment)")
     else:
         _phase("3/6 transformer sentiment on the target set (local GPU)")
-        local_llm_jobs = [lane_job_name(ep) for ep in local_eps] + [
-            f"run-{a.key}" for a in cfg.annotators if cfg.is_local_endpoint(a.endpoint)
+        local_llm_jobs = [_job_name(cfg, lane_job_name(ep)) for ep in local_eps] + [
+            _job_name(cfg, f"run-{a.key}")
+            for a in cfg.annotators
+            if cfg.is_local_endpoint(a.endpoint)
         ]
         for name in local_llm_jobs:
             if backend.is_running(name):
@@ -192,8 +217,11 @@ def run_pipeline(
         for ann in cfg.annotators:
             if cfg.is_local_endpoint(ann.endpoint):
                 unload_model(cfg.endpoint_url(ann.endpoint), ann.model)
-        _start_or_adopt(backend, "sentiment", ["sentiment", "--target", str(target)])
-        code = _wait(backend, "sentiment", poll_seconds)
+        sentiment_job, sentiment_args = _job(
+            cfg, "sentiment", ["sentiment", "--target", str(target)]
+        )
+        _start_or_adopt(backend, sentiment_job, sentiment_args)
+        code = _wait(backend, sentiment_job, poll_seconds)
         summary["sentiment_exit"] = code
         if code not in (0, None):
             console.print(
@@ -205,13 +233,15 @@ def run_pipeline(
     for ep in local_eps:
         _phase(f"4/6 local annotators on {ep}: {' → '.join(lanes[ep])}")
         name = lane_job_name(ep)
-        _start_or_adopt(backend, name, _lane_args(lanes[ep], target, retry_failed))
-        summary["lanes"][ep] = _wait(backend, name, poll_seconds)
+        job_name, job_args = _job(cfg, name, _lane_args(lanes[ep], target, retry_failed))
+        lane_jobs[ep] = job_name
+        _start_or_adopt(backend, job_name, job_args)
+        summary["lanes"][ep] = _wait(backend, job_name, poll_seconds)
     if not local_eps:
         _phase("4/6 local annotators — none configured")
 
     for ep in remote_eps:
-        name = lane_job_name(ep)
+        name = lane_jobs[ep]
         if backend.is_running(name):
             console.print(f"waiting for {name}…")
         summary["lanes"][ep] = _wait(backend, name, poll_seconds)
@@ -248,8 +278,9 @@ def run_pipeline(
                 f"{escalated} escalated items → {adjudicator.model} on {adjudicator.endpoint}"
             )
             args = ["adjudicate"] + (["--retry-failed"] if retry_failed else [])
-            _start_or_adopt(backend, "adjudicate", args)
-            code = _wait(backend, "adjudicate", poll_seconds)
+            adj_job, adj_args = _job(cfg, "adjudicate", args)
+            _start_or_adopt(backend, adj_job, adj_args)
+            code = _wait(backend, adj_job, poll_seconds)
             summary["adjudicate_exit"] = code
             if code not in (0, None):
                 raise PipelineError(

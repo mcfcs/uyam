@@ -284,3 +284,48 @@ def test_parse_extend() -> None:
     for bad in (["2026-6:10"], ["2026-06:0"], ["2026-06"], ["2026-06:5", "2026-06:6"]):
         with pytest.raises(ValueError):
             parse_extend(bad)
+
+
+# ---------------------------------------------------------------------------
+# Pipeline: child jobs must run THIS config (never the default annotation.yaml)
+# ---------------------------------------------------------------------------
+
+
+def test_v3_pipeline_jobs_carry_the_config_path_and_their_own_names(tmp_path: Path) -> None:
+    from tests.test_annotate_target import _FakeBackend
+    from uyam.annotate.pipeline import run_pipeline
+
+    base = make_config(tmp_path)
+    source = tmp_path / "annotation-v3.yaml"
+    source.write_text("# stand-in\n", encoding="utf-8")
+    cfg = dataclasses.replace(
+        _v3(base),
+        db_path=tmp_path / "db" / "annotation-v3.sqlite3",
+        source_path=source,
+    )
+    write_raw_corpus(cfg.data_dir)
+    with AnnotationDatabase(cfg.db_path) as db:
+        index_corpus(db, cfg.data_dir)
+        select_candidates(db, cfg.candidate_filters)
+
+    fake = _FakeBackend()
+    run_pipeline(cfg, target=4, skip_prep=True, poll_seconds=0.0, backend=fake.backend())
+    starts = [(name, args) for kind, name, args in fake.events if kind == "start"]
+    waits = [name for kind, name, _ in fake.events if kind == "wait"]
+    assert starts, "the pipeline started no jobs"
+    for name, args in starts:
+        # Without this a v3 lane would run the default config: main DB + remote box.
+        assert args[-2:] == ["--config-path", str(source)], name
+        assert name.startswith("annotation-v3-"), name
+    assert not any("adjudicate" in name for name, _ in starts)  # nothing escalates
+    assert set(waits) <= {name for name, _ in starts}  # waits use the same names
+
+
+def test_default_config_jobs_keep_their_names(tmp_path: Path) -> None:
+    from uyam.annotate.pipeline import _job
+
+    cfg = dataclasses.replace(make_config(tmp_path), db_path=tmp_path / "annotation.sqlite3")
+    assert _job(cfg, "run-all-local", ["run"]) == ("run-all-local", ["run"])
+    loaded = load_annotation_config(_write_config(tmp_path, aggregation={
+        "sarcasm_rule": "majority", "tie_break": "confidence"}))
+    assert loaded.source_path == (tmp_path / "annotation.yaml").resolve()
