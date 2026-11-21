@@ -369,6 +369,14 @@ skim the rest for them.
 
 ### H13. Meaning that depends on an unavailable image or link
 
+*Scale (2026-11-22 audit):* 43% of the labeled items reply to image or video
+posts, and nobody (you, the LLMs, the model) sees the image, only the post's
+title. Every exported row now carries `media_context`, so results and gold κ
+can be reported for text-only and media-dependent items separately. For an
+image reply, ask whether the text and title alone show the gap. If they
+don't, use the ruling below and set `unsure`.
+
+
 **Ruling:** the models saw text only, so the human judges from text only. If
 the gap depends on what an image, link, or video shows (*"Ganda ng view 😍"*
 under a photo you can't see), or on a parent that is deleted or empty, label
@@ -401,6 +409,11 @@ pa, lang, po, naman, din, ba) does not make an otherwise one-language target
 Taglish, because the prompt says "meaningfully mixes". For example,
 *"He's still jobless sa PH?"* is `english`. Two or more such words, or any
 content word, do count.
+
+**L4b (2026-11-22).** The same particle used twice counts as two
+(*"Thank you po, we're fine po"* is `taglish`): repeating it is deliberate
+mixing. Quick test: remove the other-language words. If only one particle
+went and the meaning is intact, keep the main language.
 
 **S1. `literal_sentiment`** is the surface polarity of the words alone,
 ignoring sarcasm. *"Ang galing mo naman"* is positive.

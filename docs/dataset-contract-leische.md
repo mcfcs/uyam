@@ -98,6 +98,19 @@ Reliability (`reliability`):
   confidence, one-sentence rationale)
 - `adjudicator` — the adjudicator's labels when the item was escalated, else null
 
+`media_context` (from v3; for v2 as the side file `media_context-v2.jsonl`,
+one line per row) holds `post_type` (`text` | `image` | `video` | `link` |
+`unknown`, the post the item belongs to), `is_post`, `post_body_has_media`,
+`parent_has_media`, `target_has_media` and `text_only`. Neither the
+annotators nor the model saw images or video: for an image post they saw only
+its title. In v2, 43% of rows reply to image or video posts and carry 63% of
+the sarcastic labels. **Report results overall and on `text_only`**
+(7,798 rows, 565 positives in v2). The card's `media_context` has the counts
+per post type and the gold κ per slice. A "context incomplete" input tag built
+from it is a possible ablation. It risks a shortcut (sarcasm is about twice as
+common under image posts), so judge it on the text-only slice and the gold
+labels, not on overall F1.
+
 `flags` (from v2) — `{"phatic": bool}`. True for an already-labeled item
 that matches the `phatic` rule (§8.5). Such items keep their labels and stay
 in the dataset (leische U9); slice or drop them as an evaluation choice.

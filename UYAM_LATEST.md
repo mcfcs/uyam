@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-22 (night), uyam `b0d64ac` (plus this file's commit)
+- **Last updated:** 2026-11-22 (late night), uyam `bb73abc`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -344,6 +344,38 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-22): report results by `media_context`.** 43% of the
+  labeled rows reply to image or video posts that nobody saw. Please report
+  every condition overall **and on the text-only slice**
+  (`media_context.text_only`: v2 has 7,798 rows and 565 positives; per-row
+  flags for v2 are in `media_context-v2.jsonl`, and v3 rows carry them
+  inline). If RQ1/RQ2 hold on text-only, the blind spot didn't drive them.
+  Optional ablation: a "context incomplete" tag in the conversational input.
+  Judge it on the text-only slice and the gold labels, because sarcasm is
+  ~2× more common under image posts and the tag could be a shortcut. See
+  docs/dataset-contract-leische.md.
+
+### 9.1 Media the model never sees (found 2026-11-22)
+
+Image-only posts were excluded as targets (manuscript filter iv), but their
+comments were not. In the 15,000 v1/v2 labels:
+
+| The item replies to | Rows | Share | Sarcastic |
+|---|---|---|---|
+| a text post | 8,143 | 54% | 7.3% |
+| an image / gallery post | 5,652 | 38% | 14.0% |
+| a video post | 910 | 6% | 19.3% |
+| a link (news) post | 295 | 2% | 12.5% |
+
+63% of the sarcastic labels sit under image, video or link posts. The
+annotators and the model saw only those posts' titles. Model F1 against the
+LLM labels is not lower there (leische v1, `pred_tuned`: image posts ~0.36–0.38,
+text posts ~0.29–0.31), but the labels share the same blindness, so F1 can't
+reveal the problem. The human gold κ per slice (in the card) can. **For the
+manuscript:** say this in §1.5 / filter (iv), report the text-only slice
+(7,798 rows), and name image captions (a vision model as a text context
+channel) as future work. The dataset was not cut to text-only: that would
+remove most positives and change the population.
 
 ## 10. Adviser action items (Gio's October meeting; next meeting 2026-11-25, before the final defense)
 
@@ -363,6 +395,10 @@ these requests reach them without uyam editing their repos.
 
 ## 11. Change log
 
+- **2026-11-22 (late night)**: Every exported row (v3 on) now carries
+  `media_context`, and `media_context-v2.jsonl` covers v2. The finding is in
+  §9.1 and the request to leische in §9. Also: guideline L4b, and full-label
+  Claude suggestions with the review-form rules. No labels changed.
 - **2026-11-22 (night)**: dataset-v3 set up. The DB is forked (the 15,000
   v2 items + 6,000 new Jun/Jul/Oct/Nov items; qwen3 and SEA-LION votes
   kept, gemma3 and the 32B adjudicator dropped). Majority vote with a
