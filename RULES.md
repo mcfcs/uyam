@@ -30,6 +30,12 @@ defaults. If a rule blocks the task, stop and ask Gio. Don't work around it.
    at the bottom of that file), update its *Current state* and *Next steps*,
    and commit and push it. Every chat that changes anything ends with a
    handoff commit.
+   **Every chat ends with ALL of Gio's open action items** (Gio,
+   2026-11-22). The last message lists every open step on Gio's end, not
+   only the ones from this chat: open items in config/reminders.yaml (minus
+   the ticks in data/reminders.json), what the adviser asked for
+   (UYAM_LATEST.md §10), and anything a sibling repo is waiting on. Group
+   them by urgency, and say which ones an agent can do once Gio says go.
 4. **Gio's to-dos go in [config/reminders.yaml](config/reminders.yaml).** When
    you leave Gio a step to do (a real run, a review, thesis text), append a
    reminder with a new unique `id` and never rename an existing one. It shows
@@ -148,12 +154,28 @@ These protect the thesis. Breaking one silently can invalidate results.
 9. **Collection provenance:** every run writes a manifest with `source_type`.
    Archive-sourced records (`source_type = "archive"`) carry archive-time
    scores. Say so wherever scores are used.
+10. **Collection is frozen** until Reddit API access is approved **and** the
+    ethics clearance is done (the adviser's action items, 2026-11). Until
+    then: no Shreddit or archive collection runs, not even top-ups. The
+    headed-browser scraper is not API-compliant. Work on the existing corpus
+    only.
+11. **No dataset release** until the labels are validated (the gold subset,
+    a second annotator) and the manuscript revisions are complete. Exports
+    go only to leische, by direct transfer (never GitHub, never a public
+    link).
 
 ## 6. Long-running jobs
 
 - **Gio starts real runs**: full collection crawls, `uyam annotate pipeline` /
   Start ALL, adjudication, and re-exports of the real dataset. Agents prepare
   the command, explain it, and put it in HANDOFF.md.
+- **Always ask before running any LLM** (Gio, 2026-11-22). That covers
+  annotation, adjudication, `annotate evaluate` (nimble), `annotate smoke`,
+  model pulls, and anything else that loads a model, local or remote. Ask
+  **especially** before touching the remote Ollama box at `100.102.10.69`.
+  It is Gio's gaming PC, in use for games, so never start, pull to, or
+  probe a model there without his explicit yes for that run. This applies
+  to subagents too. Tests use fake clients and are not affected.
 - Agents may run **smoke checks** against a temporary `data_dir` (scratchpad
   or `tmp_path`), for example a one-day archive pull into a throwaway directory.
 - Infrastructure: local machine has 8 GB VRAM. The remote Ollama box (24 GB,

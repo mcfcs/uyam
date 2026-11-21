@@ -14,7 +14,7 @@ prompt_version: sarc-v2
 
 endpoints:
   local: http://127.0.0.1:11434
-  remote: http://100.102.10.69:11434   # 24 GB box over Tailscale
+  remote: http://100.102.10.69:11434   # 24 GB box over Tailscale; Gio's gaming PC: ASK before any run (RULES §6)
 
 # Three annotators mimicking independent human annotators.
 # think: false only for models with a thinking mode (Qwen3) — sending the
