@@ -280,7 +280,10 @@ Two notes for the thesis text (found while writing the guideline):
   `eval-report`. Gold items whose model votes were shown before the first
   save are recorded (`votes_seen`) and left out of those scores. The export
   ships `human_gold.first_pass` (same shape as the other human labels),
-  `sarcastic_span`, `unsure`, `assist_seen` and `votes_seen`. 300
+  `sarcastic_span`, `unsure`, `assist_seen`, `votes_seen` and (from
+  2026-11-22) `assist_before_first_pass`: Gio can opt to see Claude's
+  suggestion before labeling, as a second judgement. Those first passes are
+  Claude-informed, still counted in κ, and their number is reported. 300
   suggestions under `guideline-v1.1` are loaded for the redrawn queue (24
   sarcastic). On Gio's 31 labeled items they agree with him on 29 (26 under
   the strict v1 draft). The ethics text should mention

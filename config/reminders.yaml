@@ -114,14 +114,17 @@ reminders:
     section: Annotation
     title: Finish the gold subset (300 items)
     details: >
-      "Annotation Review" tab → gold queue. Needed for the human-vs-ensemble
+      Fastest: the labeling-only site at http://100.71.83.125:8502
+      (run-label-app.bat), or the main app's "Annotation Review" tab. Needed for the human-vs-ensemble
       Cohen's κ (leische H1/U3). Redrawn 2026-11-22 with sarcastic and split
       items weighted ×2: 62 of the 300 are ensemble-sarcastic. Your 31 labels
       are kept. Label each item blind first, using docs/GUIDELINE.md v1.1:
       tick the sarcastic sentence(s), or "unsure". If an item is sarcastic
       only because of a wry hugot, self-pity or playful-praise pose (D1),
-      write D1 in notes. After you save, you can toggle on Claude's
-      suggestion and revise. Your first pass is kept and is what κ uses.
+      write D1 in notes. To see Claude's suggestion while labeling (a second
+      judgement), switch on "Show Claude's suggestion before I label". Those
+      items are recorded as Claude-informed. Otherwise you can reveal it after
+      saving and revise. Your first pass is kept and is what κ uses.
       Don't tick "Reveal model votes" before saving.
     check: gold_progress
 

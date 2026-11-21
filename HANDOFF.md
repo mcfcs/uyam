@@ -55,6 +55,13 @@ detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
   --skip-prep --skip-gold`. Prep was skipped because the v3 copy is already
   indexed and selected, and a full LID pass over ~495k items would add RAM
   pressure next to Gio's apps.
+- **Labeling is fast now** (2026-11-22). The main app's tabs are lazy, so
+  only the open tab runs (`1294a88`), and a Review rerun dropped from ~10 s
+  to 0.1 s. Before, every click re-ran all tabs, including Data Browser's
+  whole corpus in ~4.5 GB on a machine swapping at ~85k pages/s. There is
+  also a labeling-only site, `run-label-app.bat` → http://100.71.83.125:8502
+  (`931192a`), and an opt-in "Claude's suggestion before I label" toggle
+  (`8e1d38d`, recorded as `assist_before_first_pass`).
 - **Runs & Datasets** tab: every run side by side (the original v1/v2 run stays
   untouched in annotation.sqlite3 as the fallback), a label browser per run, and
   every exported version (v1, v2, ...). All read-only.
