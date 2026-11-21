@@ -55,7 +55,10 @@ detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
   --skip-prep --skip-gold`. Prep was skipped because the v3 copy is already
   indexed and selected, and a full LID pass over ~495k items would add RAM
   pressure next to Gio's apps.
-- Logs: `data/.v3-pipeline.log` and `data/logs/` job logs.
+- Watch it in the app: Annotation tab → **Current annotation runs** (read-only,
+  refreshes every 30 s; `7342bca`). Logs: `data/.v3-pipeline.log` and
+  `data/.annotate-status/annotation-v3-run-all-local.log`. ETA after the first
+  hour: ~33 h (SEA-LION's mean pace is 9.9 s/item, not the 5.7 s median).
 - Order: llamasealion (20,900 left, ~27 items/min, ~13 h), then qwen3
   (6,000), then sealion (6,000). Roughly 27–30 h in total. Sentiment for the
   6,000 new items is done.

@@ -270,7 +270,7 @@ reminders:
 
   - id: decide-equal-size-reannotation-2026-11
     section: Adviser items (meeting Wed 2026-11-25)
-    title: "Start the full dataset-v3 re-annotation (laptop GPU, ~28 h)"
+    title: "dataset-v3 re-annotation: running since 2026-11-22 02:50 (~33 h; watch it in the Annotation tab)"
     details: >
       Decided 2026-11-22: re-annotate with equal-size models and add ~6,000
       items from Jun, Jul, Oct and Nov 1-10. The v3 database is already forked
