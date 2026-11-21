@@ -55,6 +55,9 @@ detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
   --skip-prep --skip-gold`. Prep was skipped because the v3 copy is already
   indexed and selected, and a full LID pass over ~495k items would add RAM
   pressure next to Gio's apps.
+- **Runs & Datasets** tab: every run side by side (the original v1/v2 run stays
+  untouched in annotation.sqlite3 as the fallback), a label browser per run, and
+  every exported version (v1, v2, ...). All read-only.
 - Watch it in the app: Annotation tab → **Current annotation runs** (read-only,
   refreshes every 30 s; `7342bca`). Logs: `data/.v3-pipeline.log` and
   `data/.annotate-status/annotation-v3-run-all-local.log`. ETA after the first

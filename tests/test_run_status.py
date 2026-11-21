@@ -163,3 +163,123 @@ def test_panel_renders_in_the_app(tmp_path: Path) -> None:
     text = "\n".join(str(m.value) for m in at.markdown)
     assert "annotation-v3.sqlite3" in text and "not running" in text
     assert at.dataframe  # the per-annotator table rendered
+
+
+# ---------------------------------------------------------------------------
+# Runs & Datasets tab
+# ---------------------------------------------------------------------------
+
+
+def test_run_summaries_keep_the_original_and_the_new_run_apart(tmp_path: Path) -> None:
+    from uyam.annotate.aggregate import run_aggregation
+    from uyam.annotate.run_status import run_summary
+
+    v3 = _v3_run(tmp_path)
+    src = dataclasses.replace(v3, db_path=tmp_path / "src" / "db" / "annotation.sqlite3")
+    run_aggregation(src, PROMPT_VERSION)  # the source already had labels; recompute is idempotent
+    original = run_summary(src, job_running=lambda name: False)
+    new = run_summary(v3, job_running=lambda name: name == "annotation-v3-run-all-local")
+    assert original["run"] == "original run (dataset-v1 / v2)"
+    assert (original["state"], original["labeled"], original["sarcastic"]) == ("labels ready", 6, 1)
+    assert original["fork"] == {}
+    assert new["run"] == "v3 run (annotation-v3.sqlite3)" and new["state"] == "running"
+    assert new["labeled"] == 0 and new["items with votes"] == 6
+    assert new["fork"]["kept_annotators"] == ["a1", "a2"]
+    assert run_summary(v3, job_running=lambda name: False)["state"] == "in progress (stopped)"
+
+
+def test_exported_datasets_lists_each_version_once(tmp_path: Path) -> None:
+    import json
+
+    from uyam.annotate.run_status import exported_datasets
+
+    old = {
+        "dataset_version": "v1", "created_at": "2026-09-15T11:56:40+00:00",
+        "prompt_version": "sarc-v2", "uyam_commit": "039c3aa0000",
+        "readiness": {"exported_rows": 15000, "sarcastic_positives": 1601,
+                      "gold_items_labeled": 31, "gold_sarcastic_cohen_kappa": -0.15},
+        "annotator_provenance": [
+            {"model_key": "qwen3", "role": "annotator"},
+            {"model_key": "qwen3", "role": "annotator"},
+            {"model_key": "qwen3-32b", "role": "adjudicator"},
+        ],
+    }
+    new = old | {"dataset_version": "v3", "aggregation": {
+        "sarcasm_rule": "majority", "tie_break": "confidence",
+        "annotators": ["qwen3", "sealion", "llamasealion"], "adjudicator": None}}
+    (tmp_path / "dataset_card-v1.json").write_text(json.dumps(old), encoding="utf-8")
+    (tmp_path / "dataset_card-v3.json").write_text(json.dumps(new), encoding="utf-8")
+    (tmp_path / "dataset_card.json").write_text(json.dumps(new), encoding="utf-8")  # latest copy
+    (tmp_path / "dataset-v1.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "uyam-dataset-v3.zip").write_bytes(b"x" * 2_000_000)
+    rows = exported_datasets(tmp_path)
+    assert [r["version"] for r in rows] == ["v1", "v3"]
+    v1, v3 = rows
+    assert v1["rules"] == "unanimous sarcasm, adjudicator qwen3-32b" and v1["annotators"] == "qwen3"
+    assert v1["dataset file"] is True and v1["bundle MB"] is None and v1["uyam commit"] == "039c3aa"
+    assert v3["rules"] == "majority vote, ties by confidence"
+    assert v3["annotators"] == "qwen3, sealion, llamasealion" and v3["bundle MB"] == 2.0
+
+
+def test_label_browser_filters_and_pages(tmp_path: Path) -> None:
+    from uyam.annotate.runs_ui import label_page, latest_votes
+
+    src = _source(tmp_path)  # 6 labeled Aug items, t1_c3 sarcastic
+    rows, total = label_page(src)
+    assert total == 6 and len(rows) == 6 and set(rows[0]) >= {"reddit_fullname", "text"}
+    sarc, n = label_page(src, sarcastic_only=True)
+    assert n == 1 and sarc[0]["reddit_fullname"] == "t1_c3" and sarc[0]["sarcastic"] is True
+    assert label_page(src, month="2026-06")[1] == 0
+    assert label_page(src, page=2)[0] == []
+    votes = latest_votes(src, limit=4)
+    assert len(votes) == 4 and all(v["model_key"] in {"a1", "a2", "a3"} for v in votes)
+
+
+def test_runs_tab_renders_both_runs_and_the_datasets(tmp_path: Path) -> None:
+    import json
+
+    pytest.importorskip("streamlit.testing.v1")
+    from streamlit.testing.v1 import AppTest
+
+    v3 = _v3_run(tmp_path)
+    config_dir = tmp_path / "cfgs"
+    config_dir.mkdir()
+    lineup = [{"key": k, "model": f"m-{k}", "endpoint": "local"} for k in ("a1", "a2", "a3")]
+    common = {"prompt_version": PROMPT_VERSION,
+              "endpoints": {"local": "http://127.0.0.1:11434"}, "annotators": lineup}
+    (config_dir / "annotation.yaml").write_text(yaml.safe_dump(common | {
+        "db_path": (tmp_path / "src" / "db" / "annotation.sqlite3").as_posix(),
+        "adjudicator": {"key": "adj", "model": "m-adj", "endpoint": "local"},
+        "pipeline": {"target_items": 6}}), encoding="utf-8")
+    (config_dir / "annotation-v3.yaml").write_text(yaml.safe_dump(common | {
+        "db_path": v3.db_path.as_posix(),
+        "aggregation": {"sarcasm_rule": "majority", "tie_break": "confidence"},
+        "pipeline": {"target_items": 8}}), encoding="utf-8")
+    annotated = tmp_path / "annotated"
+    annotated.mkdir()
+    (annotated / "dataset_card-v2.json").write_text(json.dumps(
+        {"dataset_version": "v2", "created_at": "2026-11-21T16:34:08+00:00",
+         "readiness": {"exported_rows": 6}}), encoding="utf-8")
+
+    def page(config_dir: str, annotated: str) -> None:
+        from pathlib import Path
+
+        from uyam.annotate.runs_ui import render_runs_tab
+
+        render_runs_tab(Path(config_dir), Path(annotated))
+
+    at = AppTest.from_function(page, args=(str(config_dir), str(annotated)), default_timeout=30)
+    at.run()
+    assert not at.exception
+    runs_table = at.dataframe[0].value
+    assert list(runs_table["run"]) == [
+        "original run (dataset-v1 / v2)",
+        "v3 run (annotation-v3.sqlite3)",
+    ]
+    assert at.selectbox(key="runs_tab_choice").options == list(runs_table["run"])
+    # The original run opens on its labels; the datasets table lists v2.
+    assert any("t1_c3" in str(df.value) for df in at.dataframe)
+    assert "v2" in str(at.dataframe[-1].value["version"].tolist())
+    at.selectbox(key="runs_tab_choice").set_value("v3 run (annotation-v3.sqlite3)").run()
+    assert not at.exception
+    assert any("No final labels yet" in str(i.value) for i in at.info)

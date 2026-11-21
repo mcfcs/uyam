@@ -816,6 +816,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
     tab_history,
     tab_stats,
     tab_annotate,
+    tab_runs,
     tab_review,
 ) = st.tabs(
     [
@@ -826,6 +827,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
         "Run History",
         "Stats",
         "Annotation",
+        "Runs & Datasets",
         "Annotation Review",
     ]
 )
@@ -1360,6 +1362,23 @@ with tab_annotate:
         )
     except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
         st.error(f"Annotation pipeline unavailable: {exc}")
+
+
+# ===========================================================================
+# Runs & Datasets (every annotation run side by side + every exported version)
+# ===========================================================================
+with tab_runs:
+    try:
+        from uyam.annotate.runs_ui import render_runs_tab
+
+        render_runs_tab()
+    except ImportError as exc:
+        st.info(
+            "Runs & Datasets needs the annotate extras: `pip install -e .[annotate]` "
+            f"({exc})"
+        )
+    except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
+        st.error(f"Runs & Datasets unavailable: {exc}")
 
 
 # ===========================================================================

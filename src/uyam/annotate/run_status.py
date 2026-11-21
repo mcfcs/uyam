@@ -10,6 +10,7 @@ written for a while.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -203,3 +204,116 @@ def lane_log_tail(cfg: AnnotationConfig, max_chars: int = 1500) -> str:
         if text:
             return text
     return ""
+
+
+# ---------------------------------------------------------------------------
+# All runs and exported datasets (the "Runs & Datasets" tab)
+# ---------------------------------------------------------------------------
+
+
+def run_label(cfg: AnnotationConfig) -> str:
+    """A human name for the run a config describes."""
+    stem = cfg.db_path.stem
+    if stem == "annotation":
+        return "original run (dataset-v1 / v2)"
+    return f"{stem.removeprefix('annotation-')} run ({cfg.db_path.name})"
+
+
+def run_summary(cfg: AnnotationConfig, *, job_running: Any = None) -> dict[str, Any]:
+    """One row per run: lineup, rules, how much is labeled, state (read-only)."""
+    is_running = job_running or jobs.is_running
+    keys = cfg.annotator_keys
+    marks = ",".join("?" for _ in keys)
+    conn = sqlite3.connect(f"file:{cfg.db_path.as_posix()}?mode=ro", uri=True, timeout=10)
+    try:
+        annotated = conn.execute(
+            f"SELECT COUNT(DISTINCT reddit_fullname) FROM llm_annotations "
+            f"WHERE prompt_version = ? AND role = 'annotator' AND model_key IN ({marks})",
+            (cfg.prompt_version, *keys),
+        ).fetchone()[0]
+        labeled, sarcastic = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(sarcastic_final), 0) FROM aggregates "
+            "WHERE prompt_version = ? AND sarcastic_final IS NOT NULL",
+            (cfg.prompt_version,),
+        ).fetchone()
+        last = conn.execute(
+            f"SELECT MAX(created_at) FROM llm_annotations WHERE model_key IN ({marks})", keys
+        ).fetchone()[0]
+        try:
+            fork = {
+                str(k): json.loads(str(v))
+                for k, v in conn.execute("SELECT key, value FROM fork_info")
+            }
+        except sqlite3.OperationalError:
+            fork = {}
+    finally:
+        conn.close()
+    running = any(is_running(name) for name in _lane_jobs(cfg))
+    if running:
+        state = "running"
+    elif labeled:
+        state = "labels ready"
+    elif annotated:
+        state = "in progress (stopped)"
+    else:
+        state = "empty"
+    rules = (
+        f"unanimous sarcasm, adjudicator {cfg.adjudicator.key}"
+        if cfg.aggregation.sarcasm_rule == "unanimous" and cfg.adjudicator
+        else f"{cfg.aggregation.sarcasm_rule} vote, ties by {cfg.aggregation.tie_break}"
+    )
+    return {
+        "run": run_label(cfg),
+        "state": state,
+        "annotators": ", ".join(keys),
+        "rules": rules,
+        "items with votes": int(annotated),
+        "labeled": int(labeled),
+        "sarcastic": int(sarcastic),
+        "last activity": _parse(last),
+        "database": cfg.db_path.name,
+        "fork": fork,
+    }
+
+
+def exported_datasets(out_dir: Path) -> list[dict[str, Any]]:
+    """Every exported dataset version, from its card (newest version last)."""
+    cards: dict[str, dict[str, Any]] = {}
+    for path in sorted(out_dir.glob("dataset_card*.json")):
+        try:
+            card = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        version = str(card.get("dataset_version") or "")
+        if version and (version not in cards or path.name != "dataset_card.json"):
+            cards[version] = card
+    rows: list[dict[str, Any]] = []
+    for version in sorted(cards, key=lambda v: (len(v), v)):
+        card = cards[version]
+        ready = card.get("readiness") or {}
+        prov = card.get("annotator_provenance") or []
+        agg = card.get("aggregation") or {}
+        annotators = sorted({str(p["model_key"]) for p in prov if p.get("role") == "annotator"})
+        adjudicators = sorted({str(p["model_key"]) for p in prov if p.get("role") == "adjudicator"})
+        zip_path = out_dir / f"uyam-dataset-{version}.zip"
+        rows.append(
+            {
+                "version": version,
+                "exported": _parse(str(card.get("created_at") or "")),
+                "rows": ready.get("exported_rows", (card.get("counts") or {}).get("exported_rows")),
+                "sarcastic": ready.get("sarcastic_positives"),
+                "gold labeled": ready.get("gold_items_labeled"),
+                "gold κ (sarcasm)": ready.get("gold_sarcastic_cohen_kappa"),
+                "annotators": ", ".join(agg.get("annotators") or annotators),
+                "rules": (
+                    f"{agg['sarcasm_rule']} vote, ties by {agg['tie_break']}"
+                    if agg
+                    else f"unanimous sarcasm, adjudicator {', '.join(adjudicators) or '-'}"
+                ),
+                "prompt": card.get("prompt_version"),
+                "uyam commit": str(card.get("uyam_commit") or "")[:7],
+                "dataset file": (out_dir / f"dataset-{version}.jsonl").exists(),
+                "bundle MB": round(zip_path.stat().st_size / 1e6, 1) if zip_path.exists() else None,
+            }
+        )
+    return rows
