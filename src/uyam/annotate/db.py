@@ -214,6 +214,15 @@ CREATE TABLE IF NOT EXISTS human_reviews (
     reviewed_at     TEXT NOT NULL
 );
 
+-- Explicit target-set membership (dataset-v3 fork: the v2 items plus a
+-- sampled extension). Higher priority ranks first in the target set. Kept
+-- out of `candidates` so re-running `select` (INSERT OR REPLACE) can't reset it.
+CREATE TABLE IF NOT EXISTS target_priority (
+    reddit_fullname TEXT PRIMARY KEY,
+    priority        INTEGER NOT NULL,
+    reason          TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS review_queue (
     reddit_fullname TEXT PRIMARY KEY,
     reason          TEXT NOT NULL CHECK(reason IN ('gold','low_confidence')),
@@ -661,7 +670,8 @@ class AnnotationDatabase:
     # Target set: the N eligible items every annotator must cover
     # ------------------------------------------------------------------
     #
-    # Ranking: items that already have annotator votes (from any model) first,
+    # Ranking: explicit target_priority first (highest first; only the v3 fork
+    # sets any), then items that already have annotator votes (from any model),
     # most votes first, ties by id. Every model works through the same ranked
     # list minus its own finished items, so the N-item set fills with complete
     # 3-vote items as fast as possible. The set is stable while the pipeline
@@ -670,21 +680,25 @@ class AnnotationDatabase:
     _TARGET_CTE = """
         WITH ranked AS (
             SELECT c.reddit_fullname,
+                   COALESCE(p.priority, 0) AS prio,
                    (SELECT COUNT(*) FROM llm_annotations a
                      WHERE a.reddit_fullname = c.reddit_fullname
                        AND a.prompt_version = :pv AND a.role = 'annotator') AS n_votes
-            FROM candidates c WHERE c.eligible = 1
+            FROM candidates c
+            LEFT JOIN target_priority p ON p.reddit_fullname = c.reddit_fullname
+            WHERE c.eligible = 1
         ),
         target AS (
-            SELECT reddit_fullname, n_votes FROM ranked
-            ORDER BY n_votes DESC, reddit_fullname LIMIT :n
+            SELECT reddit_fullname, prio, n_votes FROM ranked
+            ORDER BY prio DESC, n_votes DESC, reddit_fullname LIMIT :n
         )
     """
 
     def target_items(self, prompt_version: str, target: int) -> list[str]:
         rows = self._conn.execute(
             self._TARGET_CTE
-            + "SELECT reddit_fullname FROM target ORDER BY n_votes DESC, reddit_fullname",
+            + "SELECT reddit_fullname FROM target "
+            + "ORDER BY prio DESC, n_votes DESC, reddit_fullname",
             {"pv": prompt_version, "n": int(target)},
         ).fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
@@ -715,7 +729,7 @@ class AnnotationDatabase:
                 WHERE a.reddit_fullname = t.reddit_fullname
                   AND a.model_key = :model AND a.prompt_version = :pv AND a.role = 'annotator')
             {failed_clause}
-            ORDER BY t.n_votes DESC, t.reddit_fullname
+            ORDER BY t.prio DESC, t.n_votes DESC, t.reddit_fullname
             """,
             {"pv": prompt_version, "n": int(target), "model": model_key},
         ).fetchall()
@@ -728,7 +742,7 @@ class AnnotationDatabase:
             SELECT t.reddit_fullname FROM target t
             WHERE NOT EXISTS
               (SELECT 1 FROM tx_sentiment x WHERE x.reddit_fullname = t.reddit_fullname)
-            ORDER BY t.n_votes DESC, t.reddit_fullname
+            ORDER BY t.prio DESC, t.n_votes DESC, t.reddit_fullname
             """,
             {"pv": prompt_version, "n": int(target)},
         ).fetchall()

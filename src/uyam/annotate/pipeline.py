@@ -236,13 +236,16 @@ def run_pipeline(
     )
     if skip_adjudicate:
         console.print("adjudication skipped (--skip-adjudicate)")
+    elif cfg.adjudicator is None:
+        # Majority + confidence tie-break never escalates (config.AggregationConfig).
+        console.print("no adjudicator configured: nothing is escalated under these rules")
     else:
+        adjudicator = cfg.adjudicator
         with AnnotationDatabase(cfg.db_path) as db:
-            escalated = db.pending_adjudicator_count(cfg.adjudicator.key, cfg.prompt_version)
+            escalated = db.pending_adjudicator_count(adjudicator.key, cfg.prompt_version)
         if escalated:
             console.print(
-                f"{escalated} escalated items → {cfg.adjudicator.model} on "
-                f"{cfg.adjudicator.endpoint}"
+                f"{escalated} escalated items → {adjudicator.model} on {adjudicator.endpoint}"
             )
             args = ["adjudicate"] + (["--retry-failed"] if retry_failed else [])
             _start_or_adopt(backend, "adjudicate", args)

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from uyam.annotate.aggregate import compute_agreement, per_label_resolution
-from uyam.annotate.config import AnnotationConfig
+from uyam.annotate.config import AggregationConfig, AnnotationConfig
 from uyam.annotate.db import AnnotationDatabase
 
 logger = logging.getLogger(__name__)
@@ -126,15 +126,29 @@ def _phatic_flag(db: AnnotationDatabase, fullname: str) -> bool:
 
 
 def build_export_row(
-    db: AnnotationDatabase, agg: dict[str, Any], dataset_version: str
+    db: AnnotationDatabase,
+    agg: dict[str, Any],
+    dataset_version: str,
+    *,
+    aggregation: AggregationConfig | None = None,
+    annotator_keys: list[str] | None = None,
 ) -> dict[str, Any] | None:
+    """One dataset row. ``annotator_keys`` limits the shipped annotator votes to
+    the configured lineup, and ``aggregation`` sets how per-label resolution is
+    described. Both default to v1/v2 behaviour."""
+    rules = aggregation or AggregationConfig()
     fullname = str(agg["reddit_fullname"])
     record = db.get_record(fullname)
     if record is None:
         return None
 
     annotations = db.annotations_for_item(fullname, str(agg["prompt_version"]))
-    raw_annotators = [r for r in annotations if r["role"] == "annotator"]
+    raw_annotators = [
+        r
+        for r in annotations
+        if r["role"] == "annotator"
+        and (annotator_keys is None or str(r["model_key"]) in annotator_keys)
+    ]
     raw_adjudicators = [r for r in annotations if r["role"] == "adjudicator"]
     annotator_rows = [_annotation_view(r) for r in raw_annotators]
     adjudicator_rows = [_annotation_view(r) for r in raw_adjudicators]
@@ -198,7 +212,13 @@ def build_export_row(
         },
         "reliability": {
             "resolved_by": agg.get("resolved_by"),
-            "per_label": per_label_resolution(raw_annotators, raw_adjudicators, human),
+            "per_label": per_label_resolution(
+                raw_annotators,
+                raw_adjudicators,
+                human,
+                sarcasm_rule=rules.sarcasm_rule,
+                tie_break=rules.tie_break,
+            ),
             "sarcasm_votes": agg.get("sarcasm_votes"),
             "n_annotators": agg.get("n_annotators"),
             "mean_confidence": agg.get("mean_confidence"),
@@ -552,7 +572,13 @@ def run_export(
             if not include_unresolved and agg.get("resolved_by") is None:
                 skipped_unresolved += 1
                 continue
-            row = build_export_row(db, agg, dataset_version)
+            row = build_export_row(
+                db,
+                agg,
+                dataset_version,
+                aggregation=cfg.aggregation,
+                annotator_keys=cfg.annotator_keys,
+            )
             if row is not None:
                 rows.append(row)
 
@@ -652,6 +678,12 @@ def run_export(
         "collection_window": collection_window,
         "temporal_context_coverage": temporal_coverage,
         "annotator_provenance": annotator_provenance,
+        "aggregation": {
+            "sarcasm_rule": cfg.aggregation.sarcasm_rule,
+            "tie_break": cfg.aggregation.tie_break,
+            "annotators": cfg.annotator_keys,
+            "adjudicator": cfg.adjudicator.key if cfg.adjudicator else None,
+        },
         "candidate_filters": {
             "min_chars": cfg.candidate_filters.min_chars,
             "min_tokens": cfg.candidate_filters.min_tokens,
@@ -662,9 +694,15 @@ def run_export(
             "phatic_max_leftover": cfg.candidate_filters.phatic_max_leftover,
         },
         "notes": [
-            "Labels are LLM-ensemble annotations (3 annotators, unanimity-or-escalate on "
-            "sarcasm, majority on 3-class labels, blind large-model adjudication, human "
-            "final call on low-confidence items).",
+            (
+                "Labels are LLM-ensemble annotations (3 annotators, unanimity-or-escalate on "
+                "sarcasm, majority on 3-class labels, blind large-model adjudication, human "
+                "final call on low-confidence items)."
+                if cfg.aggregation.sarcasm_rule == "unanimous"
+                else f"Labels are LLM-ensemble annotations ({len(cfg.annotators)} "
+                "equal-size annotators, majority vote on sarcasm and on 3-class labels, "
+                f"1-1-1 ties broken by {cfg.aggregation.tie_break}, no adjudicator)."
+            ),
             "intended_sentiment is the ground-truth sentiment for RQ3; literal_sentiment "
             "is the surface reading.",
             "Self-reported LLM confidence is weakly calibrated; prefer sarcasm_votes and "

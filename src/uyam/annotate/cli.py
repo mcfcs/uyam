@@ -378,6 +378,41 @@ def load_assist(
     )
 
 
+@annotate_app.command(name="fork")
+def fork(
+    to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),
+    keep: list[str] = typer.Option(
+        ..., "--keep", help="Annotator key whose votes carry over (repeat)"
+    ),
+    extend: list[str] = typer.Option(
+        [], "--extend", help="Add N unlabeled items from a month: YYYY-MM:N (repeat)"
+    ),
+    seed: int = typer.Option(13, help="Seed for the extension sample"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Fork the annotation DB for a re-annotation (dataset-v3); the source is never changed."""
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.fork import fork_for_reannotation, parse_extend
+
+    stats = fork_for_reannotation(
+        cfg.db_path,
+        to,
+        prompt_version=cfg.prompt_version,
+        keep_annotators=keep,
+        extend=parse_extend(extend),
+        seed=seed,
+    )
+    console.print(
+        f"[green]Forked[/green] {cfg.db_path.name} -> {to}: {stats['base']} source-labeled "
+        f"items + extension {stats['extension']} = target set {stats['target_total']}. "
+        f"Kept votes of {', '.join(stats['kept_annotators'])}; dropped "
+        f"{stats['dropped_votes']} other votes and {stats['dropped_aggregates']} aggregates."
+    )
+    if stats["extension_short"]:
+        short = stats["extension_short"]
+        console.print(f"[yellow]Short months (not enough items):[/yellow] {short}")
+
+
 @annotate_app.command(name="gold-sample")
 def gold_sample(
     size: int | None = typer.Option(None, help="Sample size (default: annotation.yaml gold_size)"),
@@ -510,7 +545,7 @@ def smoke(
             available = []
             failures += 1
 
-        for ann in [*cfg.annotators, cfg.adjudicator]:
+        for ann in [*cfg.annotators, *([cfg.adjudicator] if cfg.adjudicator else [])]:
             if ann.endpoint != name:
                 continue
             template = client.model_template(ann.model)

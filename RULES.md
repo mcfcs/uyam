@@ -121,6 +121,7 @@ replacing it:
 | Evaluation-only votes (eval_annotations) never reach aggregation, target sets, agreement or export | `test_annotate_evaluation.py` |
 | Re-tagging changes only the date-keyword records, backs up first, keeps other lines byte-identical | `test_retag_calendar_walk.py` |
 | The dataset card is strict JSON (no NaN) | `test_annotate_export.py` |
+| A re-annotation fork never changes the source DB; only the configured lineup's votes are aggregated; the v3 lineup is local-only with no adjudicator; target_priority survives re-select | `test_annotate_v3.py` |
 
 When you add a new source, filter, or export field, add a row here.
 

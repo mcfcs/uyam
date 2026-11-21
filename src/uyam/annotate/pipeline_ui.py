@@ -74,8 +74,10 @@ def _pipeline_snapshot(cfg: AnnotationConfig, *, target: int | None = None) -> d
             (cfg.prompt_version,),
         ).fetchall()
         snap["aggregates"] = {str(r["status"]): int(r["n"]) for r in rows}
-        snap["escalated_pending"] = db.pending_adjudicator_count(
-            cfg.adjudicator.key, cfg.prompt_version
+        snap["escalated_pending"] = (
+            db.pending_adjudicator_count(cfg.adjudicator.key, cfg.prompt_version)
+            if cfg.adjudicator is not None
+            else 0
         )
         queue = db.review_queue_counts()
         snap["queue_gold"] = queue["gold"]
@@ -719,13 +721,16 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
             with st.spinner("Computing agreement…"):
                 st.json(compute_agreement(cfg, cfg.prompt_version))
     with col_2:
-        _job_button(
-            label=f"Adjudicate ({snap['escalated_pending']} escalated)",
-            job_name="adjudicate",
-            args=["adjudicate"],
-            help_text=f"Blind re-annotation of disagreements by {cfg.adjudicator.model} "
-            f"on {cfg.adjudicator.endpoint}. Aggregate again afterwards.",
-        )
+        if cfg.adjudicator is not None:
+            _job_button(
+                label=f"Adjudicate ({snap['escalated_pending']} escalated)",
+                job_name="adjudicate",
+                args=["adjudicate"],
+                help_text=f"Blind re-annotation of disagreements by {cfg.adjudicator.model} "
+                f"on {cfg.adjudicator.endpoint}. Aggregate again afterwards.",
+            )
+        else:
+            st.caption("No adjudicator: majority vote with a confidence tie-break.")
         if st.button(
             f"Draw gold sample ({cfg.review.gold_size})",
             help="Stratified human-validation subset -> 'Annotation Review' tab.",

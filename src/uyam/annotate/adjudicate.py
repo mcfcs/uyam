@@ -24,7 +24,7 @@ def run_adjudication(
 ) -> dict[str, int]:
     return run_annotator(
         cfg,
-        cfg.adjudicator.key,
+        cfg.require_adjudicator().key,
         role="adjudicator",
         limit=limit,
         dry_run=dry_run,

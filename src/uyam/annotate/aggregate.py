@@ -1,11 +1,19 @@
 """Vote aggregation, escalation, and agreement statistics.
 
-Rules (see docs/dataset-contract-leische.md):
-- sarcasm: unanimous across annotators -> final; any split (incl. 2-1) -> escalate
-- 3-class labels (language / literal / intended): >=2 votes -> majority; else escalate
+Rules (see docs/dataset-contract-leische.md), set by config.AggregationConfig:
+- sarcasm, `unanimous` (v1/v2): unanimous across annotators -> final; any
+  split (incl. 2-1) -> escalate. `majority` (v3): the strict majority of the
+  votes -> final; no strict majority (only possible when a vote is missing)
+  -> left unresolved
+- 3-class labels (language / literal / intended): >=2 votes -> majority; a
+  1-1-1 tie escalates (`adjudicate`) or takes the most confident annotator's
+  value (`confidence`; equal confidence goes to annotator config order)
 - adjudicator: blind senior annotator — its labels REPLACE all labels on
   escalated items; confidence below the floor sends the item to the human queue
 - a human review (non-gold) is always final
+
+Only the configured annotators' votes count (cfg.annotator_keys), so a
+database that also holds another lineup's votes aggregates just this one.
 
 Agreement stats: Fleiss' kappa over the base annotators only (the adjudicator
 has a different marginal distribution and would bias it), Krippendorff's alpha
@@ -40,18 +48,39 @@ _LABEL_CODES: dict[str, dict[str, int]] = {
 }
 
 
-def _majority_3class(values: list[str]) -> tuple[str | None, bool]:
-    """Return (majority value | None, escalate)."""
+def _majority_3class(
+    values: list[str],
+    confidences: list[float | None] | None = None,
+    tie_break: str = "adjudicate",
+) -> tuple[str | None, bool]:
+    """Return (majority value | None, escalate).
+
+    With tie_break="confidence" a no-majority split takes the value of the most
+    confident vote (``confidences`` aligned with ``values``; missing counts as
+    0, equal confidence keeps the earlier vote, i.e. annotator config order).
+    """
     if not values:
         return None, True
     top_value, top_count = Counter(values).most_common(1)[0]
     if top_count >= 2:
         return top_value, False
+    if tie_break == "confidence":
+        confs = confidences or [None] * len(values)
+        best = max(range(len(values)), key=lambda i: (confs[i] or 0.0, -i))
+        return values[best], False
     return None, True
 
 
-def _sarcasm_vote(values: list[int]) -> tuple[int | None, bool, str]:
-    """Return (final | None, escalate, votes_string). Unanimity required."""
+def _is_tie(values: list[str]) -> bool:
+    return bool(values) and Counter(values).most_common(1)[0][1] < 2
+
+
+def _sarcasm_vote(values: list[int], rule: str = "unanimous") -> tuple[int | None, bool, str]:
+    """Return (final | None, escalate, votes_string).
+
+    unanimous: every vote agrees (>= 2 votes). majority: a strict majority of
+    >= 2 votes; a tie (e.g. 1-1 after a failed vote) has no final label.
+    """
     if not values:
         return None, True, "0-0"
     yes = sum(values)
@@ -59,6 +88,8 @@ def _sarcasm_vote(values: list[int]) -> tuple[int | None, bool, str]:
     votes = f"{max(yes, no)}-{min(yes, no)}"
     if len(values) >= 2 and (yes == 0 or no == 0):
         return values[0], False, votes
+    if rule == "majority" and len(values) >= 2 and yes != no:
+        return int(yes > no), False, votes
     return None, True, votes
 
 
@@ -66,12 +97,17 @@ def per_label_resolution(
     annotator_rows: list[dict[str, Any]],
     adjudicator_rows: list[dict[str, Any]],
     human: dict[str, Any] | None,
+    *,
+    sarcasm_rule: str = "unanimous",
+    tie_break: str = "adjudicate",
 ) -> dict[str, str]:
-    """How EACH label was decided: unanimous | majority | adjudicator | human | unresolved.
+    """How EACH label was decided:
+    unanimous | majority | tiebreak | adjudicator | human | unresolved.
 
     `aggregates.resolved_by` is the joint resolution of all four labels; the
     model repository needs the per-label view because sarcasm often resolves
-    while language does not (and vice versa).
+    while language does not (and vice versa). `tiebreak` = a 1-1-1 split
+    settled by annotator confidence (tie_break="confidence").
     """
     if human is not None and not human.get("is_gold"):
         return dict.fromkeys(
@@ -83,15 +119,20 @@ def per_label_resolution(
         )
     out: dict[str, str] = {}
     sarc_values = [int(r["sarcastic"]) for r in annotator_rows if r.get("sarcastic") is not None]
-    _, escalate, _ = _sarcasm_vote(sarc_values)
-    out["sarcastic"] = "unresolved" if escalate else "unanimous"
+    _, escalate, _ = _sarcasm_vote(sarc_values, sarcasm_rule)
+    if escalate:
+        out["sarcastic"] = "unresolved"
+    else:
+        out["sarcastic"] = "unanimous" if len(set(sarc_values)) == 1 else "majority"
     for label in ("language", "literal_sentiment", "intended_sentiment"):
         values = [str(r[label]) for r in annotator_rows if r.get(label) is not None]
-        final, escalate = _majority_3class(values)
+        final, escalate = _majority_3class(values, tie_break=tie_break)
         if escalate:
             out[label] = "unresolved"
         elif len(set(values)) == 1:
             out[label] = "unanimous"
+        elif _is_tie(values):
+            out[label] = "tiebreak"
         else:
             out[label] = "majority"
     return out
@@ -114,28 +155,51 @@ def run_aggregation(cfg: AnnotationConfig, prompt_version: str) -> dict[str, int
         "adjudicated": 0,
         "human": 0,
         "queued_low_confidence": 0,
+        "tiebreak_labels": 0,
     }
+    rule = cfg.aggregation.sarcasm_rule
+    tie_break = cfg.aggregation.tie_break
+    order = {key: i for i, key in enumerate(cfg.annotator_keys)}
     with AnnotationDatabase(cfg.db_path) as db:
         floor = cfg.review.adjudicator_confidence_floor
         for fullname in db.annotated_items(prompt_version):
             rows = db.annotations_for_item(fullname, prompt_version)
-            annotator_rows = [r for r in rows if r["role"] == "annotator"]
+            # Only this lineup's votes, in config order (the tie-break order).
+            annotator_rows = sorted(
+                (
+                    r
+                    for r in rows
+                    if r["role"] == "annotator" and str(r["model_key"]) in order
+                ),
+                key=lambda r: order[str(r["model_key"])],
+            )
             adjudicator_rows = [r for r in rows if r["role"] == "adjudicator"]
             if not annotator_rows:
                 continue
             stats["items"] += 1
+            confs = [
+                None if r.get("confidence") is None else float(r["confidence"])
+                for r in annotator_rows
+            ]
 
             sarcasm_final, sarcasm_escalate, votes = _sarcasm_vote(
-                [int(r["sarcastic"]) for r in annotator_rows]
+                [int(r["sarcastic"]) for r in annotator_rows], rule
+            )
+            label_values = {
+                label: [str(r[label]) for r in annotator_rows]
+                for label in ("language", "literal_sentiment", "intended_sentiment")
+            }
+            stats["tiebreak_labels"] += (
+                sum(_is_tie(v) for v in label_values.values()) if tie_break == "confidence" else 0
             )
             language_final, lang_escalate = _majority_3class(
-                [str(r["language"]) for r in annotator_rows]
+                label_values["language"], confs, tie_break
             )
             literal_final, lit_escalate = _majority_3class(
-                [str(r["literal_sentiment"]) for r in annotator_rows]
+                label_values["literal_sentiment"], confs, tie_break
             )
             intended_final, int_escalate = _majority_3class(
-                [str(r["intended_sentiment"]) for r in annotator_rows]
+                label_values["intended_sentiment"], confs, tie_break
             )
             escalate = sarcasm_escalate or lang_escalate or lit_escalate or int_escalate
             cues_final = {col: _cue_majority(annotator_rows, col) for col in _CUE_COLS}
@@ -193,7 +257,7 @@ def run_aggregation(cfg: AnnotationConfig, prompt_version: str) -> dict[str, int
                     "intended_sentiment": r["intended_sentiment"],
                     "confidence": r["confidence"],
                 }
-                for r in rows
+                for r in [*annotator_rows, *adjudicator_rows]
             }
 
             db.upsert_aggregate(
@@ -229,9 +293,15 @@ def run_aggregation(cfg: AnnotationConfig, prompt_version: str) -> dict[str, int
 # ---------------------------------------------------------------------------
 
 def _label_matrix(
-    db: AnnotationDatabase, prompt_version: str, label_col: str
+    db: AnnotationDatabase,
+    prompt_version: str,
+    label_col: str,
+    annotator_keys: list[str] | None = None,
 ) -> tuple[list[str], list[list[str | None]]]:
-    """(model_keys, items x raters label matrix with None for missing)."""
+    """(model_keys, items x raters label matrix with None for missing).
+
+    ``annotator_keys`` limits the raters to one lineup (None = every annotator).
+    """
     rows = db.conn.execute(
         """
         SELECT reddit_fullname, model_key, language, literal_sentiment,
@@ -240,6 +310,8 @@ def _label_matrix(
         """,
         (prompt_version,),
     ).fetchall()
+    if annotator_keys is not None:
+        rows = [r for r in rows if str(r["model_key"]) in set(annotator_keys)]
     model_keys = sorted({str(r["model_key"]) for r in rows})
     by_item: dict[str, dict[str, str]] = {}
     for r in rows:
@@ -386,7 +458,7 @@ def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
             "intended_sentiment": "intended_sentiment",
         }
         for label, col in col_map.items():
-            model_keys, matrix = _label_matrix(db, prompt_version, col)
+            model_keys, matrix = _label_matrix(db, prompt_version, col, cfg.annotator_keys)
             codes = _LABEL_CODES[label]
             complete = sum(1 for row in matrix if all(v is not None for v in row))
             report["labels"][label] = {

@@ -89,6 +89,23 @@ class ExportConfig:
 
 
 @dataclass
+class AggregationConfig:
+    """How base-annotator votes become the shipped label.
+
+    v1/v2 (defaults): sarcasm must be unanimous, and any split or 1-1-1 tie
+    escalates to the blind adjudicator.
+    v3 (equal-size lineup, adviser 2026-11): `sarcasm_rule: majority`
+    ships the strict majority of the sarcasm votes, and `tie_break:
+    confidence` settles a 1-1-1 tie on a 3-class label with the most
+    confident annotator's value (ties on confidence go to config order).
+    No item is escalated, so no adjudicator is needed.
+    """
+
+    sarcasm_rule: str = "unanimous"  # unanimous | majority
+    tie_break: str = "adjudicate"  # adjudicate | confidence
+
+
+@dataclass
 class PipelineConfig:
     """Defaults for the one-click chain (`annotate pipeline` / Streamlit Start ALL)."""
 
@@ -102,7 +119,8 @@ class AnnotationConfig:
     prompt_version: str
     endpoints: dict[str, str]
     annotators: list[AnnotatorConfig]
-    adjudicator: AnnotatorConfig
+    # None when the aggregation rules never escalate (v3: majority + confidence).
+    adjudicator: AnnotatorConfig | None
     options: OllamaOptionsConfig
     context: ContextConfig
     candidate_filters: CandidateFiltersConfig
@@ -115,9 +133,23 @@ class AnnotationConfig:
     # go to eval_annotations and are only ever compared, never aggregated.
     # Deliberately NOT returned by annotator(): `annotate run` cannot reach them.
     evaluators: list[AnnotatorConfig] = field(default_factory=list)
+    aggregation: AggregationConfig = field(default_factory=AggregationConfig)
+
+    @property
+    def annotator_keys(self) -> list[str]:
+        """The base annotators whose votes are aggregated, in config order."""
+        return [a.key for a in self.annotators]
+
+    def require_adjudicator(self) -> AnnotatorConfig:
+        if self.adjudicator is None:
+            raise ValueError(
+                "annotation.yaml has no adjudicator: these aggregation rules never "
+                "escalate an item (aggregation.sarcasm_rule / tie_break)"
+            )
+        return self.adjudicator
 
     def annotator(self, key: str) -> AnnotatorConfig:
-        if key == self.adjudicator.key:
+        if self.adjudicator is not None and key == self.adjudicator.key:
             return self.adjudicator
         for ann in self.annotators:
             if ann.key == key:
@@ -163,7 +195,7 @@ def _parse_annotator(raw: dict[str, Any]) -> AnnotatorConfig:
 
 def _check_evaluator_keys(
     annotators: list[AnnotatorConfig],
-    adjudicator: AnnotatorConfig,
+    adjudicator: AnnotatorConfig | None,
     evaluators: list[AnnotatorConfig],
 ) -> None:
     """Evaluator keys must be unique and disjoint from annotator/adjudicator keys.
@@ -171,7 +203,7 @@ def _check_evaluator_keys(
     A shared key would let an evaluation-only model's failures and progress be
     mistaken for a dataset annotator's (llm_failures is keyed by model_key).
     """
-    taken = {a.key for a in annotators} | {adjudicator.key}
+    taken = {a.key for a in annotators} | ({adjudicator.key} if adjudicator else set())
     seen: set[str] = set()
     for ev in evaluators:
         if ev.key in taken:
@@ -196,15 +228,33 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
     annotators = [_parse_annotator(a) for a in (raw.get("annotators") or [])]
     if not annotators:
         raise ValueError("annotation.yaml must define at least one annotator")
+    agg_raw: dict[str, Any] = raw.get("aggregation") or {}
+    aggregation = AggregationConfig(
+        sarcasm_rule=str(agg_raw.get("sarcasm_rule", "unanimous")),
+        tie_break=str(agg_raw.get("tie_break", "adjudicate")),
+    )
+    if aggregation.sarcasm_rule not in {"unanimous", "majority"}:
+        raise ValueError("annotation.yaml aggregation.sarcasm_rule must be unanimous or majority")
+    if aggregation.tie_break not in {"adjudicate", "confidence"}:
+        raise ValueError("annotation.yaml aggregation.tie_break must be adjudicate or confidence")
+    never_escalates = (
+        aggregation.sarcasm_rule == "majority" and aggregation.tie_break == "confidence"
+    )
+
     adj_raw = raw.get("adjudicator")
-    if not adj_raw:
-        raise ValueError("annotation.yaml must define an adjudicator")
-    adjudicator = _parse_annotator(adj_raw)
+    if not adj_raw and not never_escalates:
+        raise ValueError(
+            "annotation.yaml must define an adjudicator (only "
+            "aggregation.sarcasm_rule: majority with tie_break: confidence needs none)"
+        )
+    adjudicator = _parse_annotator(adj_raw) if adj_raw else None
 
     evaluators = [_parse_annotator(e) for e in (raw.get("evaluators") or [])]
     _check_evaluator_keys(annotators, adjudicator, evaluators)
+    if len({a.key for a in annotators}) != len(annotators):
+        raise ValueError("annotation.yaml annotator keys must be unique")
 
-    for ann in [*annotators, adjudicator, *evaluators]:
+    for ann in [*annotators, *([adjudicator] if adjudicator else []), *evaluators]:
         if ann.endpoint not in endpoints:
             raise ValueError(f"Annotator {ann.key!r} references unknown endpoint {ann.endpoint!r}")
 
@@ -289,4 +339,5 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
         export=export,
         pipeline=pipeline,
         evaluators=evaluators,
+        aggregation=aggregation,
     )
