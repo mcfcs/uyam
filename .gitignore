@@ -69,3 +69,6 @@ Thumbs.db
 
 # Claude Code subagent worktrees
 .claude/worktrees/
+
+# Detached-run logs (v3 pipeline and any future ones)
+data/.*.log
