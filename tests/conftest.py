@@ -55,6 +55,21 @@ def isolated_scrape_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
 
 
 @pytest.fixture(autouse=True)
+def isolated_annotate_jobs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the annotation job registry (data/.annotate-status/) at a temp dir.
+
+    It is shared with real background jobs: a live dataset-v3 lane made a
+    status-panel test see "running" (2026-11-22). Tests must neither read nor
+    write the operator's job state.
+    """
+    import uyam.annotate.jobs as annotate_jobs
+
+    jobs_dir = tmp_path / "annotate-status"
+    monkeypatch.setattr(annotate_jobs, "JOBS_DIR", jobs_dir)
+    return jobs_dir
+
+
+@pytest.fixture(autouse=True)
 def restore_main_module() -> Iterator[None]:
     """AppTest installs its temp script as sys.modules["__main__"] and leaves it
     there; multiprocessing spawn in later tests (test_parallel) would then try

@@ -401,6 +401,13 @@ def render_annotation_tab(config_path: Path | None = None) -> None:
         st.error(f"Could not load config/annotation.yaml: {exc}")
         return
 
+    # Live, read-only status of any run (e.g. the dataset-v3 re-annotation,
+    # which runs on its own database and is not otherwise shown in this tab).
+    from uyam.annotate.run_status_ui import render_run_status_panel
+
+    render_run_status_panel()
+    st.divider()
+
     snap = _pipeline_snapshot(cfg)
     local_annotators = [a for a in cfg.annotators if a.endpoint == "local"]
     endpoints_in_use = list(dict.fromkeys(a.endpoint for a in cfg.annotators))

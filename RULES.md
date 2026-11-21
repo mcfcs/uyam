@@ -122,6 +122,7 @@ replacing it:
 | Re-tagging changes only the date-keyword records, backs up first, keeps other lines byte-identical | `test_retag_calendar_walk.py` |
 | The dataset card is strict JSON (no NaN) | `test_annotate_export.py` |
 | A re-annotation fork never changes the source DB; only the configured lineup's votes are aggregated; the v3 lineup is local-only with no adjudicator; target_priority survives re-select | `test_annotate_v3.py` |
+| The run-status panel is read-only (never writes the DB) and tests never see the real job registry | `test_run_status.py` |
 
 When you add a new source, filter, or export field, add a row here.
 
