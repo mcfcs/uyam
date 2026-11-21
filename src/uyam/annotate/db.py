@@ -244,6 +244,17 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
     # U9 (leische brief): an already-labeled item that matches the phatic rule
     # stays eligible and is flagged instead of dropped.
     "candidates": (("phatic", "INTEGER DEFAULT 0"),),
+    # Full-label assist suggestions (2026-11-22): the same fields the reviewer
+    # sets, so the review form can be prefilled with Claude's take.
+    "assist_suggestions": (
+        ("language", "TEXT"),
+        ("literal_sentiment", "TEXT"),
+        ("intended_sentiment", "TEXT"),
+        ("cue_polarity_inversion", "INTEGER"),
+        ("cue_rhetorical_intent", "INTEGER"),
+        ("cue_contextual_incongruity", "INTEGER"),
+        ("cue_hyperbole", "INTEGER"),
+    ),
     # Gold-review upgrades: the sarcastic sentence(s), an "unsure" mark, the
     # blind first-pass labels kept when a reviewer revises after seeing the
     # assist suggestion, and whether that suggestion was revealed.

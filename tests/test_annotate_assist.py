@@ -85,3 +85,60 @@ def test_duplicate_items_across_files_are_rejected(tmp_path: Path) -> None:
         b = _write(tmp_path / "b.jsonl", [_ok("t1_c1", "", False)])
         with pytest.raises(AssistValidationError, match="appears twice"):
             load_assist_suggestions(db, [a, b], source="t", guideline_version="g")
+
+
+def _full(fullname: str, span: str, sarcastic: bool, **over: object) -> dict[str, object]:
+    return {
+        **_ok(fullname, span, sarcastic),
+        "language": "taglish",
+        "literal_sentiment": "positive",
+        "intended_sentiment": "negative" if sarcastic else "positive",
+        "cues": {"polarity_inversion": sarcastic, "rhetorical_intent": False,
+                 "contextual_incongruity": sarcastic, "hyperbole": False},
+        **over,
+    }
+
+
+def test_full_label_suggestions_are_stored(tmp_path: Path) -> None:
+    with _db(tmp_path) as db:
+        c3 = db.get_record("t1_c3")
+        assert c3 is not None
+        span = str(c3["text"]).split(".")[0]
+        f = _write(tmp_path / "a.jsonl", [_full("t1_c3", span, True), _full("t1_c1", "", False)])
+        load_assist_suggestions(db, [f], source="t", guideline_version="g")
+        row = db.conn.execute(
+            "SELECT * FROM assist_suggestions WHERE reddit_fullname = 't1_c3'"
+        ).fetchone()
+        assert (row["language"], row["literal_sentiment"], row["intended_sentiment"]) == (
+            "taglish", "positive", "negative")
+        assert (row["cue_polarity_inversion"], row["cue_hyperbole"]) == (1, 0)
+        other = db.conn.execute(
+            "SELECT cue_polarity_inversion FROM assist_suggestions WHERE reddit_fullname = 't1_c1'"
+        ).fetchone()
+        assert other[0] == 0
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        ({"language": "filipino"}, "language must be one of"),
+        ({"intended_sentiment": "sad"}, "intended_sentiment must be one of"),
+        ({"cues": {"polarity_inversion": True}}, "cues must map exactly"),
+    ],
+)
+def test_full_label_validation(tmp_path: Path, change: dict[str, object], message: str) -> None:
+    with _db(tmp_path) as db:
+        f = _write(tmp_path / "a.jsonl", [_full("t1_c1", "", False, **change)])
+        with pytest.raises(AssistValidationError, match=message):
+            load_assist_suggestions(db, [f], source="t", guideline_version="g")
+
+
+def test_cues_on_a_non_sarcastic_suggestion_are_rejected_without_hinting(tmp_path: Path) -> None:
+    with _db(tmp_path) as db:
+        bad = _full("t1_c1", "", False)
+        bad["cues"] = {"polarity_inversion": True, "rhetorical_intent": False,
+                       "contextual_incongruity": False, "hyperbole": False}
+        f = _write(tmp_path / "a.jsonl", [bad])
+        with pytest.raises(AssistValidationError, match="sarcastic and cues disagree") as exc:
+            load_assist_suggestions(db, [f], source="t", guideline_version="g")
+        assert "false" not in str(exc.value).lower()

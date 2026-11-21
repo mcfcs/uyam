@@ -8,6 +8,18 @@ JSON Lines, one object per item:
      "sarcastic_span": "<exact sentence(s) of the target, joined by \\n>" | null,
      "rationale": "...", "confidence": 0.0-1.0}
 
+or the full-label form (2026-11-22), which adds every field the reviewer sets,
+so the review form can be prefilled with Claude's take:
+
+    ... "language": "english"|"tagalog"|"taglish",
+        "literal_sentiment": "positive"|"neutral"|"negative",
+        "intended_sentiment": "positive"|"neutral"|"negative",
+        "cues": {"polarity_inversion": bool, "rhetorical_intent": bool,
+                 "contextual_incongruity": bool, "hyperbole": bool}
+
+In the full form all cues must be false when sarcastic is false (GUIDELINE §3
+step 7).
+
 The review tab shows a suggestion only after the reviewer has saved a blind
 first-pass label (review_workflow.revealable_assist), and nothing printed while
 loading (counts, error messages) hints at any item's verdict. This module only
@@ -25,6 +37,15 @@ from typing import Any
 from uyam.annotate.db import AnnotationDatabase
 
 _KEYS = {"reddit_fullname", "sarcastic", "sarcastic_span", "rationale", "confidence"}
+_FULL_KEYS = _KEYS | {"language", "literal_sentiment", "intended_sentiment", "cues"}
+_LANGUAGES = {"english", "tagalog", "taglish"}
+_SENTIMENTS = {"positive", "neutral", "negative"}
+CUE_COLUMNS = {
+    "polarity_inversion": "cue_polarity_inversion",
+    "rhetorical_intent": "cue_rhetorical_intent",
+    "contextual_incongruity": "cue_contextual_incongruity",
+    "hyperbole": "cue_hyperbole",
+}
 
 
 class AssistValidationError(ValueError):
@@ -32,8 +53,11 @@ class AssistValidationError(ValueError):
 
 
 def _validate(item: Any, where: str, text: str | None) -> dict[str, Any]:
-    if not isinstance(item, dict) or set(item) != _KEYS:
-        raise AssistValidationError(f"{where}: expected exactly the keys {sorted(_KEYS)}")
+    if not isinstance(item, dict) or set(item) not in (_KEYS, _FULL_KEYS):
+        raise AssistValidationError(
+            f"{where}: expected exactly the keys {sorted(_KEYS)}, or those plus "
+            "language, literal_sentiment, intended_sentiment and cues"
+        )
     if text is None:
         raise AssistValidationError(f"{where}: {item['reddit_fullname']!r} is not in the corpus")
     if not isinstance(item["sarcastic"], bool):
@@ -55,6 +79,26 @@ def _validate(item: Any, where: str, text: str | None) -> dict[str, Any]:
         raise AssistValidationError(f"{where}: confidence must be a number in [0, 1]")
     if not isinstance(item["rationale"], str) or not item["rationale"].strip():
         raise AssistValidationError(f"{where}: rationale must be a non-empty string")
+    if "cues" in item:
+        if item["language"] not in _LANGUAGES:
+            raise AssistValidationError(f"{where}: language must be one of {sorted(_LANGUAGES)}")
+        for field in ("literal_sentiment", "intended_sentiment"):
+            if item[field] not in _SENTIMENTS:
+                raise AssistValidationError(
+                    f"{where}: {field} must be one of {sorted(_SENTIMENTS)}"
+                )
+        cues = item["cues"]
+        if (
+            not isinstance(cues, dict)
+            or set(cues) != set(CUE_COLUMNS)
+            or not all(isinstance(v, bool) for v in cues.values())
+        ):
+            raise AssistValidationError(
+                f"{where}: cues must map exactly {sorted(CUE_COLUMNS)} to true/false"
+            )
+        if not item["sarcastic"] and any(cues.values()):
+            # Generic wording: naming the verdict would hint at it (blind-first).
+            raise AssistValidationError(f"{where}: sarcastic and cues disagree")
     return item
 
 
@@ -88,12 +132,15 @@ def load_assist_suggestions(
 
     now = datetime.now(UTC).isoformat()
     for item in items:
+        cues = item.get("cues")
         db.conn.execute(
             """
             INSERT OR REPLACE INTO assist_suggestions
               (reddit_fullname, source, guideline_version, sarcastic, sarcastic_span,
-               rationale, confidence, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               rationale, confidence, created_at, language, literal_sentiment,
+               intended_sentiment, cue_polarity_inversion, cue_rhetorical_intent,
+               cue_contextual_incongruity, cue_hyperbole)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["reddit_fullname"],
@@ -104,6 +151,14 @@ def load_assist_suggestions(
                 item["rationale"],
                 float(item["confidence"]),
                 now,
+                item.get("language"),
+                item.get("literal_sentiment"),
+                item.get("intended_sentiment"),
+                *(
+                    (int(cues[name]) for name in CUE_COLUMNS)
+                    if isinstance(cues, dict)
+                    else (None, None, None, None)
+                ),
             ),
         )
     db.commit()

@@ -134,6 +134,33 @@ def build_review_row(
     }
 
 
+def assist_defaults(assist: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A Claude suggestion as label-form defaults (LABEL_KEYS); missing fields stay None.
+
+    Older suggestions carry only the sarcasm verdict and span; the full-label
+    ones (2026-11-22) also carry language, both sentiments and the four cues.
+    """
+    if not assist:
+        return None
+    sarcastic = assist.get("sarcastic")
+    out: dict[str, Any] = dict.fromkeys(LABEL_KEYS)
+    out.update(
+        {
+            "sarcastic": None if sarcastic is None else int(sarcastic),
+            "sarcastic_span": assist.get("sarcastic_span") if sarcastic else None,
+            "language": assist.get("language"),
+            "literal_sentiment": assist.get("literal_sentiment"),
+            "intended_sentiment": assist.get("intended_sentiment"),
+            "unsure": 0,
+        }
+    )
+    for key in LABEL_KEYS:
+        if key.startswith("cue_"):
+            value = assist.get(key)
+            out[key] = None if value is None else int(bool(value) and bool(sarcastic))
+    return out
+
+
 def upfront_assist(db: AnnotationDatabase, fullname: str) -> dict[str, Any] | None:
     """The Claude suggestion for an item the reviewer has NOT labeled yet.
 

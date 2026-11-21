@@ -27,6 +27,7 @@ from uyam.annotate.config import load_annotation_config
 from uyam.annotate.db import AnnotationDatabase
 from uyam.annotate.review_workflow import (
     LABEL_KEYS,
+    assist_defaults,
     build_review_row,
     highlight_spans,
     reveal_assist,
@@ -108,7 +109,13 @@ def _label_form(
     sentences: list[str],
     defaults: dict[str, Any] | None,
 ) -> tuple[bool, dict[str, Any], str]:
-    """The label form, prefilled from ``defaults`` (a saved row) when revising.
+    """The label form, prefilled from ``defaults`` (a saved row when revising, or
+    Claude's suggestion when the upfront toggle is on).
+
+    Not an st.form: "Sarcastic?" must enable or disable the rest as it changes.
+    When it is "no", the sentence ticks and cues are disabled and saved as
+    empty/false (GUIDELINE §3 step 7), and the intended sentiment follows the
+    literal one (S3) unless "differs" is ticked.
 
     Returns (submitted, labels keyed by LABEL_KEYS, notes).
     """
@@ -118,82 +125,106 @@ def _label_form(
         return options.index(value) if value in options else 0
 
     saved_span = set(str(d.get("sarcastic_span") or "").split("\n"))
-    with st.form(key=prefix):
-        sarcastic = st.radio(
-            "Sarcastic?",
-            ["no", "yes"],
-            index=int(bool(d.get("sarcastic"))),
-            horizontal=True,
-            key=f"{prefix}_sarcastic",
-        )
-        if sentences:
-            st.caption(
-                "If sarcastic: tick the sentence(s) of the target that carry the sarcasm "
-                "(ignored when Sarcastic = no)."
-            )
-        ticked = [
-            st.checkbox(
-                sentence,
-                # A one-sentence target is its own span (GUIDELINE T2); when revising a
-                # sarcastic label, re-tick the saved span.
-                value=(sentence in saved_span)
-                if d.get("sarcastic")
-                else len(sentences) == 1,
-                key=f"{prefix}_span_{i}",
-            )
-            for i, sentence in enumerate(sentences)
-        ]
-        language = st.radio(
-            "Language",
-            _LANGUAGES,
-            index=idx(_LANGUAGES, d.get("language")),
-            horizontal=True,
-            key=f"{prefix}_language",
-        )
-        literal = st.radio(
-            "Literal sentiment",
-            _SENTIMENTS,
-            index=idx(_SENTIMENTS, d.get("literal_sentiment")),
-            horizontal=True,
-            key=f"{prefix}_literal",
-        )
-        intended = st.radio(
-            "Intended sentiment",
-            _SENTIMENTS,
-            index=idx(_SENTIMENTS, d.get("intended_sentiment")),
-            horizontal=True,
-            key=f"{prefix}_intended",
-        )
-        st.caption("Sarcasm cues present in the target:")
-        cue_values: dict[str, bool] = {}
-        cue_cols = st.columns(len(_CUES))
-        for col, (cue_key, cue_label, definition, example) in zip(cue_cols, _CUES, strict=True):
-            with col:
-                cue_values[cue_key] = st.checkbox(
-                    cue_label,
-                    value=bool(d.get(cue_key)),
-                    help=f"{definition}\n\n*Example:* {example}",
-                    key=f"{prefix}_{cue_key}",
-                )
-        with st.expander("Cue guide"):
-            for _, cue_label, definition, example in _CUES:
-                st.markdown(f"**{cue_label}** — {definition}")
-                st.caption(f"Example: {example}")
-        unsure = st.checkbox(
-            "Unsure about this label", value=bool(d.get("unsure")), key=f"{prefix}_unsure"
-        )
-        notes = st.text_input(
-            "Notes (optional)", value=str(d.get("notes") or ""), key=f"{prefix}_notes"
-        )
-        submitted = st.form_submit_button("Save label", type="primary")
-
+    sarcastic = st.radio(
+        "Sarcastic?",
+        ["no", "yes"],
+        index=int(bool(d.get("sarcastic"))),
+        horizontal=True,
+        key=f"{prefix}_sarcastic",
+    )
     is_sarcastic = sarcastic == "yes"
+    if sentences:
+        st.caption(
+            "Tick the sentence(s) of the target that carry the sarcasm."
+            if is_sarcastic
+            else "Sentence ticks and cues are off while Sarcastic = no."
+        )
+    ticked = [
+        st.checkbox(
+            sentence,
+            # A one-sentence target is its own span (GUIDELINE T2); when revising a
+            # sarcastic label, re-tick the saved span.
+            value=(sentence in saved_span)
+            if d.get("sarcastic")
+            else len(sentences) == 1,
+            disabled=not is_sarcastic,
+            key=f"{prefix}_span_{i}",
+        )
+        for i, sentence in enumerate(sentences)
+    ]
+    language = st.radio(
+        "Language",
+        _LANGUAGES,
+        index=idx(_LANGUAGES, d.get("language")),
+        horizontal=True,
+        key=f"{prefix}_language",
+    )
+    literal = st.radio(
+        "Literal sentiment",
+        _SENTIMENTS,
+        index=idx(_SENTIMENTS, d.get("literal_sentiment")),
+        horizontal=True,
+        key=f"{prefix}_literal",
+    )
+    def intended_choice() -> str:
+        return str(
+            st.radio(
+                "Intended sentiment",
+                _SENTIMENTS,
+                index=idx(_SENTIMENTS, d.get("intended_sentiment")),
+                horizontal=True,
+                key=f"{prefix}_intended",
+            )
+        )
+    if is_sarcastic:
+        intended = intended_choice()
+    else:
+        differs = st.checkbox(
+            "Intended sentiment differs from literal (rare when not sarcastic; say why in notes)",
+            value=bool(d.get("intended_sentiment"))
+            and d.get("intended_sentiment") != d.get("literal_sentiment"),
+            key=f"{prefix}_intended_differs",
+        )
+        if differs:
+            intended = intended_choice()
+        else:
+            intended = literal
+            st.caption(f"Intended sentiment = literal ({literal}), GUIDELINE S3.")
+    st.caption(
+        "Sarcasm cues present in the target:"
+        if is_sarcastic
+        else "Sarcasm cues (only for sarcastic items):"
+    )
+    cue_values: dict[str, bool] = {}
+    cue_cols = st.columns(len(_CUES))
+    for col, (cue_key, cue_label, definition, example) in zip(cue_cols, _CUES, strict=True):
+        with col:
+            cue_values[cue_key] = st.checkbox(
+                cue_label,
+                value=bool(d.get(cue_key)),
+                help=f"{definition}\n\n*Example:* {example}",
+                disabled=not is_sarcastic,
+                key=f"{prefix}_{cue_key}",
+            )
+    with st.expander("Cue guide"):
+        for _, cue_label, definition, example in _CUES:
+            st.markdown(f"**{cue_label}** — {definition}")
+            st.caption(f"Example: {example}")
+    unsure = st.checkbox(
+        "Unsure about this label", value=bool(d.get("unsure")), key=f"{prefix}_unsure"
+    )
+    notes = st.text_input(
+        "Notes (optional)", value=str(d.get("notes") or ""), key=f"{prefix}_notes"
+    )
+    submitted = st.button("Save label", type="primary", key=f"{prefix}_save")
+
     labels: dict[str, Any] = {
         "sarcastic": int(is_sarcastic),
         "language": language,
         "literal_sentiment": literal,
         "intended_sentiment": intended,
-        **{k: int(v) for k, v in cue_values.items()},
+        # Cues only describe a sarcastic span; all false otherwise (§3 step 7).
+        **{k: int(v and is_sarcastic) for k, v in cue_values.items()},
         "sarcastic_span": span_from_selection(is_sarcastic, sentences, ticked),
         "unsure": int(unsure),
     }
@@ -223,6 +254,14 @@ def _render_assist(st: Any, assist: dict[str, Any], target_text: str) -> None:
         confidence = assist.get("confidence")
         conf_text = "n/a" if confidence is None else f"{float(confidence):.2f}"
         st.markdown(f"**Verdict:** {verdict_text} (confidence {conf_text})")
+        if assist.get("language") or assist.get("literal_sentiment"):
+            cues = [label for key, label, _, _ in _CUES if assist.get(key)]
+            st.markdown(
+                f"**Language:** {assist.get('language') or '-'} · **Sentiment:** literal "
+                f"{assist.get('literal_sentiment') or '-'} → intended "
+                f"{assist.get('intended_sentiment') or '-'} · **Cues:** "
+                f"{', '.join(cues) or 'none'}"
+            )
         span = str(assist.get("sarcastic_span") or "")
         if span.strip():
             marked, missing = highlight_spans(target_text, span)
@@ -410,6 +449,7 @@ def render_review_tab(config_path: Path | None = None) -> None:
         editing = existing is not None and bool(st.session_state.get(edit_key))
 
         shown_upfront = False
+        assist: dict[str, Any] | None = None
         if existing is None or editing:
             if existing is None and upfront:
                 # Opt-in second judgement: read the suggestion before the first save.
@@ -420,8 +460,8 @@ def render_review_tab(config_path: Path | None = None) -> None:
                     _render_assist(st, assist, target_text)
                     shown_upfront = True
                     st.caption(
-                        "Saving now records this first pass as Claude-informed "
-                        "(you saw the suggestion before labeling)."
+                        "The form below starts from Claude's take; change anything you "
+                        "disagree with. Saving records this first pass as Claude-informed."
                     )
             elif existing is None:
                 # Blind first pass: assist_suggestions is never read on this path.
@@ -430,11 +470,18 @@ def render_review_tab(config_path: Path | None = None) -> None:
                     "save, or shown before labeling with the toggle above. Your first saved "
                     "label is kept as the first pass."
                 )
+            if editing:
+                form_prefix, form_defaults = f"revise_{fullname}", existing
+            elif shown_upfront:
+                # Own widget keys, so turning the toggle on refills the form.
+                form_prefix, form_defaults = f"reviewc_{fullname}", assist_defaults(assist)
+            else:
+                form_prefix, form_defaults = f"review_{fullname}", None
             submitted, labels, notes = _label_form(
                 st,
-                prefix=f"{'revise' if editing else 'review'}_{fullname}",
+                prefix=form_prefix,
                 sentences=split_sentences(target_text),
-                defaults=existing,
+                defaults=form_defaults,
             )
             if editing:
                 st.button("Cancel revision", on_click=_set_state, args=(edit_key, False))

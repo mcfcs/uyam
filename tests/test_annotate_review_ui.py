@@ -186,7 +186,12 @@ def test_blind_first_pass_then_reveal_then_revise(tmp_path: Path) -> None:
     assert not at.json
 
     # (b) First save writes the labels AND first_pass_json; the item stays on screen.
-    at.radio(key="review_t1_c3_sarcastic").set_value("yes")
+    # Not sarcastic: no intended choice (it follows literal) and the cues are off.
+    assert all(at.checkbox(key=f"review_t1_c3_{c}").disabled for c in (
+        "cue_polarity_inversion", "cue_hyperbole"))
+    assert not any(r.key == "review_t1_c3_intended" for r in at.radio)
+    at.radio(key="review_t1_c3_sarcastic").set_value("yes").run()
+    assert not at.checkbox(key="review_t1_c3_cue_polarity_inversion").disabled
     at.radio(key="review_t1_c3_language").set_value("taglish")
     at.radio(key="review_t1_c3_literal").set_value("positive")
     at.radio(key="review_t1_c3_intended").set_value("negative")
@@ -529,3 +534,84 @@ def test_label_site_renders_only_the_review_page(
     assert not at.exception
     assert not at.tabs  # no other tabs: nothing else runs on a click
     assert "Wow ang galing naman" in _rendered_text(at)  # the queue's item is on screen
+
+
+# ---------------------------------------------------------------------------
+# Form rules: "not sarcastic" disables cues + span; intended follows literal
+# ---------------------------------------------------------------------------
+
+
+def test_not_sarcastic_clears_cues_and_span_and_mirrors_intended(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    at = _app(config_yaml)
+    # Tick a cue while sarcastic, then change mind to "no": the cue must not be saved.
+    at.radio(key="review_t1_c3_sarcastic").set_value("yes").run()
+    at.checkbox(key="review_t1_c3_cue_hyperbole").check().run()
+    at.radio(key="review_t1_c3_intended").set_value("negative").run()
+    at.radio(key="review_t1_c3_sarcastic").set_value("no").run()
+    assert at.checkbox(key="review_t1_c3_cue_hyperbole").disabled
+    assert at.checkbox(key="review_t1_c3_span_0").disabled
+    at.radio(key="review_t1_c3_literal").set_value("positive")
+    _save(at)
+    row = _review(db_path, "t1_c3")
+    assert row is not None
+    assert row["sarcastic"] == 0 and row["sarcastic_span"] is None
+    assert row["cue_hyperbole"] == 0 and row["cue_polarity_inversion"] == 0
+    assert row["intended_sentiment"] == "positive"  # follows literal (S3)
+
+
+def test_intended_can_differ_when_ticked(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    at = _app(config_yaml)
+    at.checkbox(key="review_t1_c3_intended_differs").check().run()
+    at.radio(key="review_t1_c3_literal").set_value("neutral")
+    at.radio(key="review_t1_c3_intended").set_value("negative")
+    _save(at)
+    row = _review(db_path, "t1_c3")
+    assert row is not None
+    assert (row["literal_sentiment"], row["intended_sentiment"]) == ("neutral", "negative")
+
+
+def test_upfront_toggle_prefills_the_form_with_claudes_full_take(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=("t1_c3",))
+    with AnnotationDatabase(db_path) as db:
+        db.conn.execute(
+            "UPDATE assist_suggestions SET language = 'tagalog', literal_sentiment = 'positive', "
+            "intended_sentiment = 'negative', cue_polarity_inversion = 1, "
+            "cue_rhetorical_intent = 0, cue_contextual_incongruity = 1, cue_hyperbole = 0, "
+            "sarcastic_span = ? WHERE reddit_fullname = 't1_c3'",
+            ("Wow ang galing naman ng serbisyo nila dito.",),
+        )
+        db.commit()
+    at = _app(config_yaml)
+    at.toggle(key="review_assist_upfront").set_value(True).run()
+    text = _rendered_text(at)
+    assert "**Language:** tagalog" in text and "literal positive → intended negative" in text
+    # The form starts from Claude's take...
+    assert at.radio(key="reviewc_t1_c3_sarcastic").value == "yes"
+    assert at.radio(key="reviewc_t1_c3_language").value == "tagalog"
+    assert at.radio(key="reviewc_t1_c3_intended").value == "negative"
+    assert at.checkbox(key="reviewc_t1_c3_cue_contextual_incongruity").value is True
+    assert at.checkbox(key="reviewc_t1_c3_span_0").value is True
+    # ...and saving it unchanged stores Claude's labels as the (Claude-informed) first pass.
+    [submit] = [b for b in at.button if b.label == "Save label"]
+    submit.click().run()
+    row = _review(db_path, "t1_c3")
+    assert row is not None
+    assert (row["sarcastic"], row["language"]) == (1, "tagalog")
+    assert row["intended_sentiment"] == "negative"
+    assert (row["cue_polarity_inversion"], row["cue_contextual_incongruity"]) == (1, 1)
+    assert row["sarcastic_span"] == "Wow ang galing naman ng serbisyo nila dito."
+    assert row["assist_before_first_pass"] == 1
+
+
+def test_assist_defaults_handles_old_and_full_suggestions() -> None:
+    from uyam.annotate.review_workflow import assist_defaults
+
+    old = assist_defaults({"sarcastic": 0, "sarcastic_span": None})
+    assert old is not None and old["sarcastic"] == 0 and old["language"] is None
+    assert old["cue_hyperbole"] is None
+    full = assist_defaults({"sarcastic": 0, "sarcastic_span": "x", "language": "english",
+                            "cue_hyperbole": 1})
+    assert full is not None and full["sarcastic_span"] is None and full["cue_hyperbole"] == 0
+    assert assist_defaults(None) is None
