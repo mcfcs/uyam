@@ -18,6 +18,12 @@ defaults. If a rule blocks the task, stop and ask Gio. Don't work around it.
    did not make, ask before touching it. Then **check the sibling repos**
    (§9): pull tsis, fetch leische, and read leische's latest handoff entry
    and its brief to uyam.
+   **Always pull tsis first and read its `LEISCHE_LATEST.md`.** That is
+   how uyam and leische stay in sync (leische runs on another device), so
+   tell Gio about anything new there before starting: new results, a v2 run
+   status, questions or requests to uyam. Pull tsis again before any commit
+   that touches UYAM_LATEST.md or the export, so you never answer a stale
+   leische state (§9.1).
 2. **During:** keep [HANDOFF.md](HANDOFF.md) honest. If you change a plan,
    number, or decision that it records, update it in the same commit.
 3. **End:** add a new entry to the top of HANDOFF.md's session log (template
@@ -199,11 +205,21 @@ another branch, or have someone's uncommitted work.
 ### 9.1 At the start of every session
 
 ```bash
-git -C ../tsis pull --ff-only          # only if its tree is clean; else just fetch
+git -C ../tsis pull --ff-only          # ALWAYS, first; only if its tree is clean, else fetch
+git -C ../tsis log --oneline -10       # what changed (leische mirrors land here)
+cat ../tsis/LEISCHE_LATEST.md          # leische's status for the thesis, newest first
 git -C ../leische fetch origin         # never pull/checkout/stash there
 git -C ../leische show origin/main:HANDOFF.md | head -60
 git -C ../leische show origin/main:suggestions/UYAM_CHANGE_BRIEF.md
 ```
+
+- **tsis is the sync point with leische.** leische mirrors its
+  `LEISCHE_LATEST.md` into tsis, and uyam mirrors `UYAM_LATEST.md` there, so
+  pulling tsis shows both sides. Pull it at the start of every session and
+  again before committing UYAM_LATEST.md or touching an export. If
+  LEISCHE_LATEST.md changed since the last uyam session (compare its
+  *Last updated* line with the newest HANDOFF.md entry), summarise the change
+  for Gio, act on any request to uyam, and record it in HANDOFF.md.
 
 - Read leische from `origin/main` with `git show`/`git log`, not from its
   working tree. **Never** edit, commit, stash, reset, or check out anything
