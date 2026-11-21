@@ -33,6 +33,7 @@ from uyam.annotate.review_workflow import (
     revealable_assist,
     span_from_selection,
     split_sentences,
+    upfront_assist,
 )
 
 # (key, label, definition, worked example) — definitions mirror the cue taxonomy in
@@ -341,6 +342,13 @@ def render_review_tab(config_path: Path | None = None) -> None:
             help="Gold items are labeled blind (validation subset); low-confidence items "
             "are final-call adjudications.",
         )
+        upfront = st.toggle(
+            "Show Claude's suggestion before I label (second judgement)",
+            key="review_assist_upfront",
+            help="Off = blind first pass (the suggestion can be revealed after you save). "
+            "On = the suggestion shows next to each unlabeled item; items you save with it "
+            "showing are recorded as Claude-informed (assist_before_first_pass).",
+        )
         pending = gold_pending if reason == "gold" else lc_pending
         pending_names = [str(q["reddit_fullname"]) for q in pending]
         active_key = f"review_active_{reason}"
@@ -401,12 +409,26 @@ def render_review_tab(config_path: Path | None = None) -> None:
         existing = db.get_human_review(fullname)
         editing = existing is not None and bool(st.session_state.get(edit_key))
 
+        shown_upfront = False
         if existing is None or editing:
-            if existing is None:
+            if existing is None and upfront:
+                # Opt-in second judgement: read the suggestion before the first save.
+                assist = upfront_assist(db, fullname)
+                if assist is None:
+                    st.caption("No Claude suggestion for this item.")
+                else:
+                    _render_assist(st, assist, target_text)
+                    shown_upfront = True
+                    st.caption(
+                        "Saving now records this first pass as Claude-informed "
+                        "(you saw the suggestion before labeling)."
+                    )
+            elif existing is None:
                 # Blind first pass: assist_suggestions is never read on this path.
                 st.caption(
                     "Claude's take, if one exists for this item, can be revealed after you "
-                    "save. Your first saved label is kept as the blind first pass."
+                    "save, or shown before labeling with the toggle above. Your first saved "
+                    "label is kept as the first pass."
                 )
             submitted, labels, notes = _label_form(
                 st,
@@ -425,6 +447,7 @@ def render_review_tab(config_path: Path | None = None) -> None:
                         is_gold=reason == "gold",
                         existing=existing,
                         votes_seen=bool(st.session_state.get(votes_seen_key)),
+                        assist_upfront=shown_upfront,
                     )
                 )
                 st.session_state[active_key] = fullname

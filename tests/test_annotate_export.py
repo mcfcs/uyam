@@ -290,7 +290,8 @@ def test_export_ships_majority_flags_and_review_fields(tmp_path: Path) -> None:
         "sarcastic_span": None,
         "unsure": False,
     }
-    extra_keys = {"notes", "first_pass", "assist_seen", "votes_seen"}
+    extra_keys = {"notes", "first_pass", "assist_seen", "votes_seen", "assist_before_first_pass"}
+    assert gold["assist_before_first_pass"] is False
     assert set(gold) == set(gold["first_pass"]) | extra_keys
 
     card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))

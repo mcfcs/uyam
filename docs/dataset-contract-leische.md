@@ -117,6 +117,11 @@ labels. **Gold rows are evaluation-only: never train on them.**
   rows saved before it was recorded; their top-level labels were saved blind.
 - From v2: `votes_seen` (bool) is true when the model votes were on screen at
   the first save, so that first pass is not blind.
+- From v2 (re-exports after 2026-11-22): `assist_before_first_pass` (bool) is
+  true when the reviewer chose to see the Claude suggestion before labeling
+  (a "second judgement"). That first pass is Claude-informed. It still
+  counts in the gold κ, and the card reports how many there are
+  (`gold_vs_ensemble_cohen_kappa.n_first_pass_with_assist`).
 
 **To reproduce the card's human-vs-ensemble κ**, use `first_pass` when it is
 non-null, else the top-level fields, and leave out `votes_seen` rows. The

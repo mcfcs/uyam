@@ -88,6 +88,7 @@ def build_review_row(
     is_gold: bool,
     existing: dict[str, Any] | None,
     votes_seen: bool = False,
+    assist_upfront: bool = False,
 ) -> dict[str, Any]:
     """The human_reviews row to upsert for a save of ``labels``.
 
@@ -103,16 +104,22 @@ def build_review_row(
     only on the first save, where it marks the first pass as not blind; later
     saves keep the stored flag. first_reviewed_at is carried forward the same
     way (upsert_human_review stamps it on the first save).
+
+    ``assist_upfront`` (the reviewer chose to see the Claude suggestion before
+    labeling) is also recorded only on the first save: it sets assist_seen and
+    assist_before_first_pass, marking that first pass as Claude-informed.
     """
     if existing is None:
         first_pass = labels_json(labels)
-        assist_seen = 0
+        assist_seen = int(assist_upfront)
         seen_votes = int(votes_seen)
+        assist_before = int(assist_upfront)
         first_reviewed_at = None
     else:
         first_pass = existing.get("first_pass_json") or labels_json(existing)
         assist_seen = int(existing.get("assist_seen") or 0)
         seen_votes = int(existing.get("votes_seen") or 0)
+        assist_before = int(existing.get("assist_before_first_pass") or 0)
         first_reviewed_at = existing.get("first_reviewed_at") or existing.get("reviewed_at")
     return {
         "reddit_fullname": fullname,
@@ -122,8 +129,22 @@ def build_review_row(
         "first_pass_json": first_pass,
         "assist_seen": assist_seen,
         "votes_seen": seen_votes,
+        "assist_before_first_pass": assist_before,
         "first_reviewed_at": first_reviewed_at,
     }
+
+
+def upfront_assist(db: AnnotationDatabase, fullname: str) -> dict[str, Any] | None:
+    """The Claude suggestion for an item the reviewer has NOT labeled yet.
+
+    Only for the explicit "show before I label" opt-in (review_ui); a save made
+    while it is shown records assist_before_first_pass. The default flow still
+    reads suggestions only through revealable_assist, after the first save.
+    """
+    row = db.conn.execute(
+        "SELECT * FROM assist_suggestions WHERE reddit_fullname = ?", (fullname,)
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def revealable_assist(db: AnnotationDatabase, fullname: str) -> dict[str, Any] | None:

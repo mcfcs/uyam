@@ -238,6 +238,9 @@ def build_export_row(
                 # Model votes were on screen at the first save: not blind,
                 # left out of the gold kappa.
                 "votes_seen": bool(human.get("votes_seen") or 0),
+                # The reviewer chose to see the Claude suggestion before this
+                # first pass (a "second judgement"): Claude-informed, not blind.
+                "assist_before_first_pass": bool(human.get("assist_before_first_pass") or 0),
             }
             if human is not None and human.get("is_gold")
             else None

@@ -432,7 +432,11 @@ labels auditable later.
 saving. If you do, the app records it (`votes_seen`), and that item is left
 out of the gold κ.
 
-**6.4 The assist flow.**
+**6.4 The assist flow.** (Since 2026-11-22 the review page has a toggle,
+*Show Claude's suggestion before I label*, for a second judgement while
+labeling. It is off by default. An item saved with it on is recorded as
+`assist_before_first_pass`. Its first pass is then Claude-informed rather
+than blind, and the card reports how many there are, next to the gold κ.)
 
 1. Label the item blind and save. This is your **first-pass** label.
 2. Only after saving may the app show the Claude suggestion

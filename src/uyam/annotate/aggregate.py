@@ -397,7 +397,18 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
                 h_list.append(str(h_val))
                 e_list.append(str(e_val))
 
-    result: dict[str, Any] = {"n_gold_items": n, "n_excluded_votes_seen": n_votes_seen}
+    n_assisted = sum(
+        1
+        for fullname, labels in gold.items()
+        if (db.get_human_review(fullname) or {}).get("assist_before_first_pass")
+    )
+    result: dict[str, Any] = {
+        "n_gold_items": n,
+        "n_excluded_votes_seen": n_votes_seen,
+        # First passes made with the Claude suggestion visible (opt-in); they
+        # are included above, so report the count next to the kappa.
+        "n_first_pass_with_assist": n_assisted,
+    }
     try:
         from sklearn.metrics import cohen_kappa_score
 

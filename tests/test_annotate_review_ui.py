@@ -464,3 +464,68 @@ def test_eval_report_and_lid_accuracy_use_the_blind_first_pass(tmp_path: Path) -
     report = build_eval_report(load_annotation_config(config_yaml), PROMPT_VERSION)
     [shipped] = [r for r in report["vs_human"] if r["kind"] == "final"]
     assert shipped["n"] == 2 and shipped["accuracy"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Opt-in "second judgement": Claude's suggestion before the first save
+# ---------------------------------------------------------------------------
+
+
+def test_upfront_toggle_shows_the_suggestion_and_records_it(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold", "t1_c4": "gold"}, assists=("t1_c3",))
+    at = _app(config_yaml)
+    _assert_no_assist_leak(at)  # off by default: still a blind first pass
+    at.toggle(key="review_assist_upfront").set_value(True).run()
+    assert not at.exception
+    text = _rendered_text(at)
+    assert RATIONALE in text and "Verdict:** sarcastic" in text  # before any save
+    assert "Claude-informed" in text
+    _save(at)
+    row = _review(db_path, "t1_c3")
+    assert row is not None
+    assert row["assist_before_first_pass"] == 1 and row["assist_seen"] == 1
+
+    # The next item has no suggestion: saving it is NOT recorded as assisted.
+    at.button(key="next_t1_c3").click().run()
+    assert "No Claude suggestion for this item." in _rendered_text(at)
+    _save(at)
+    other = _review(db_path, "t1_c4")
+    assert other is not None and other["assist_before_first_pass"] == 0
+
+
+def test_upfront_flag_is_kept_on_revision_and_counted_in_kappa(tmp_path: Path) -> None:
+    from uyam.annotate.aggregate import _gold_cohen_kappa
+
+    _, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=("t1_c3",))
+    with AnnotationDatabase(db_path) as db:
+        first = dict.fromkeys(LABEL_KEYS) | {"sarcastic": 1}
+        db.upsert_human_review(
+            build_review_row("t1_c3", first, notes=None, is_gold=True, existing=None,
+                             assist_upfront=True)
+        )
+        existing = db.get_human_review("t1_c3")
+        db.upsert_human_review(
+            build_review_row("t1_c3", first | {"sarcastic": 0}, notes=None, is_gold=True,
+                             existing=existing)
+        )
+        row = db.get_human_review("t1_c3")
+        assert row is not None and row["assist_before_first_pass"] == 1
+        db.upsert_aggregate({"reddit_fullname": "t1_c3", "prompt_version": PROMPT_VERSION,
+                             "sarcastic_final": 1})
+        db.commit()
+        assert _gold_cohen_kappa(db)["n_first_pass_with_assist"] == 1
+
+
+def test_label_site_renders_only_the_review_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_yaml, _ = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    import uyam.annotate.config as annotate_config
+
+    monkeypatch.setattr(annotate_config, "_DEFAULT_CONFIG_PATH", config_yaml)
+    app = Path(__file__).resolve().parent.parent / "src" / "uyam" / "label_app.py"
+    at = AppTest.from_file(str(app), default_timeout=30)
+    at.run()
+    assert not at.exception
+    assert not at.tabs  # no other tabs: nothing else runs on a click
+    assert "Wow ang galing naman" in _rendered_text(at)  # the queue's item is on screen

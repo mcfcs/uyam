@@ -257,6 +257,9 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         ("assist_seen", "INTEGER DEFAULT 0"),
         ("votes_seen", "INTEGER DEFAULT 0"),
         ("first_reviewed_at", "TEXT"),
+        # Gio opted to see the Claude suggestion BEFORE the first save (a
+        # "second judgement"): the first pass is Claude-informed, not blind.
+        ("assist_before_first_pass", "INTEGER DEFAULT 0"),
     ),
 }
 
@@ -914,7 +917,7 @@ class AnnotationDatabase:
             "cue_contextual_incongruity", "cue_hyperbole",
             "notes", "is_gold",
             "sarcastic_span", "unsure", "first_pass_json", "assist_seen",
-            "votes_seen",
+            "votes_seen", "assist_before_first_pass",
         )
         now = _utc_now_iso()
         placeholders = ", ".join("?" for _ in cols) + ", ?, ?"
