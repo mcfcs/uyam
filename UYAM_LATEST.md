@@ -4,18 +4,22 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-22, uyam `0f3db3e` (plus this file's commit)
+- **Last updated:** 2026-11-22 (later), uyam `c47263b` (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
-- **Next dataset:** `dataset-v2`, **built and trial-verified, not exported
-  yet.** On 2026-11-19 the export was set to wait until leische was ready,
-  but leische's LEISCHE_LATEST waits on uyam's export, so each side was
-  waiting on the other. Exporting now is recommended (2026-11-22). It writes
-  new v2 files only, and leische won't train on them until its own v2 code
-  changes are done (`docs/briefs/LEISCHE_BRIEF.md`). Gio runs
-  `uyam annotate export --version v2`. When it exists, this section announces
-  it. **tsis: v2 numbers stay out of the manuscript until leische has v2
-  results.**
+- **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
+  `39b1500`, card `dataset_card-v2.json`). leische has received it and
+  verified the bundle checksums (LEISCHE_LATEST, 2026-11-22). Its v2 runs are
+  paused at 1 of 11, so there are no v2 results yet. Checked against v1: the
+  same 15,000 ids with 0 label changes (sarcastic, language, both
+  sentiments, cues). Card numbers: 1,601 shipped / 2,747 majority positives,
+  1,712 rows differ, κ shipped vs majority 0.545. Coverage: 48 h 46.5%,
+  7 d 64.9%, 30 d 82.1%, unbounded 89.4%. 120 rows are `phatic`-flagged.
+  The corpus dump holds 281,275 records (labeled authors). Gold: 31 labeled
+  (κ −0.148). A re-export will carry the rest of the gold labels with the
+  training labels unchanged. **tsis: the v2 dataset figures below are final
+  for v2, but keep them out of the manuscript until leische has v2
+  results, so the chapters don't mix datasets.**
 
 > **For tsis editors:** don't put any *provisional* number into the
 > manuscript. Chapter 4 is computed on v1, and mixing v1 results with v2
@@ -27,11 +31,11 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 
 ## 1. Dataset versions
 
-| | `dataset-v1` (in the manuscript) | `dataset-v2` (in progress) |
+| | `dataset-v1` (in the manuscript) | `dataset-v2` (exported 2026-11-22) |
 |---|---|---|
-| Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months), *provisional* |
-| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 (40,125 / 548,382), *provisional*; collection complete |
-| Distinct authors | 8,920 | 63,754, *provisional* |
+| Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months). The card's `collection_window` reads 2025-07-30 → 2026-11-13: one stray 2025 post (as in v1) and a few Nov 11–13 records from the live walks. Labeled rows still span 2026-08-01 → 09-03 |
+| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 collected (40,125 / 548,382); `corpus-v2.jsonl` ships the 281,275 by labeled authors |
+| Distinct authors | 8,920 | 63,754 |
 | Eligible after filters | 17,424 | 512,471 (of 588,507; 1,417 unlabeled phatic items excluded) |
 | Annotated items | 15,000 | **15,000, the same items with identical labels** (verified against v1); 120 flagged `phatic` |
 | Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated |
@@ -309,6 +313,10 @@ is quick when it comes:
 
 ## 9. Change log
 
+- **2026-11-22 (later)**: `dataset-v2` exported by Gio (uyam `39b1500`) and
+  received by leische (checksums verified; v2 runs paused at 1 of 11).
+  Verified identical to v1 on all 15,000 labels. New uyam rule: every
+  session pulls tsis first and reads LEISCHE_LATEST.md.
 - **2026-11-22**: Guideline D1 decided (broad reading, tagged `D1`), and the
   guideline is now v1.1. The gold queue was redrawn with sarcastic strata ×2
   (62 of 300), and the assist suggestions were regenerated. The v2 export is
