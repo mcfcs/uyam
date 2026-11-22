@@ -200,6 +200,16 @@ apt".
     L4b and the H13 scale note, plus a reminder to send the side file to
     leische.
 
+- `2532110`: media indicator on the labeling page; on media items the Reddit
+  link waits for the save (GUIDELINE 6.3b: label text-only, like the models).
+  Pending gold: 132 of 266 hang on unseen media (114 image, 18 video).
+- v3 check (2026-11-22 17:24): Llama-SEA-LION finished 21,000/21,000 with 0
+  failures. qwen3 is on the 6,000 new items (~16/min); SEA-LION is next. ETA
+  Mon 23 Nov ~15:20. Llama is sarcasm-happier (19.5%) than qwen3 and SEA-LION,
+  but the v3 majority (17.9% on the 14,998 three-vote v2 items) ≈ v2's own
+  annotator majority (2,747/15,000). The jump from v2's shipped 10.7% comes
+  from majority vote, not from Llama.
+
 **Left open:** Gio sends `media_context-v2.jsonl` to the leische machine.
 leische reports text-only slices. The manuscript limitation goes in a tsis
 chat.
