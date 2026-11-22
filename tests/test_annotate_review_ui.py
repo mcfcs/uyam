@@ -492,9 +492,11 @@ def test_upfront_toggle_shows_the_suggestion_and_records_it(tmp_path: Path) -> N
     assert row is not None
     assert row["assist_before_first_pass"] == 1 and row["assist_seen"] == 1
 
-    # The next item has no suggestion: saving it is NOT recorded as assisted.
-    at.button(key="next_t1_c3").click().run()
-    assert "No Claude suggestion for this item." in _rendered_text(at)
+    # With the toggle on, saving goes straight to the next item (no saved page
+    # repeating Claude's take). It has no suggestion: NOT recorded as assisted.
+    text = _rendered_text(at)
+    assert "Saved t1_c3" in text and "Label saved." not in text
+    assert "No Claude suggestion for this item." in text
     _save(at)
     other = _review(db_path, "t1_c4")
     assert other is not None and other["assist_before_first_pass"] == 0
@@ -661,3 +663,12 @@ def test_text_only_item_keeps_the_link_and_says_so(tmp_path: Path) -> None:
     text = _rendered_text(at)
     assert "Text-only thread" in text and "view on reddit" in text
     assert not at.warning
+
+
+
+def test_blind_save_still_stays_on_the_item(tmp_path: Path) -> None:
+    config_yaml, _ = _setup(tmp_path, {"t1_c3": "gold", "t1_c4": "gold"}, assists=("t1_c3",))
+    at = _app(config_yaml)  # toggle off
+    _save(at)
+    text = _rendered_text(at)
+    assert "Label saved." in text and "Show Claude's take" in text

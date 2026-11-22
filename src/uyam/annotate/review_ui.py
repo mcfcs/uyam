@@ -440,6 +440,9 @@ def render_review_tab(config_path: Path | None = None) -> None:
         pending = gold_pending if reason == "gold" else lc_pending
         pending_names = [str(q["reddit_fullname"]) for q in pending]
         active_key = f"review_active_{reason}"
+        last_saved = st.session_state.pop("review_last_saved", None)
+        if last_saved:
+            st.caption(f"✓ Saved {last_saved}. Revisit it under 'Revisit a labeled item'.")
 
         labeled = [
             str(q["reddit_fullname"]) for q in all_items if q["reason"] == reason and q["completed"]
@@ -554,8 +557,16 @@ def render_review_tab(config_path: Path | None = None) -> None:
                         assist_upfront=shown_upfront,
                     )
                 )
-                st.session_state[active_key] = fullname
                 st.session_state[edit_key] = False
+                if shown_upfront:
+                    # Claude's take was already on screen: skip the saved-item page
+                    # (it would only repeat it) and go straight to the next item.
+                    st.session_state.pop(active_key, None)
+                    st.session_state["review_last_saved"] = fullname
+                else:
+                    # Blind first pass: stay on the item, so the reviewer can reveal
+                    # Claude's take and revise.
+                    st.session_state[active_key] = fullname
                 st.rerun()
         else:
             _render_saved_item(
