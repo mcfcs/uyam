@@ -454,3 +454,83 @@ def test_sarcasm_metrics_edge_cases() -> None:
     assert sarcasm_metrics([1, 0], [1, 1]) == {
         "n": 2, "accuracy": 0.5, "f1_sarcastic": 0.6667, "kappa": 0.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Guideline-prompt evaluators (evaluation only, stored as guide-v1.1)
+# ---------------------------------------------------------------------------
+
+
+class SystemRecordingClient(FakeClient):
+    def __init__(self, respond: Any = None) -> None:
+        super().__init__(respond)
+        self.systems: list[str] = []
+        self.prompts: list[str] = []
+
+    def annotate(
+        self, annotator: Any, system_prompt: str, user_prompt: str, options_cfg: Any
+    ) -> Any:
+        self.systems.append(system_prompt)
+        self.prompts.append(user_prompt)
+        return super().annotate(annotator, system_prompt, user_prompt, options_cfg)
+
+
+def test_guideline_evaluator_uses_its_prompt_and_its_own_label(tmp_path: Path) -> None:
+    from uyam.annotate.prompts import SYSTEM_PROMPT
+    from uyam.annotate.prompts_guideline import (
+        GUIDE_FEW_SHOTS,
+        GUIDE_PROMPT_VERSION,
+        GUIDE_SYSTEM_PROMPT,
+    )
+
+    cfg, base = _prepare(tmp_path)
+    cfg.evaluators = [
+        AnnotatorConfig(key="ev", model="m", endpoint="remote"),
+        AnnotatorConfig(key="ev-guide", model="m", endpoint="remote", prompt="guideline"),
+    ]
+    with AnnotationDatabase(cfg.db_path) as db:
+        before = _dataset_state(db)
+    plain, guide = SystemRecordingClient(), SystemRecordingClient()
+    run_evaluator(cfg, "ev", client_factory=lambda c, a: plain)
+    run_evaluator(cfg, "ev-guide", client_factory=lambda c, a: guide)
+
+    assert set(plain.systems) == {SYSTEM_PROMPT}
+    assert set(guide.systems) == {GUIDE_SYSTEM_PROMPT}
+    assert all(GUIDE_FEW_SHOTS in p for p in guide.prompts)
+    # Same TARGET and thread context as the dataset annotators saw.
+    assert {_target(p) for p in guide.prompts} <= {_target(p) for p in base.prompts}
+    with AnnotationDatabase(cfg.db_path) as db:
+        assert _dataset_state(db) == before  # evaluation-only
+        labels = {
+            (r["model_key"], r["prompt_version"])
+            for r in db.conn.execute("SELECT model_key, prompt_version FROM eval_annotations")
+        }
+    assert labels == {("ev", PROMPT_VERSION), ("ev-guide", GUIDE_PROMPT_VERSION)}
+    # Resumable under its own label.
+    assert run_evaluator(cfg, "ev-guide", client_factory=lambda c, a: guide)["already_done"] == 4
+
+    report = build_eval_report(cfg, PROMPT_VERSION)
+    assert {r["source"] for r in report["vs_human"]} >= {"ev", "ev-guide"}
+    assert "vs_human_blind_only" in report
+
+
+def test_only_evaluators_may_use_the_guideline_prompt(tmp_path: Path) -> None:
+    bad = _write_yaml(tmp_path).read_text(encoding="utf-8").replace(
+        "{key: a1, model: m1, endpoint: local}",
+        "{key: a1, model: m1, endpoint: local, prompt: guideline}",
+    )
+    (tmp_path / "annotation.yaml").write_text(bad, encoding="utf-8")
+    with pytest.raises(ValueError, match="only evaluators may use another prompt"):
+        load_annotation_config(tmp_path / "annotation.yaml")
+    path = _write_yaml(
+        tmp_path, "evaluators:\n  - {key: e1, model: m, endpoint: local, prompt: v9}\n"
+    )
+    with pytest.raises(ValueError, match="prompt must be sarc-v2 or guideline"):
+        load_annotation_config(path)
+
+
+def test_repo_guideline_evaluators_are_local_only() -> None:
+    cfg = load_annotation_config(_REPO / "config" / "annotation.yaml")
+    guides = [e for e in cfg.evaluators if e.prompt == "guideline"]
+    assert {e.key for e in guides} == {"qwen3-guide", "llama-guide", "sealion-guide"}
+    assert {e.endpoint for e in guides} == {"local"}  # never the gaming PC (RULES §6)

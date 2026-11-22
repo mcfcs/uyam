@@ -397,17 +397,27 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
                 h_list.append(str(h_val))
                 e_list.append(str(e_val))
 
-    n_assisted = sum(
-        1
-        for fullname, labels in gold.items()
+    assisted = {
+        fullname
+        for fullname in gold
         if (db.get_human_review(fullname) or {}).get("assist_before_first_pass")
-    )
+    }
+    # Gio counts Claude-assisted first passes as human-assisted labels (2026-11-23):
+    # they stay in the kappa above, and the blind-only sarcasm kappa is reported
+    # alongside so the thesis can show both.
+    blind_pairs = [
+        (str(gold[f]["sarcastic"]), str(agg["sarcastic_final"]))
+        for f in gold
+        if f not in assisted
+        and gold[f].get("sarcastic") is not None
+        and (agg := db.get_aggregate(f)) is not None
+        and agg.get("sarcastic_final") is not None
+    ]
     result: dict[str, Any] = {
         "n_gold_items": n,
         "n_excluded_votes_seen": n_votes_seen,
-        # First passes made with the Claude suggestion visible (opt-in); they
-        # are included above, so report the count next to the kappa.
-        "n_first_pass_with_assist": n_assisted,
+        "n_first_pass_with_assist": len(assisted),
+        "n_blind_first_pass": len(blind_pairs),
     }
     try:
         from sklearn.metrics import cohen_kappa_score
@@ -417,6 +427,12 @@ def _gold_cohen_kappa(db: AnnotationDatabase) -> dict[str, Any]:
             # Single-class gold (e.g. every human label "not sarcastic") makes
             # kappa undefined: NaN would also write invalid JSON into the card.
             result[label] = round(kappa, 4) if math.isfinite(kappa) else None
+        blind = (
+            float(cohen_kappa_score(*zip(*blind_pairs, strict=True)))
+            if len(blind_pairs) >= 2
+            else math.nan
+        )
+        result["sarcastic_blind_only"] = round(blind, 4) if math.isfinite(blind) else None
     except Exception as exc:  # noqa: BLE001
         logger.warning("cohen_kappa_failed", extra={"error": str(exc)})
         for label in pairs:

@@ -34,10 +34,16 @@ from uyam.annotate.config import AnnotationConfig, AnnotatorConfig
 from uyam.annotate.db import AnnotationDatabase
 from uyam.annotate.ollama_client import AnnotationCallError, AnnotationResult
 from uyam.annotate.prompts import (
+    FEW_SHOTS,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
+    USER_TEMPLATE,
     prompt_content_hash,
-    render_user_prompt,
+)
+from uyam.annotate.prompts_guideline import (
+    GUIDE_FEW_SHOTS,
+    GUIDE_PROMPT_VERSION,
+    GUIDE_SYSTEM_PROMPT,
 )
 from uyam.annotate.runner import (
     AnnotatorClient,
@@ -148,6 +154,13 @@ def select_eval_items(db: AnnotationDatabase, items: str | Path) -> list[str]:
 # Running an evaluator
 # ---------------------------------------------------------------------------
 
+def prompt_set(evaluator: AnnotatorConfig) -> tuple[str, str, str]:
+    """(stored prompt_version label, system prompt, few-shots) for an evaluator."""
+    if evaluator.prompt == "guideline":
+        return GUIDE_PROMPT_VERSION, GUIDE_SYSTEM_PROMPT, GUIDE_FEW_SHOTS
+    return PROMPT_VERSION, SYSTEM_PROMPT, FEW_SHOTS
+
+
 def _eval_row(
     fullname: str,
     evaluator: AnnotatorConfig,
@@ -167,6 +180,7 @@ def _eval_row(
         ollama_version=ollama_version,
     )
     row.pop("role")  # eval_annotations has no role column
+    row["prompt_version"] = prompt_set(evaluator)[0]
     return row
 
 
@@ -188,6 +202,9 @@ def run_evaluator(
     """
     check_prompt_contract(cfg)
     evaluator = cfg.evaluator(evaluator_key)
+    # The context snapshot is always the sarc-v2 one (what the annotators saw);
+    # only the instructions differ for a guideline evaluator.
+    label, system_prompt, few_shots = prompt_set(evaluator)
     stats = {
         "selected": 0,
         "done": 0,
@@ -202,14 +219,14 @@ def run_evaluator(
         db.check_prompt_version(PROMPT_VERSION, prompt_content_hash())
 
         if retry_failed:
-            cleared = db.clear_failures(evaluator.key, PROMPT_VERSION, EVALUATOR_ROLE)
+            cleared = db.clear_failures(evaluator.key, label, EVALUATOR_ROLE)
             if cleared:
                 console.print(f"Cleared {cleared} recorded failures for {evaluator.key}")
 
         selected = select_eval_items(db, items)
         stats["selected"] = len(selected)
-        done = eval_done_items(db, evaluator.key, PROMPT_VERSION)
-        failed = eval_failed_items(db, evaluator.key, PROMPT_VERSION)
+        done = eval_done_items(db, evaluator.key, label)
+        failed = eval_failed_items(db, evaluator.key, label)
 
         queue: list[tuple[str, dict[str, Any], str]] = []
         for fullname in selected:
@@ -259,14 +276,17 @@ def run_evaluator(
             with progress:
                 task = progress.add_task(evaluator.key, total=len(queue))
                 for fullname, record, context_text in queue:
-                    prompt = render_user_prompt(
-                        context_text, str(record["record_type"]), str(record["text"])
+                    prompt = USER_TEMPLATE.format(
+                        few_shots=few_shots,
+                        context_block=context_text,
+                        target_type=str(record["record_type"]),
+                        target_text=str(record["text"]),
                     )
                     try:
-                        result = client.annotate(evaluator, SYSTEM_PROMPT, prompt, cfg.options)
+                        result = client.annotate(evaluator, system_prompt, prompt, cfg.options)
                     except AnnotationCallError as exc:
                         db.record_failure(
-                            fullname, evaluator.key, PROMPT_VERSION, EVALUATOR_ROLE, str(exc)
+                            fullname, evaluator.key, label, EVALUATOR_ROLE, str(exc)
                         )
                         stats["failed"] += 1
                         progress.advance(task)
@@ -382,7 +402,15 @@ def build_eval_report(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
                 (prompt_version,),
             )
         }
-        evaluators = eval_votes(db, prompt_version)
+        # Evaluator keys are unique, so both prompt sets merge safely.
+        evaluators = {**eval_votes(db, prompt_version), **eval_votes(db, GUIDE_PROMPT_VERSION)}
+        assisted = {
+            str(r[0])
+            for r in db.conn.execute(
+                "SELECT reddit_fullname FROM human_reviews "
+                "WHERE is_gold = 1 AND COALESCE(assist_before_first_pass, 0) = 1"
+            )
+        }
 
     by_item: dict[str, list[int]] = defaultdict(list)
     for votes in base.values():
@@ -395,10 +423,17 @@ def build_eval_report(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
     evaluator_keys = [e.key for e in cfg.evaluators]
     evaluator_keys += sorted(k for k in evaluators if k not in evaluator_keys)
 
-    rows = [_score(a.key, "annotator", gold, base.get(a.key, {})) for a in cfg.annotators]
-    rows.append(_score("annotator majority", "majority", gold, majority))
-    rows.append(_score("shipped final", "final", gold, shipped))
-    rows += [_score(k, "evaluator", gold, evaluators.get(k, {})) for k in evaluator_keys]
+    def table(gold_set: dict[str, int]) -> list[dict[str, Any]]:
+        out = [_score(a.key, "annotator", gold_set, base.get(a.key, {})) for a in cfg.annotators]
+        out.append(_score("annotator majority", "majority", gold_set, majority))
+        out.append(_score("shipped final", "final", gold_set, shipped))
+        out += [_score(k, "evaluator", gold_set, evaluators.get(k, {})) for k in evaluator_keys]
+        return out
+
+    rows = table(gold)
+    # Gio counts Claude-assisted first passes as human-assisted labels; the
+    # blind-only table shows the same comparison without them.
+    blind_rows = table({f: v for f, v in gold.items() if f not in assisted})
 
     vs_final = []
     for key in evaluator_keys:
@@ -420,6 +455,8 @@ def build_eval_report(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
         "n_gold": len(gold),
         "n_gold_sarcastic": sum(gold.values()),
         "vs_human": rows,
+        "n_gold_assisted": sum(1 for f in gold if f in assisted),
+        "vs_human_blind_only": blind_rows,
         "evaluators_vs_final": vs_final,
     }
 
@@ -443,6 +480,23 @@ def render_eval_markdown(report: dict[str, Any]) -> str:
             f"| {r['source']} | {r['kind']} | {r['n']} | {fmt_metric(r['accuracy'])} | "
             f"{fmt_metric(r['f1_sarcastic'])} | {fmt_metric(r['kappa'])} |"
         )
+    if report.get("vs_human_blind_only") is not None:
+        lines += [
+            "",
+            f"## Blind first passes only ({report.get('n_gold_assisted', 0)} Claude-assisted "
+            "first passes left out)",
+            "",
+            "Evaluators named `*-guide` use the condensed guideline prompt (guide-v1.1); the "
+            "others use the dataset prompt (sarc-v2).",
+            "",
+            "| Source | Kind | n | Accuracy | F1 (sarcastic) | Cohen's κ vs human |",
+            "|---|---|---:|---:|---:|---:|",
+        ]
+        for r in report["vs_human_blind_only"]:
+            lines.append(
+                f"| {r['source']} | {r['kind']} | {r['n']} | {fmt_metric(r['accuracy'])} | "
+                f"{fmt_metric(r['f1_sarcastic'])} | {fmt_metric(r['kappa'])} |"
+            )
     lines += [
         "",
         "## Evaluators vs the shipped final label (all items each evaluator labeled)",

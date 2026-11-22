@@ -52,6 +52,24 @@ evaluators:
   - key: nimble
     model: "nimble:9b"
     endpoint: remote
+  # Guideline-prompt test (Gio, 2026-11-23): the v3 lineup labels the 300 gold
+  # items with the condensed docs/GUIDELINE.md instead of sarc-v2, stored as
+  # guide-v1.1. It measures how much of the human-vs-LLM gap is the definition.
+  # All local (this laptop); never the remote box.
+  - key: qwen3-guide
+    model: "qwen3:8b"
+    endpoint: local
+    think: false
+    prompt: guideline
+  - key: llama-guide
+    model: "aisingapore/Llama-SEA-LION-v3-8B-IT:q4_k_m"
+    endpoint: local
+    prompt: guideline
+  - key: sealion-guide
+    model: "aisingapore/Gemma-SEA-LION-v3-9B-IT:q4_k_m"
+    endpoint: local
+    merge_system_prompt: true
+    prompt: guideline
 
 options:
   temperature: 0.0

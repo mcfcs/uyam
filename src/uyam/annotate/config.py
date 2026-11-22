@@ -24,6 +24,9 @@ class AnnotatorConfig:
     endpoint: str  # name into AnnotationConfig.endpoints
     think: bool | None = None  # None = do not send the think parameter
     merge_system_prompt: bool = False  # Gemma2-arch models have no system role
+    # Evaluators only: "sarc-v2" (the dataset prompt) or "guideline" (the
+    # condensed docs/GUIDELINE.md, prompts_guideline.py; stored as guide-v1.1).
+    prompt: str = "sarc-v2"
 
 
 @dataclass
@@ -193,6 +196,7 @@ def _parse_annotator(raw: dict[str, Any]) -> AnnotatorConfig:
         endpoint=str(raw["endpoint"]),
         think=raw.get("think"),
         merge_system_prompt=bool(raw.get("merge_system_prompt", False)),
+        prompt=str(raw.get("prompt", "sarc-v2")),
     )
 
 
@@ -254,6 +258,15 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
 
     evaluators = [_parse_annotator(e) for e in (raw.get("evaluators") or [])]
     _check_evaluator_keys(annotators, adjudicator, evaluators)
+    for ann in [*annotators, *([adjudicator] if adjudicator else [])]:
+        if ann.prompt != "sarc-v2":
+            raise ValueError(
+                f"annotator {ann.key!r}: only evaluators may use another prompt "
+                "(the dataset prompt is hash-guarded)"
+            )
+    for ev in evaluators:
+        if ev.prompt not in {"sarc-v2", "guideline"}:
+            raise ValueError(f"evaluator {ev.key!r}: prompt must be sarc-v2 or guideline")
     if len({a.key for a in annotators}) != len(annotators):
         raise ValueError("annotation.yaml annotator keys must be unique")
 
