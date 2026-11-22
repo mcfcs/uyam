@@ -261,6 +261,9 @@ git -C ../leische show origin/main:suggestions/UYAM_CHANGE_BRIEF.md
 - **Never edit the manuscript**: no `.tex`, `.bib`, `.cls`, figures,
   `tables/`, `GUIDE.md`, or `_verify/`. The thesis text is Gio's, edited from
   tsis sessions under tsis's own `RULES.md`.
+- **Exception, only on Gio's explicit request:** a stand-alone shareable
+  document at the tsis root (e.g. `ADVISER_UPDATE_2026-11-23.md`, 2026-11-23).
+  Never a manuscript file, and commit it alone.
 - **The one file uyam agents write in tsis is `UYAM_LATEST.md`**, a verbatim
   copy of uyam's. After committing a UYAM_LATEST.md change here:
 
