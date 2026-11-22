@@ -77,6 +77,10 @@ def test_stall_and_stopped_and_complete_states(tmp_path: Path) -> None:
         db.insert_llm_annotation(_ann("t1_c1", "a3"))
         db.commit()
     _stamp(cfg.db_path, "a3", NOW - timedelta(minutes=30))
+    # Pin the fork's votes too: left at the real clock they can lie after NOW
+    # (this test failed once the real time passed NOW, 2026-11-22).
+    _stamp(cfg.db_path, "a1", NOW - timedelta(days=60))
+    _stamp(cfg.db_path, "a2", NOW - timedelta(days=60))
     stalled = run_status(cfg, now=NOW, job_running=lambda name: True)
     assert stalled["stalled"] and stalled["current"] is None
     assert status_label(stalled).startswith("⚠️ stalled")
