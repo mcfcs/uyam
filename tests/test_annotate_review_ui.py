@@ -522,7 +522,11 @@ def test_upfront_flag_is_kept_on_revision_and_counted_in_kappa(tmp_path: Path) -
         db.upsert_aggregate({"reddit_fullname": "t1_c3", "prompt_version": PROMPT_VERSION,
                              "sarcastic_final": 1})
         db.commit()
-        assert _gold_cohen_kappa(db)["n_first_pass_with_assist"] == 1
+        result = _gold_cohen_kappa(db)
+        assert result["n_first_pass_with_assist"] == 1
+        # Assisted first passes count as human labels; the blind-only split is separate.
+        assert result["n_gold_items"] == 1 and result["n_blind_first_pass"] == 0
+        assert result["sarcastic_blind_only"] is None
 
 
 def test_label_site_renders_only_the_review_page(
@@ -672,3 +676,16 @@ def test_blind_save_still_stays_on_the_item(tmp_path: Path) -> None:
     _save(at)
     text = _rendered_text(at)
     assert "Label saved." in text and "Show Claude's take" in text
+
+
+
+def test_definition_card_is_on_the_review_page(tmp_path: Path) -> None:
+    from uyam.annotate.definition_card import DEFINITION_CARD
+
+    config_yaml, _ = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    at = _app(config_yaml)
+    assert any("What counts as sarcasm" in str(e.label) for e in at.expander)
+    shown = " ".join(str(m.value) for m in at.markdown)
+    assert "Situational irony" in shown and "hate speech" in shown
+    for must in ("hate speech", "Situational irony", "Says ≠ Means", "D1", "Unsure"):
+        assert must in DEFINITION_CARD

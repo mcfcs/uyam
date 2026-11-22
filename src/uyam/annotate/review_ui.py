@@ -430,6 +430,12 @@ def render_review_tab(config_path: Path | None = None) -> None:
             help="Gold items are labeled blind (validation subset); low-confidence items "
             "are final-call adjudications.",
         )
+        from uyam.annotate.definition_card import DEFINITION_CARD
+
+        with st.expander("📖 What counts as sarcasm (guideline v1.1): definition, examples, "
+                         "what isn't"):
+            st.markdown(DEFINITION_CARD)
+            st.caption("Full rules and reasons: docs/GUIDELINE.md (rule IDs in brackets).")
         upfront = st.toggle(
             "Show Claude's suggestion before I label (second judgement)",
             key="review_assist_upfront",

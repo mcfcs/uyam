@@ -333,11 +333,16 @@ as 50/50: label no and set `unsure`.
 
 **Ruling:** direct criticism, insults, rants, swearing, and sincere
 complaints are **not** sarcasm, however harsh, and including exaggerated
-ones (H2). Only a sentence that pretends a different attitude is sarcastic,
-and by T2 that one sentence is enough.
+ones (H2). The same holds for **hate speech, slurs and degrading remarks**
+(2026-11-22). They can be as hostile as sarcasm, but they say the contempt
+outright, so *Says* = *Means*. Hostility is not the test; the gap is. Only a
+sentence that pretends a different attitude is sarcastic, and by T2 that one
+sentence is enough.
 
 - ✘ *"Ang bagal ng LRT ngayon, nakakainis."*
 - ✘ *"Ang kapal ng mukha ng landlord mo."*
+- ✘ *"Napakawalang kwenta mong tao, dapat sa'yo pinapalayas."* Hateful, but
+  literal.
 - ✔ *"Nakakainis yung landlord ko. Ang bait niya talaga, tinaasan na naman yung upa kahit sira pa yung CR."* Span: the second sentence.
 
 ### H11. Phatic items (greetings, thanks, birthday wishes)
@@ -386,6 +391,24 @@ contradiction inside the target, or a marker from H8). The same applies when
 a target refers to something that isn't in the thread at all.
 
 ---
+
+### H14. Irony that isn't sarcasm (situational irony, "ironic" remarks)
+
+**Ruling:** sarcasm is *verbal* irony with an attitude: the author says
+something they don't mean, to criticise or mock. **Situational irony** is
+different: a situation that turned out the opposite of what was expected,
+described sincerely. Pointing it out, even with the word "ironic", is **not**
+sarcasm, because *Says* = *Means*.
+
+- ✘ [the barangay fire station caught fire] *"Ang ironic naman, buti walang
+  nasaktan."* A sincere remark about an ironic situation.
+- ✘ *"Irony: nag-diet ako tapos nanalo ako ng isang buwang libreng pizza."*
+  An ironic situation, told straight.
+- ✔ [the fire station caught fire] *"Wow, ang galing talaga ng fire safety
+  nila 👏"* Mock praise of the station: verbal irony with criticism.
+
+Quick test: is the *author* pretending an attitude? If not, it isn't sarcasm,
+however ironic the situation.
 
 ## 5. Language and sentiment
 
