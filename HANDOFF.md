@@ -168,6 +168,47 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-23 — gold stats at 113; definition card; guideline-prompt test armed
+
+**Context (Gio):**
+- Asked for statistics with 113/300 gold items labeled, an LLM run update,
+  and whether the annotators know the guideline.
+- He is fine with Claude as a guide; he treats Claude-assisted labels as
+  human-assisted.
+- He wanted the definition (and what isn't sarcasm: hate speech, irony) on
+  the website.
+- ComfyUI may be closed.
+- The guideline-prompt test is approved for after v3.
+
+**Findings:**
+- 80 of 113 gold first passes were labeled with Claude's take showing, and
+  77 of those are identical to it on every field.
+- κ vs shipped: 0.24 overall, −0.14 on blind first passes only.
+- Gio says 9.9% sarcastic; the LLMs over-call relative to him (14 vs 6
+  disagreements).
+- Per-model κ vs Gio: SEA-LION 0.32, qwen3 0.22, gemma3 0.10, Llama 0.04.
+- The LLM annotators use pre-guideline sarc-v2.
+- SEA-LION runs 31% on the CPU. Closing ComfyUI changed nothing: the rest
+  of the VRAM is GPT-SoVITS plus Windows.
+
+**Done:**
+- ComfyUI stopped (headless, via comfort\scripts\comfyui-headless.bat).
+- `8cc7be0`: evaluators can use `prompt: guideline` (prompts_guideline.py,
+  stored as guide-v1.1); qwen3-guide, llama-guide and sealion-guide are
+  local. eval-report gains a blind-only table, and the card gains
+  `sarcastic_blind_only`.
+- `9df462e`: definition card on the labeling page; GUIDELINE H14 and the
+  extended H10.
+- `f8b2349`: .gitignore now covers all of data/.
+- Post-v3 chain armed: PowerShell pid 91856 runs
+  `data/.guideline-eval-after-v3.ps1`. It waits for orchestrator 199228,
+  then runs the three guide evaluators and eval-report into
+  `data/eval-report-guideline.md`; the log is `data/.guideline-eval.log`.
+
+**Left open:** read the guideline-prompt report. Then the v3 wrap-up (LID
+for the new items, retry qwen3's 2 failures, gold sync into v3, aggregate,
+export).
+
 ### 2026-11-22 (late night) — media blind spot measured and flagged; labeling UX
 
 **Context (Gio):** labeling felt slow; asked for a separate labeling site,

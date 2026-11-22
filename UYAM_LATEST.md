@@ -270,6 +270,22 @@ Two notes for the thesis text (found while writing the guideline):
   adjudicated because another label split, and the adjudicator flipped the
   sarcasm label on 52 of them.
 
+**Update 2026-11-23.** The guideline gained H14 (situational irony is not
+sarcasm) and an extended H10 (hate speech and slurs are literal, so not
+sarcasm). The labeling page shows a definition card with these rules.
+Gio treats Claude-assisted first passes (labeled with the suggestion
+visible) as **human-assisted gold labels**. 80 of the first 113 were labeled
+that way, and 77 of those match Claude's take exactly. The card therefore
+reports the gold κ on all items and, separately, on blind first passes only
+(`sarcastic_blind_only`). At 111 usable items: κ 0.24 vs shipped overall,
+−0.14 blind-only (32 items, mostly pre-guideline). Gio labels 9.9% sarcastic.
+The LLMs over-call relative to him (14 model-yes/human-no disagreements
+against 6 the other way). Per-model κ vs Gio is 0.04 (Llama-SEA-LION) to
+0.32 (SEA-LION). **The dataset annotators use the pre-guideline sarc-v2
+prompt**, so part of this gap is definitional. A guideline-prompt test on
+the 300 gold items runs on the laptop after v3 (evaluation only,
+`guide-v1.1`; report in `data/eval-report-guideline.md`).
+
 ### 6.2 New review and evaluation tooling
 
 - **Blind-first assist (Claude Code):** suggestions for the gold items are
@@ -395,6 +411,10 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-23**: Guideline H14 and the extended H10. A definition card on
+  the labeling page. Claude-assisted gold labels count as human-assisted,
+  with a blind-only κ alongside. Guideline-prompt evaluators (guide-v1.1)
+  are armed to run on the gold items after v3. No dataset labels changed.
 - **2026-11-22 (late night)**: Every exported row (v3 on) now carries
   `media_context`, and `media_context-v2.jsonl` covers v2. The finding is in
   §9.1 and the request to leische in §9. Also: guideline L4b, and full-label

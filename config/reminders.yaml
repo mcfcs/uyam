@@ -300,6 +300,18 @@ reminders:
       (RULES §5.10). If approved, re-fetching the 15,000 labeled ids through
       the API is a provenance and deletion check worth reporting.
 
+  - id: guideline-prompt-test-2026-11
+    section: Annotation
+    title: Read the guideline-prompt test (runs by itself after v3)
+    details: >
+      Armed 2026-11-23: when the v3 run ends, the same three models label the 300
+      gold items with the guideline as their prompt (evaluation only, on this
+      laptop, ~1.5-2 h). Progress is in data/.guideline-eval.log and the result
+      in data/eval-report-guideline.md. Compare the "*-guide" rows with the
+      plain model rows. If agreement with you rises a lot, much of the
+      human-LLM gap is the definition, not the models (a thesis result, and
+      leische's U2 question).
+
   - id: media-context-v2-to-leische-2026-11
     section: Handoff to leische
     title: Send media_context-v2.jsonl to the leische machine (small file)
