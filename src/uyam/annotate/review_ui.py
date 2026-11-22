@@ -37,6 +37,10 @@ from uyam.annotate.review_workflow import (
     upfront_assist,
 )
 
+# media_context side files, re-read only when a file changes (they are a few MB).
+_MEDIA_CACHE: dict[tuple[str, tuple[tuple[str, int], ...]], dict[str, Any]] = {}
+
+
 # (key, label, definition, worked example) — definitions mirror the cue taxonomy in
 # annotate/prompts.py so human gold labels and model votes are graded on one rubric.
 _CUES = (
@@ -73,12 +77,54 @@ _SENTIMENTS = ["positive", "neutral", "negative"]
 _LANGUAGES = ["english", "tagalog", "taglish"]
 
 
-def _render_context(st: Any, db: AnnotationDatabase, fullname: str) -> None:
+def _media_side(out_dir: str, signature: tuple[tuple[str, int], ...]) -> dict[str, Any]:
+    """The media_context side files, read once per file change."""
+    key = (out_dir, signature)
+    if key not in _MEDIA_CACHE:
+        from uyam.annotate.media import load_side_files
+
+        _MEDIA_CACHE.clear()
+        _MEDIA_CACHE[key] = load_side_files(Path(out_dir))
+    return _MEDIA_CACHE[key]
+
+
+def _media_for(db: AnnotationDatabase, out_dir: Path, fullname: str) -> dict[str, Any] | None:
+    """This item's media_context: from the side files, else computed without the post URL."""
+    signature = tuple(
+        (p.name, p.stat().st_mtime_ns) for p in sorted(out_dir.glob("media_context-*.jsonl"))
+    )
+    side = _media_side(str(out_dir), signature) if signature else {}
+    if fullname in side:
+        return dict(side[fullname])
+    record = db.get_record(fullname)
+    if record is None:
+        return None
+    from uyam.annotate.export import _media_context
+
+    ctx_row = db.get_context(fullname)
+    ctx = json.loads(str(ctx_row["context_json"])) if ctx_row else {}
+    return _media_context(db, record, ctx, None)
+
+
+def _render_context(
+    st: Any,
+    db: AnnotationDatabase,
+    fullname: str,
+    *,
+    media: dict[str, Any] | None = None,
+    show_link: bool = True,
+) -> None:
     ctx_row = db.get_context(fullname)
     record = db.get_record(fullname)
     if record is None:
         st.warning("Record missing from corpus index.")
         return
+    from uyam.annotate.media import describe
+
+    note = describe(media)
+    if note is not None:
+        level, message = note
+        (st.warning if level == "warning" else st.caption)(message)
     if ctx_row is not None:
         ctx = json.loads(str(ctx_row["context_json"]))
         submission = ctx.get("submission")
@@ -95,7 +141,10 @@ def _render_context(st: Any, db: AnnotationDatabase, fullname: str) -> None:
         for i, reply in enumerate(json.loads(str(ctx_row["context_json"])).get("replies", []), 1):
             st.markdown(f"> **reply {i}:** {reply.get('text') or ''}")
     permalink = record.get("permalink")
-    if permalink:
+    if permalink and not show_link:
+        # The thread page shows the image: keep the first pass text-only.
+        st.caption("The Reddit link appears after you save (it would show the unseen media).")
+    elif permalink:
         url = (
             permalink if str(permalink).startswith("http") else f"https://www.reddit.com{permalink}"
         )
@@ -422,7 +471,15 @@ def render_review_tab(config_path: Path | None = None) -> None:
 
         status = "" if fullname in pending_names else "labeled; "
         st.caption(f"Item {fullname} — {status}{len(pending_names)} left in this queue")
-        _render_context(st, db, fullname)
+        media = _media_for(db, cfg.export.out_dir, fullname)
+        _render_context(
+            st,
+            db,
+            fullname,
+            media=media,
+            show_link=bool((media or {}).get("text_only"))
+            or db.get_human_review(fullname) is not None,
+        )
 
         show_votes = reason == "low_confidence" or st.checkbox(
             "Reveal model votes (breaks blindness: an unsaved item then leaves the gold κ)",

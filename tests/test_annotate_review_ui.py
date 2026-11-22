@@ -125,6 +125,8 @@ def _setup(tmp_path: Path, queue: dict[str, str], assists: tuple[str, ...]) -> t
                 "endpoints": {"local": "http://127.0.0.1:11434"},
                 "annotators": [{"key": "a1", "model": "model-one", "endpoint": "local"}],
                 "adjudicator": {"key": "adj", "model": "model-adj", "endpoint": "local"},
+                # Never the real data/annotated (media side files live there).
+                "export": {"out_dir": (tmp_path / "annotated").as_posix()},
             }
         ),
         encoding="utf-8",
@@ -615,3 +617,47 @@ def test_assist_defaults_handles_old_and_full_suggestions() -> None:
                             "cue_hyperbole": 1})
     assert full is not None and full["sarcastic_span"] is None and full["cue_hyperbole"] == 0
     assert assist_defaults(None) is None
+
+
+
+# ---------------------------------------------------------------------------
+# Media indicator: unseen images flagged; the Reddit link waits for the save
+# ---------------------------------------------------------------------------
+
+
+def test_describe_media_flags() -> None:
+    from uyam.annotate.media import describe
+
+    assert describe(None) is None
+    level, text = describe({"post_type": "text", "text_only": True}) or ("", "")
+    assert level == "info" and "Text-only" in text
+    level, text = describe({"post_type": "image", "text_only": False}) or ("", "")
+    assert level == "warning" and "image" in text and "Unsure" in text
+    _, text = describe({"post_type": "text", "text_only": False, "parent_has_media": True}) or (
+        "", "")
+    assert "parent comment has an image" in text
+
+
+def test_media_item_shows_a_warning_and_hides_the_link_until_saved(tmp_path: Path) -> None:
+    config_yaml, db_path = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
+    side = tmp_path / "annotated" / "media_context-v2.jsonl"
+    side.parent.mkdir(parents=True, exist_ok=True)
+    side.write_text(json.dumps({"reddit_fullname": "t1_c3", "media_context": {
+        "post_type": "image", "is_post": False, "post_body_has_media": False,
+        "parent_has_media": False, "target_has_media": False, "text_only": False}}),
+        encoding="utf-8")
+    at = _app(config_yaml)
+    warnings = " ".join(str(w.value) for w in at.warning)
+    assert "image" in warnings and "Unsure" in warnings
+    text = _rendered_text(at)
+    assert "view on reddit" not in text and "appears after you save" in text
+    _save(at)
+    assert "view on reddit" in _rendered_text(at)  # after the first pass
+
+
+def test_text_only_item_keeps_the_link_and_says_so(tmp_path: Path) -> None:
+    config_yaml, _ = _setup(tmp_path, {"t1_c3": "gold"}, assists=())  # no side file: computed
+    at = _app(config_yaml)
+    text = _rendered_text(at)
+    assert "Text-only thread" in text and "view on reddit" in text
+    assert not at.warning

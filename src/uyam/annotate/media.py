@@ -101,6 +101,58 @@ def media_context(
     return flags
 
 
+def load_side_files(out_dir: Path) -> dict[str, dict[str, Any]]:
+    """{fullname: media_context} from every media_context-*.jsonl (newest file wins)."""
+    out: dict[str, dict[str, Any]] = {}
+    paths = sorted(out_dir.glob("media_context-*.jsonl"), key=lambda p: p.stat().st_mtime)
+    for path in paths:
+        with path.open(encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and row.get("reddit_fullname"):
+                    out[str(row["reddit_fullname"])] = dict(row.get("media_context") or {})
+    return out
+
+
+def describe(flags: dict[str, Any] | None) -> tuple[str, str] | None:
+    """(level, message) for the review page, or None when nothing is unseen.
+
+    level is "warning" (the meaning may hinge on something nobody can see) or
+    "info" (a text-only thread).
+    """
+    if not flags:
+        return None
+    if flags.get("text_only"):
+        return "info", "📝 Text-only thread: everything the item hangs on is shown here."
+    parts = []
+    kind = flags.get("post_type")
+    if kind == "image":
+        parts.append("🖼️ replies to an **image** post (only its title is shown)")
+    elif kind == "video":
+        parts.append("🎬 replies to a **video** post (only its title is shown)")
+    elif kind == "link":
+        parts.append("🔗 replies to a **link** post (the linked page isn't shown)")
+    elif kind == "unknown":
+        parts.append("❔ the post's type is unknown")
+    if flags.get("post_body_has_media"):
+        parts.append("the post body has an image or video")
+    if flags.get("parent_has_media"):
+        parts.append("a parent comment has an image or GIF")
+    if flags.get("target_has_media"):
+        parts.append("this text has an image or GIF")
+    if not parts:
+        return None
+    return (
+        "warning",
+        "Unseen media: " + "; ".join(parts) + ". Neither you nor the model sees it. Judge "
+        "from the text and title; if the meaning hinges on the picture, label your best "
+        "reading and tick **Unsure** (H13).",
+    )
+
+
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Card block: rows and sarcastic share per post type, plus the text-only slice."""
     by_type: dict[str, dict[str, Any]] = {}

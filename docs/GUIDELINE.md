@@ -445,6 +445,14 @@ labels auditable later.
 saving. If you do, the app records it (`votes_seen`), and that item is left
 out of the gold κ.
 
+**6.3b Text-only, like the model (2026-11-22).** Label from what the page
+shows (the target, its parents, and the post title and body), exactly the
+information the annotator models and the classifier get. Don't look up the
+image, video or linked page. The review page warns when an item hangs on
+unseen media and hides the Reddit link until you save. Treat the warning as
+a prompt for H13: if the meaning hinges on the picture, give your best
+reading and tick `unsure`.
+
 **6.4 The assist flow.** (Since 2026-11-22 the review page has a toggle,
 *Show Claude's suggestion before I label*, for a second judgement while
 labeling. It is off by default. An item saved with it on is recorded as
