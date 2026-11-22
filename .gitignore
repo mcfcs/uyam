@@ -72,3 +72,8 @@ Thumbs.db
 
 # Detached-run logs (v3 pipeline and any future ones)
 data/.*.log
+
+# Everything under data/ stays local (RULES §2): the corpus, DBs, exports,
+# logs, reports, one-off scripts. Only the placeholder is tracked.
+data/*
+!data/.gitkeep
