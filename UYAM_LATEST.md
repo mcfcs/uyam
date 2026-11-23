@@ -20,7 +20,14 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   training labels unchanged. **tsis: the v2 dataset figures below are final
   for v2, but keep them out of the manuscript until leische has v2
   results, so the chapters don't mix datasets.**
-- **`dataset-v3` is in preparation** (equal-size re-annotation, the adviser's
+- **`dataset-v3` annotation is complete (2026-11-23):** 21,000 items, 4,011
+  sarcastic (19.1%; 17.9% on the 15,000 v2 items, 22.0% on the 6,000 new
+  ones), 1 item without a majority. The export waits for the gold sync.
+- **Definition test (2026-11-23):** with the guideline as their prompt, the
+  same models agree with Gio's gold labels about twice as well (majority κ
+  0.24 → 0.48; on his 32 unassisted labels 0.18 → 0.64), so much of the
+  human–LLM gap is the definition. Full table in §6.1.
+- **`dataset-v3` was prepared as follows** (equal-size re-annotation, the adviser's
   item 5; see §10). It is a separate database
   (`data/db/annotation-v3.sqlite3`), so v1/v2 are untouched. Its 21,000
   targets are the 15,000 v2 items plus 6,000 new items: 1,600 each from
@@ -286,6 +293,21 @@ prompt**, so part of this gap is definitional. A guideline-prompt test on
 the 300 gold items runs on the laptop after v3 (evaluation only,
 `guide-v1.1`; report in `data/eval-report-guideline.md`).
 
+**Definition test result (2026-11-23, `data/eval-report-guideline.md`):**
+
+| Labels from (κ vs Gio, sarcasm) | sarc-v2 prompt, all 111 | sarc-v2, blind 32 | **guideline prompt, all 111** | **guideline, blind 32** |
+|---|---|---|---|---|
+| qwen3:8b | 0.22 | 0.39 | 0.37 | 0.46 |
+| Llama-SEA-LION 8B | 0.04 | −0.18 | 0.48 | 0.67 |
+| SEA-LION 9B | 0.32 | 0.46 | 0.21 | 0.32 |
+| Majority of the three | 0.24 (v3 labels) | 0.18 | **0.48** | **0.64** |
+
+SEA-LION over-applies the guideline (49% positive on the gold sample).
+Caveats: the blind set has only 32 items, and the "all" column includes
+first passes made with a guideline-based Claude suggestion visible. This
+bears on leische's U2: the adjudicator's narrow definition is part of the
+gap.
+
 ### 6.2 New review and evaluation tooling
 
 - **Blind-first assist (Claude Code):** suggestions for the gold items are
@@ -411,6 +433,10 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-23 (later)**: v3 annotation complete (21,000 items, 19.1%
+  sarcastic). Definition test done: the guideline prompt doubles agreement
+  with the human gold (majority κ 0.24 → 0.48). The adviser update in tsis
+  was updated to match.
 - **2026-11-23**: Guideline H14 and the extended H10. A definition card on
   the labeling page. Claude-assisted gold labels count as human-assisted,
   with a blind-only κ alongside. Guideline-prompt evaluators (guide-v1.1)

@@ -168,6 +168,31 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-23 (later) — v3 complete; definition test result
+
+**v3:** finished at 09:16 after 30.4 h.
+- 21,000 aggregated: 4,785 unanimous, 16,214 majority, 1 unresolved (the qwen3
+  failure item).
+- 4,011 sarcastic: 17.9% on the 15k v2 items, 22.0% on the 6k extension.
+- Not exported yet. Still to do: LID for the 6k, retry qwen3's 2 failures
+  (an LLM run, so ask Gio), sync the gold labels into the v3 DB, aggregate,
+  export.
+- The pipeline's final hint line still says `--version v1` (cosmetic).
+
+**Definition test** (`data/eval-report-guideline.md`, all three guide
+evaluators 300/300, done 10:09):
+- Guideline-majority κ vs Gio: 0.48 (all 111) and 0.64 (blind 32), against
+  0.24 and 0.18 for the sarc-v2 v3 labels.
+- llama-guide: blind κ 0.67 (sarc-v2: −0.18).
+- qwen3-guide: 0.46 (sarc-v2: 0.39).
+- sealion-guide gets worse: 0.32 against 0.46, with a 49% positive rate.
+- Caveats: blind n=32; the assisted labels follow a guideline-based suggestion.
+- Open decision for Gio and the adviser: a guideline-prompt re-annotation
+  ("v4"), or report this as a finding. The adviser update in tsis now has
+  question 8.
+
+**Gold:** still 113/300 (80 assisted).
+
 ### 2026-11-23 — gold stats at 113; definition card; guideline-prompt test armed
 
 **Context (Gio):**
