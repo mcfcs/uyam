@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-22 (late night), uyam `bb73abc`+ (plus this file's commit)
+- **Last updated:** 2026-11-23, uyam `badebe7`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -20,9 +20,34 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   training labels unchanged. **tsis: the v2 dataset figures below are final
   for v2, but keep them out of the manuscript until leische has v2
   results, so the chapters don't mix datasets.**
-- **`dataset-v3` annotation is complete (2026-11-23):** 21,000 items, 4,011
-  sarcastic (19.1%; 17.9% on the 15,000 v2 items, 22.0% on the 6,000 new
-  ones), 1 item without a majority. The export waits for the gold sync.
+- **`dataset-v3` is exported (2026-11-23, card `dataset_card-v3.json`,
+  bundle `uyam-dataset-v3.zip`).** It is the adviser's equal-size
+  re-annotation (§10 row 5): 21,000 items labeled by qwen3:8b,
+  Gemma-SEA-LION-v3-9B and Llama-SEA-LION-v3-8B, majority vote on sarcasm,
+  no adjudicator. Card numbers:
+  - **4,011 sarcastic (19.1%)**: 17.9% on the 15,000 v2 items (v2 shipped
+    10.7% under the unanimous rule) and 22.0% on the 6,000 new items.
+  - Resolved: 4,785 unanimous, 16,215 by majority, 0 unresolved.
+    Annotator agreement on sarcasm: Fleiss κ 0.40.
+  - Language: English 3,621, Tagalog 3,971, Taglish 13,408. The smallest
+    language × label cell is English-sarcastic, 545.
+  - Gold κ vs the v3 labels: 0.24 on 111 items, 0.18 on the 32 blind first
+    passes.
+  - Author history coverage: 48 h 50.5%, 7 d 67.4%, 30 d 82.9%.
+  - Media: 9,810 text-only rows (1,227 sarcastic). Image-post replies are
+    24.0% sarcastic and video-post replies 36.4%, against 12.6% for
+    text-post replies.
+  - The corpus dump holds 352,176 records.
+  - **leische doesn't have v3 yet** (Gio sends the bundle). Like v2, keep
+    v3 figures out of the manuscript until leische has results on it.
+- **`dataset-v4` pilot is prepared, not run (2026-11-23):** 5,000 items
+  (all 300 gold + 4,700 v3 items stratified by month × v3 label × v3
+  language) re-labeled by the **same three models with the guideline prompt**
+  (`guide-v1.1`) instead of sarc-v2. The 900 gold votes are reused from the
+  definition test. It needs about 14 h of laptop GPU and **waits on Gio's
+  go**. It tests whether a guideline-based prompt gives labels closer to a
+  human across a training-size sample, not just the 300 gold items. Nothing
+  to quote yet.
 - **Definition test (2026-11-23):** with the guideline as their prompt, the
   same models agree with Gio's gold labels about twice as well (majority κ
   0.24 → 0.48; on his 32 unassisted labels 0.18 → 0.64), so much of the
@@ -34,8 +59,8 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   June, July and October, and 1,200 from Nov 1–10. The lineup is three
   ~8–9B models: qwen3:8b, Gemma-SEA-LION-v3-9B and Llama-SEA-LION-v3-8B, all
   q4 on the laptop GPU. Labels are by majority vote, with no adjudicator.
-  The 100-item pilot passed. The full run (~28 h of laptop GPU) waits on
-  Gio's go. Nothing to quote yet.
+  The 100-item pilot passed. The full run took 30.4 h of laptop GPU
+  (2026-11-22 02:50 → 11-23 09:16).
 
 > **For tsis editors:** don't put any *provisional* number into the
 > manuscript. Chapter 4 is computed on v1, and mixing v1 results with v2
@@ -47,17 +72,17 @@ repo; an identical copy sits at the root of tsis. Newest information first.
 
 ## 1. Dataset versions
 
-| | `dataset-v1` (in the manuscript) | `dataset-v2` (exported 2026-11-22) |
-|---|---|---|
-| Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months). The card's `collection_window` reads 2025-07-30 → 2026-11-13: one stray 2025 post (as in v1) and a few Nov 11–13 records from the live walks. Labeled rows still span 2026-08-01 → 09-03 |
-| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 collected (40,125 / 548,382); `corpus-v2.jsonl` ships the 281,275 by labeled authors |
-| Distinct authors | 8,920 | 63,754 |
-| Eligible after filters | 17,424 | 512,471 (of 588,507; 1,417 unlabeled phatic items excluded) |
-| Annotated items | 15,000 | **15,000, the same items with identical labels** (verified against v1); 120 flagged `phatic` |
-| Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated |
-| Preprocessing filters | 6 reasons (manuscript Table 3.1) | 7 reasons: adds `phatic` for unlabeled items; labeled ones are flagged, not dropped (§4) |
-| Keyword oversampling | not executed | search step redundant; optional at annotation (§5) |
-| Prompt / labels | `sarc-v2` | `sarc-v2` (no prompt change so far) |
+| | `dataset-v1` (in the manuscript) | `dataset-v2` (exported 2026-11-22) | `dataset-v3` (exported 2026-11-23) |
+|---|---|---|---|
+| Collection window | 2026-08-01 → 2026-09-04 (~5 weeks) | 2026-06-01 → 2026-11-10 (~5 months). The card's `collection_window` reads 2025-07-30 → 2026-11-13: one stray 2025 post (as in v1) and a few Nov 11–13 records from the live walks. Labeled rows still span 2026-08-01 → 09-03 | Same corpus as v2. Labeled rows span 2026-06-01 → 11-11 |
+| Corpus records | 20,573 (1,954 submissions, 18,619 comments) | 588,507 collected (40,125 / 548,382); `corpus-v2.jsonl` ships the 281,275 by labeled authors | Same as v2; `corpus-v3.jsonl` ships 352,176 |
+| Distinct authors | 8,920 | 63,754 | 63,754 |
+| Eligible after filters | 17,424 | 512,471 (of 588,507; 1,417 unlabeled phatic items excluded) | Same as v2 |
+| Annotated items | 15,000 | **15,000, the same items with identical labels** (verified against v1); 120 flagged `phatic` | **21,000**: the 15,000 v2 items + 1,600 each from Jun, Jul and Oct + 1,200 from Nov 1–10 |
+| Sarcastic | 1,601 (10.7%) | unchanged unless re-annotated | **4,011 (19.1%)**; 17.9% on the v2 items |
+| Preprocessing filters | 6 reasons (manuscript Table 3.1) | 7 reasons: adds `phatic` for unlabeled items; labeled ones are flagged, not dropped (§4) | Same as v2 |
+| Keyword oversampling | not executed | search step redundant; optional at annotation (§5) | none; every row `natural` |
+| Prompt / labels | `sarc-v2` | `sarc-v2` (no prompt change so far) | `sarc-v2`, re-labeled by 3 equal-size models (qwen3 8B, SEA-LION 9B, Llama-SEA-LION 8B); majority vote, no adjudicator |
 
 ## 2. Corpus right now (2026-11-19, *provisional*)
 
@@ -382,6 +407,13 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-23): `dataset-v3` exists** (the adviser's
+  equal-size, majority-vote re-annotation; 21,000 rows). Gio will send the
+  bundle. Its schema is v2's, plus inline `media_context` and the card's
+  `aggregation` block. Under majority vote the old `sarcastic_majority`
+  field equals `sarcastic`. For adviser row 3, v3 labels **are** the
+  majority-vote labels; for the row-5 comparison, use the 15,000 v2 ids in
+  v3 against v2.
 - **To leische (2026-11-22): report results by `media_context`.** 43% of the
   labeled rows reply to image or video posts that nobody saw. Please report
   every condition overall **and on the text-only slice**
@@ -423,7 +455,7 @@ remove most positives and change the population.
 | 2 | A second human annotator | Gio | **Deferred (Gio, 2026-11-22: doesn't fit the time).** It will be stated as a limitation: a single human annotator, so no inter-annotator κ. The partial substitute is D5, a blind re-label of the first 31 items after at least two weeks, for an intra-annotator κ. The adviser's "majority vote vs no-override of 3-0" question then rests on the single-annotator gold set and on the equal-size re-annotation (row 5) |
 | 3 | Re-run the 3 main conditions on majority-vote labels | leische | **Data ready:** `labels.sarcastic_majority` is in v2 (U1; 2,747 positives vs 1,601 shipped) |
 | 4 | Zero-shot LLM and simple text-concatenation baselines | leische | Not started. A zero-shot LLM scored against LLM-made labels is partly circular (more so if it shares a family with the annotators), so it should be scored mainly against the human gold and should use a model outside the annotator lineup. Running it needs Gio's OK (RULES §6) |
-| 5 | Re-annotate with equal-size LLMs (remove model size as a hidden variable) | uyam (**decided by Gio 2026-11-22: yes, plus new months**) | **Conflicts with the frozen v2 labels, so it must be a separate version (`dataset-v3`); v1/v2 stay as they are.** Current lineup: qwen3:8b, SEA-LION v3 9B, gemma3:27b (plus a qwen3:32b adjudicator). Cheapest equal-size route: keep the two ~8–9B models' votes and replace only gemma3:27b with a ~9B annotator on all 15,000 items, using the same `sarc-v2` prompt. All three then fit the local 8 GB GPU, so the gaming PC isn't needed. Three binary votes always have a majority, so the sarcasm label needs no adjudicator (this fits row 3). Cost: one model × 15,000 items, to be timed with a 100-item pilot first. Needs Gio's go |
+| 5 | Re-annotate with equal-size LLMs (remove model size as a hidden variable) | uyam (**decided by Gio 2026-11-22: yes, plus new months**) | **Done 2026-11-23: `dataset-v3` exported** (21,000 items, 4,011 sarcastic; see the top of this file). Background as planned: **Conflicts with the frozen v2 labels, so it must be a separate version (`dataset-v3`); v1/v2 stay as they are.** Current lineup: qwen3:8b, SEA-LION v3 9B, gemma3:27b (plus a qwen3:32b adjudicator). Cheapest equal-size route: keep the two ~8–9B models' votes and replace only gemma3:27b with a ~9B annotator on all 15,000 items, using the same `sarc-v2` prompt. All three then fit the local 8 GB GPU, so the gaming PC isn't needed. Three binary votes always have a majority, so the sarcasm label needs no adjudicator (this fits row 3). Cost: one model × 15,000 items, to be timed with a 100-item pilot first. Needs Gio's go |
 | 6 | RQ3 across all folds with proper controls | leische | leische has fold 0 only (`results/rq3-fold0.csv`). The human gold carries intended sentiment for a human check |
 | 7 | Re-run on items with real context only (don't force retrieval) | leische | The data supports it. Conversational context exists for comments, not submissions. Author history within 48 h exists for 46.5% of v2 items (64.9% at 7 d). uyam can add per-row context flags to the export if leische wants them |
 | 8 | Reddit API access | Gio | Application pending. **uyam collection is frozen until it is approved** (RULES §5.10). If approved, re-fetching the labeled ids through the API is a provenance and deletion check worth reporting |
@@ -433,6 +465,12 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-23 (evening)**: **`dataset-v3` exported** (21,000 rows, 4,011
+  sarcastic, majority vote, gold κ 0.24). Before the export: qwen3's 2 failed
+  items were retried, LID was run on the 6,000 new items, and Gio's 113 gold
+  labels were synced into the v3 database. **A `dataset-v4` pilot is
+  prepared**: 5,000 items, the same models with the guideline prompt. It
+  waits on Gio's go (~14 h of laptop GPU).
 - **2026-11-23 (later)**: v3 annotation complete (21,000 items, 19.1%
   sarcastic). Definition test done: the guideline prompt doubles agreement
   with the human gold (majority κ 0.24 → 0.48). The adviser update in tsis

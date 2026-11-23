@@ -9,104 +9,49 @@ a chat (see [RULES.md §1](RULES.md)).
 
 ---
 
-## Current state (as of 2026-11-22, end of session)
+## Current state (as of 2026-11-23, evening)
 
 **Corpus (raw JSONL, `data/raw/`)**: **588,507 records** (40,125
 submissions, 548,382 comments) from r/Philippines, r/CasualPH and
-r/OffMyChestPH, **2026-06-01 → 2026-11-10**, complete (Arctic Shift archive
-plus the Aug–Sep Shreddit core and Nov 8–10 Shreddit walks). Every record is
-`natural`: the 57 mis-tagged trial posts (and 543 comments) were re-tagged on
-2026-11-19 (backups in `data/raw-backup-20261119T030244Z/`, log
-`data/retag-log-20261119T030244Z.json`).
+r/OffMyChestPH, **2026-06-01 → 2026-11-10**, complete and **frozen** until
+Reddit API approval and ethics clearance (RULES §5.10). Every record is
+`natural` (the 57 trial posts were re-tagged 2026-11-19, with backups).
 
-**Annotation (`data/db/annotation.sqlite3`, prompt `sarc-v2`)**: re-indexed
-and re-selected 2026-11-19: **512,471 eligible**, 1,417 unlabeled items
-excluded as `phatic`, 120 labeled items flagged `phatic` (labels kept). The
-15,000 aggregated items and their labels are **frozen** (Gio, for leische
-U9): 1,601 sarcastic, unchanged and verified against the backup
-`data/db/annotation-2026-11-19.bak.sqlite3`. Gold queue redrawn again on
-2026-11-22 with split and shipped-sarcastic strata each ×2: 300 items, 62
-ensemble-sarcastic, 31 labeled by Gio, 269 to do (backup
-`annotation-2026-11-22-pre-gold-redraw.bak.sqlite3`). `assist_suggestions`
-holds 300 Claude Code suggestions (`claude-code:claude-opus-5-5`,
-`guideline-v1.1`, 24 sarcastic, 4 of them D1-tagged). On Gio's 31 items they
-agree on 29. `eval_annotations` is empty because nimble hasn't been run.
-The `human_reviews.votes_seen` and `first_reviewed_at` columns were added
-(backup first: `data/db/annotation-2026-11-19-pre-votes-seen.bak.sqlite3`).
+**Databases** (each run has its own DB; all read the same corpus):
+- `data/db/annotation.sqlite3` (prompt `sarc-v2`): the original v1/v2 run,
+  frozen (15,000 items, 1,601 sarcastic). **Gio labels gold here** (the
+  labeling site writes to it): 113 of 300 done, 80 of them with Claude's
+  take showing (human-assisted), 32 blind. It also holds the definition test
+  (`eval_annotations`, guide-v1.1, 900 votes; report
+  `data/eval-report-guideline.md`).
+- `data/db/annotation-v3.sqlite3` (`config/annotation-v3.yaml`): the
+  equal-size majority-vote run, complete. Gold synced 2026-11-23.
+- `data/db/annotation-v4.sqlite3` (`config/annotation-v4.yaml`, prompt
+  `guide-v1.1`): the guideline-prompt pilot. 5,000 targets: 300 gold +
+  4,700 stratified from v3. Only the 900 imported gold votes so far.
+  **Not run.**
+- Backups from 2026-11-23: `annotation-20261123T104802.bak.sqlite3` and
+  `annotation-v3-20261123T104802.bak.sqlite3`.
 
-**Export (`data/annotated/`)**: **`dataset-v2` exported** by Gio on
-2026-11-22 00:34 PHT (`uyam_commit` `39b1500`; `dataset_card-v2.json`,
-`uyam-dataset-v2.zip`). It is verified identical to v1 on all 15,000 labels.
-The card numbers match the trial (majority positives 2,747, rows differing
-1,712, κ 0.545, 48 h coverage 46.5%), and the corpus dump has 281,275
-records. leische received it and verified the checksums, and its v2 runs are
-paused at 1 of 11. `dataset-v1` files and `dataset_card-v1.json` are kept;
-`dataset_card.json` is now the v2 card.
+**Exports (`data/annotated/`)**:
+- `dataset-v1`: in the manuscript, and leische's current results.
+- `dataset-v2`: exported 2026-11-22; leische has it, with runs paused at 1
+  of 11.
+- **`dataset-v3`**: exported 2026-11-23 (21,000 rows, 4,011 sarcastic, gold
+  κ 0.24 / blind 0.18). Not sent to leische yet.
+- `media_context-v2.jsonl`: per-row flags for v2.
+- `dataset_card.json` is now the v3 card.
 
-**Known gaps the thesis must address**: data didn't come through Reddit's
-official API (ethics reminder); gold κ on 31 items is −0.148; guideline
-decisions D2, D3 and D5 are open (D1 broad, D4 done).
+**Known gaps the thesis must address**: no official API (ethics); a single
+human annotator; gold κ 0.24 (0.18 blind) on the sarc-v2 labels, which
+rises to 0.48 / 0.64 with the guideline prompt (definition test);
+guideline decisions D2, D3 and D5 are open.
 
 ## In progress
 
-**dataset-v3 full run STARTED 2026-11-22 02:50 PHT** (Gio's go). It is
-detached: orchestrator pid 199228, lane job `annotation-v3-run-all-local`.
-- Command: `uyam annotate pipeline --config-path config/annotation-v3.yaml
-  --skip-prep --skip-gold`. Prep was skipped because the v3 copy is already
-  indexed and selected, and a full LID pass over ~495k items would add RAM
-  pressure next to Gio's apps.
-- **Labeling is fast now** (2026-11-22). The main app's tabs are lazy, so
-  only the open tab runs (`1294a88`), and a Review rerun dropped from ~10 s
-  to 0.1 s. Before, every click re-ran all tabs, including Data Browser's
-  whole corpus in ~4.5 GB on a machine swapping at ~85k pages/s. There is
-  also a labeling-only site, `run-label-app.bat` → http://100.71.83.125:8502
-  (`931192a`), and an opt-in "Claude's suggestion before I label" toggle
-  (`8e1d38d`, recorded as `assist_before_first_pass`).
-- **Review form (`bb73abc`):** Claude's take now carries every label (300
-  full-label suggestions loaded: 25 sarcastic; vs Gio's 32, sarcasm 30/32 and
-  language 30/32). The upfront toggle prefills the form from it. "Not
-  sarcastic" disables the span and cues and makes intended = literal (S3)
-  unless "differs" is ticked. New guideline gaps the agents raised:
-  - S1 on long mixed targets: whole target or the sarcastic span?
-  - Intended sentiment of D1 items: wry amusement → neutral, self-pity →
-    negative?
-  - L4 with a repeated particle ("po … po"): does it count twice?
-  - A Cebuano + English target: there is no label for it (taglish was used).
-  - Parody in someone else's voice; mock advice; feigned surrender.
-- **Runs & Datasets** tab: every run side by side (the original v1/v2 run stays
-  untouched in annotation.sqlite3 as the fallback), a label browser per run, and
-  every exported version (v1, v2, ...). All read-only.
-- Watch it in the app: Annotation tab → **Current annotation runs** (read-only,
-  refreshes every 30 s; `7342bca`). Logs: `data/.v3-pipeline.log` and
-  `data/.annotate-status/annotation-v3-run-all-local.log`. ETA after the first
-  hour: ~33 h (SEA-LION's mean pace is 9.9 s/item, not the 5.7 s median).
-- Order: llamasealion (20,900 left, ~27 items/min, ~13 h), then qwen3
-  (6,000), then sealion (6,000). Roughly 27–30 h in total. Sentiment for the
-  6,000 new items is done.
-- It shares the laptop GPU with Gio's ComfyUI and GPT-SoVITS (manabi) and
-  runs next to arbit (CPU/RAM). **Don't close those apps** (Gio).
-- To stop: kill the orchestrator and the lane job. To resume: re-run the
-  same command (finished items are skipped).
-- Still to do before export: LID for the 6,000 new items (needs a
-  `--target` option on `annotate lid`), the gold sync, `--retry-failed` for
-  qwen3's 2 old failures, then aggregate and export. Gio is labeling the 269 gold items in the
-main DB. leische's v2 runs are paused at 1 of 11 (watch tsis
-LEISCHE_LATEST.md).
-
-**dataset-v3 (`data/db/annotation-v3.sqlite3`, `config/annotation-v3.yaml`):**
-- The fork of annotation.sqlite3 was made 2026-11-22 (`uyam annotate fork`,
-  seed 13). It holds 21,000 pinned targets in `target_priority`: the 15,000 v2
-  items (priority 2) plus 1,600 Jun / 1,600 Jul / 1,600 Oct / 1,200 Nov 1–10
-  (priority 1).
-- Kept votes: qwen3 14,998 and SEA-LION 15,000 (sarc-v2). New annotator
-  `llamasealion` (Llama-SEA-LION-v3-8B q4_k_m) has 100 pilot votes.
-- Majority vote with a confidence tie-break, no adjudicator, no remote
-  endpoint.
-- Before export: sync Gio's gold labels from the main DB, since the fork
-  copied the 31 that existed then. That needs a small `sync-reviews` command,
-  not built yet. Then `uyam annotate aggregate --config-path
-  config/annotation-v3.yaml` and `uyam annotate export --version v3
-  --config-path config/annotation-v3.yaml`.
+Nothing is running. Streamlit runs on 8501 (main) and 8502 (labeling site).
+Gio's apps (arbit, manabi/GPT-SoVITS) share the laptop: **don't close
+them**. ComfyUI is closed.
 
 ## Next steps (for Gio unless marked)
 
@@ -114,23 +59,20 @@ These are also the to-dos in the Streamlit **Reminders** tab
 (`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
 records which ones are done.
 
-1. **Label the 269 gold items** in Annotation Review (guideline v1.1): blind
-   first, write `D1` in notes for wry-pose items, then optionally reveal
-   Claude's suggestion. D2, D3 and D5 are open but don't block labeling.
-2. **Re-export after the gold labels** so leische gets the new
-   `human_gold` labels. The training labels are unchanged, so leische's v2
-   runs remain valid.
-3. **nimble** on the remote box: `ollama pull nimble:9b`, then
-   `uyam annotate evaluate --model nimble` and `uyam annotate eval-report`.
-4. **Agent, after the export:** check the card against the trial numbers
-   above, update UYAM_LATEST.md §1/§9, and mirror it to tsis. Once the gold
-   set is labeled, re-export (same version label only if training labels are
-   unchanged; human_gold changes alone don't change the training labels).
-5. Thesis text (reminders in the *Thesis manuscript* section): Arctic Shift
-   method and ethics, window and phatic filter, guideline and blind-first
-   assist.
-6. Optional: marker oversampling (1,148 items) and annotating new Jun–Nov
-   items.
+1. **Say go for the v4 pilot** (about 14 h of laptop GPU). Agent: run
+   `uyam annotate pipeline --config-path config/annotation-v4.yaml
+   --skip-prep --skip-gold`. Then `sync-gold`, aggregate, and export v4 with
+   the v4 config. Compare with v3 on the same ids and against the gold labels
+   (blind and all).
+2. **Label the remaining 187 gold items** (labeling site, port 8502).
+3. **Adviser meeting Wed 2026-11-25**: `../tsis/ADVISER_UPDATE_2026-11-23.md`
+   has the questions, including Q8 (v4 / full guideline re-annotation).
+4. Send `uyam-dataset-v3.zip` to leische when Gio wants v3 runs. Before any
+   re-export of v2/v3 with more gold, the agent runs `sync-gold` for that
+   config.
+5. **nimble** (gaming PC, ask first): `ollama pull nimble:9b`, `uyam
+   annotate evaluate --model nimble`, `uyam annotate eval-report`.
+6. Thesis text (reminders in the *Thesis manuscript* section).
 
 **Regenerating the assist suggestions** (after a guideline change): dump
 the gold items (fullname, target, parent, submission title/body; no votes,
@@ -167,6 +109,42 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-23 (evening) — dataset-v3 exported; v4 guideline-prompt pilot prepared
+
+**Context (Gio):** "go" for the v3 wrap-up. He also asked for a v4: about
+5k items re-annotated with the new guideline and prompt, as a test. His
+choices: all 300 gold + a stratified sample, and the same three models.
+
+**Done:**
+- Backups: `data/db/annotation-20261123T104802.bak.sqlite3` and
+  `annotation-v3-20261123T104802.bak.sqlite3`.
+- qwen3 retry of the 2 failed v3 items (local, about 10 s): both stored.
+- `bc950c2`: `annotate lid --target N`. LID was run on v3's 6,000 new items.
+- `fdac22b`: `annotate sync-gold` (main → fork: gold reviews, queue flags,
+  assist suggestions; read-only source, refuses mismatched queues). Real
+  run: 82 added, 31 unchanged, 300 assist suggestions copied.
+- v3 aggregate: 4,785 unanimous, 16,215 majority, 0 unresolved.
+- **`dataset-v3` exported** (`data/annotated/*-v3*`, bundle
+  `uyam-dataset-v3.zip`). Card verified: 21,000 rows, 4,011 sarcastic, the
+  months as planned, gold κ 0.24 (blind 0.18), Fleiss κ 0.40.
+- `badebe7`: v4 plumbing. The runner takes its prompt from the config's
+  `prompt_version` (sarc-v2 or guide-v1.1, each hash-guarded); context
+  stays the sarc-v2 snapshot. Also `fork-subset`, `import-eval-votes`
+  (separate DB only), `config/annotation-v4.yaml`, and the pipeline's
+  closing hint fixed. Tests: 396 → 406.
+- v4 DB built: `data/db/annotation-v4.sqlite3`. 300 gold + 4,700
+  stratified (972 v3-sarcastic, 19.4%); the definition test's 900 gold
+  votes imported. A dry run confirmed the guideline prompt and the hash.
+
+**Left open:**
+- The v4 run (an LLM run; Gio's go). Command:
+  `uyam annotate pipeline --config-path config/annotation-v4.yaml --skip-prep --skip-gold`,
+  about 14 h on the laptop. Then aggregate and export v4 with the v4 config.
+  Compare v4 with v3 on the same 5,000 ids and against the gold labels (blind
+  and all).
+- Re-sync gold before any re-export (`sync-gold --config-path ...` for v3
+  and for v4).
 
 ### 2026-11-23 (later) — v3 complete; definition test result
 
