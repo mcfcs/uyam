@@ -749,6 +749,19 @@ class AnnotationDatabase:
         ).fetchall()
         return [str(r["reddit_fullname"]) for r in rows]
 
+    def missing_lid_in_target(self, prompt_version: str, target: int) -> list[str]:
+        rows = self._conn.execute(
+            self._TARGET_CTE
+            + """
+            SELECT t.reddit_fullname FROM target t
+            WHERE NOT EXISTS
+              (SELECT 1 FROM lid_results l WHERE l.reddit_fullname = t.reddit_fullname)
+            ORDER BY t.prio DESC, t.n_votes DESC, t.reddit_fullname
+            """,
+            {"pv": prompt_version, "n": int(target)},
+        ).fetchall()
+        return [str(r["reddit_fullname"]) for r in rows]
+
     def missing_tx_sentiment_in_target(self, prompt_version: str, target: int) -> list[str]:
         rows = self._conn.execute(
             self._TARGET_CTE

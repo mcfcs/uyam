@@ -100,6 +100,9 @@ def select(
 @annotate_app.command()
 def lid(
     force: bool = typer.Option(False, help="Recompute all LID results"),
+    target: int | None = typer.Option(
+        None, "--target", help="Only the pipeline target set. " + _TARGET_HELP
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
@@ -109,7 +112,13 @@ def lid(
     from uyam.annotate.lid import run_lid
 
     with AnnotationDatabase(cfg.db_path) as db:
-        stats = run_lid(db, cfg.lid, force=force)
+        stats = run_lid(
+            db,
+            cfg.lid,
+            force=force,
+            target=_resolve_target(cfg, target),
+            prompt_version=cfg.prompt_version,
+        )
     console.print(f"[green]LID[/green] processed {stats['processed']} items")
 
 

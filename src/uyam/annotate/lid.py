@@ -123,12 +123,27 @@ class LanguageIdentifier:
         }
 
 
-def run_lid(db: AnnotationDatabase, cfg: LidConfig, *, force: bool = False) -> dict[str, int]:
-    """Language-identify every eligible candidate missing an LID result."""
+def run_lid(
+    db: AnnotationDatabase,
+    cfg: LidConfig,
+    *,
+    force: bool = False,
+    target: int | None = None,
+    prompt_version: str | None = None,
+) -> dict[str, int]:
+    """Language-identify every eligible candidate missing an LID result.
+
+    With `target`, only the pipeline's N-item target set is covered.
+    """
     if force:
         db.conn.execute("DELETE FROM lid_results")
         db.commit()
-    pending = db.missing_lid()
+    if target is not None:
+        if not prompt_version:
+            raise ValueError("prompt_version is required when target is set")
+        pending = db.missing_lid_in_target(prompt_version, target)
+    else:
+        pending = db.missing_lid()
     if not pending:
         return {"processed": 0}
     identifier = LanguageIdentifier(cfg)

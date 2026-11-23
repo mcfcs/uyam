@@ -58,6 +58,10 @@ def test_target_set_ranks_voted_items_first_then_by_id(tmp_path: Path) -> None:
 
         # Sentiment for the target set only covers those four ids.
         assert set(db.missing_tx_sentiment_in_target(PROMPT_VERSION, 4)) == set(target)
+        # So does LID, and a stored result drops out of it.
+        assert set(db.missing_lid_in_target(PROMPT_VERSION, 4)) == set(target)
+        db.upsert_lid(target[0], {"language": "english", "confidence": 1.0})
+        assert set(db.missing_lid_in_target(PROMPT_VERSION, 4)) == set(target[1:])
 
 
 def test_target_caps_at_eligible_corpus(tmp_path: Path) -> None:
