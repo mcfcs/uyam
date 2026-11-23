@@ -49,7 +49,16 @@ guideline decisions D2, D3 and D5 are open.
 
 ## In progress
 
-Nothing is running. Streamlit runs on 8501 (main) and 8502 (labeling site).
+**v4 pilot STARTED 2026-11-23 11:06 PHT** (Gio's go). Detached orchestrator
+pid 229520, lane job `annotation-v4-run-all-local` (qwen3 → sealion →
+llamasealion, 4,700 items each, local only). Logs: `data/.v4-pipeline.log`
+and `data/.annotate-status/annotation-v4-run-all-local.log`; also visible in
+Annotation → Current annotation runs. ETA about 14 h (SEA-LION is the slow
+one). To resume after a stop, re-run the same command. When it ends:
+`sync-gold`, aggregate, and export v4 with `--config-path
+config/annotation-v4.yaml`, then compare with v3.
+
+Streamlit runs on 8501 (main) and 8502 (labeling site).
 Gio's apps (arbit, manabi/GPT-SoVITS) share the laptop: **don't close
 them**. ComfyUI is closed.
 
@@ -59,9 +68,7 @@ These are also the to-dos in the Streamlit **Reminders** tab
 (`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
 records which ones are done.
 
-1. **Say go for the v4 pilot** (about 14 h of laptop GPU). Agent: run
-   `uyam annotate pipeline --config-path config/annotation-v4.yaml
-   --skip-prep --skip-gold`. Then `sync-gold`, aggregate, and export v4 with
+1. **v4 pilot is running** (started on Gio's go). Agent, when it ends: run `sync-gold`, aggregate, and export v4 with
    the v4 config. Compare with v3 on the same ids and against the gold labels
    (blind and all).
 2. **Label the remaining 187 gold items** (labeling site, port 8502).
