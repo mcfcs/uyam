@@ -249,3 +249,107 @@ def _mirror_rows(
         f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({', '.join('?' for _ in cols)})",
         rows,
     )
+
+
+def fork_subset(
+    src: Path,
+    dst: Path,
+    *,
+    base_prompt_version: str,
+    size: int,
+    seed: int = 13,
+) -> dict[str, Any]:
+    """Fork a stratified subset of a labeled dataset for a re-annotation pilot (v4).
+
+    The target set is every gold item plus a seeded sample of the source's
+    labeled items (aggregates under ``base_prompt_version``), allocated in
+    proportion to calendar month x source sarcasm label x source language
+    (largest remainder), so the subset keeps the source's mix. Every vote,
+    failure and aggregate is dropped: the pilot labels from scratch under its
+    own prompt version. Context snapshots, gold reviews, LID and transformer
+    sentiment carry over. ``src`` is never changed; ``dst`` must not exist.
+    """
+    if dst.exists():
+        raise FileExistsError(f"{dst} already exists; the fork is written once")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True)
+    target = sqlite3.connect(dst)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+
+    with AnnotationDatabase(dst) as db:
+        conn = db.conn
+        pool = {
+            str(r[0]): (str(r[1])[:7], int(r[2]), str(r[3]))
+            for r in conn.execute(
+                """
+                SELECT a.reddit_fullname, ci.created_utc, a.sarcastic_final, a.language_final
+                FROM aggregates a JOIN corpus_index ci ON ci.reddit_fullname = a.reddit_fullname
+                WHERE a.prompt_version = ? AND a.sarcastic_final IS NOT NULL
+                """,
+                (base_prompt_version,),
+            )
+        }
+        gold = sorted(
+            str(r[0])
+            for r in conn.execute("SELECT reddit_fullname FROM review_queue WHERE reason = 'gold'")
+        )
+        rest_n = size - len(gold)
+        if rest_n < 0:
+            raise ValueError(f"size {size} is smaller than the {len(gold)} gold items")
+        strata: dict[tuple[str, int, str], list[str]] = {}
+        for name in sorted(set(pool) - set(gold)):
+            strata.setdefault(pool[name], []).append(name)
+        total = sum(len(v) for v in strata.values())
+        if rest_n > total:
+            raise ValueError(f"size {size} needs {rest_n} non-gold items; the source has {total}")
+        quotas = {k: rest_n * len(v) / total for k, v in strata.items()}
+        alloc = {k: int(q) for k, q in quotas.items()}
+        leftover = rest_n - sum(alloc.values())
+        for k in sorted(quotas, key=lambda k: (alloc[k] - quotas[k], k))[:leftover]:
+            alloc[k] += 1
+        rng = random.Random(seed)
+        drawn: list[str] = []
+        for k in sorted(strata):
+            drawn.extend(rng.sample(strata[k], alloc[k]))
+
+        stats: dict[str, Any] = {
+            "gold": len(gold),
+            "gold_outside_source": sum(1 for g in gold if g not in pool),
+            "sampled": len(drawn),
+            "target_total": len(gold) + len(drawn),
+            "source_items": len(pool),
+            "sampled_sarcastic": sum(pool[f][1] for f in drawn),
+        }
+        stats["dropped_votes"] = conn.execute("DELETE FROM llm_annotations").rowcount
+        conn.execute("DELETE FROM llm_failures")
+        stats["dropped_aggregates"] = conn.execute("DELETE FROM aggregates").rowcount
+        conn.execute("DELETE FROM review_queue WHERE reason = 'low_confidence' AND completed = 0")
+        conn.execute("DELETE FROM target_priority")
+        conn.executemany(
+            "INSERT INTO target_priority (reddit_fullname, priority, reason) VALUES (?, ?, ?)",
+            [(f, BASE_PRIORITY, "gold") for f in gold]
+            + [(f, EXTENSION_PRIORITY, f"subset-{base_prompt_version}") for f in drawn],
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fork_info (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        conn.execute("DELETE FROM fork_info")
+        info = {
+            "source": str(src),
+            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "kind": "subset",
+            "base_prompt_version": base_prompt_version,
+            "size": size,
+            "seed": seed,
+            **stats,
+        }
+        conn.executemany(
+            "INSERT OR REPLACE INTO fork_info (key, value) VALUES (?, ?)",
+            [(k, json.dumps(v)) for k, v in info.items()],
+        )
+        db.commit()
+    return stats

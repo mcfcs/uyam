@@ -142,5 +142,5 @@ def test_prompt_version_drift_is_rejected(tmp_path: Path) -> None:
             db.check_prompt_version(PROMPT_VERSION, "a-different-hash")
 
     cfg.prompt_version = "sarc-v999"
-    with pytest.raises(RuntimeError, match="does not match"):
+    with pytest.raises(RuntimeError, match="matches neither"):
         run_annotator(cfg, "a1", client_factory=lambda c, a: FakeClient())

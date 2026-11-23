@@ -28,12 +28,8 @@ from uyam.annotate.config import AnnotationConfig, AnnotatorConfig
 from uyam.annotate.context import get_or_build_context
 from uyam.annotate.db import AnnotationDatabase
 from uyam.annotate.ollama_client import AnnotationCallError, AnnotationResult
-from uyam.annotate.prompts import (
-    PROMPT_VERSION,
-    SYSTEM_PROMPT,
-    prompt_content_hash,
-    render_user_prompt,
-)
+from uyam.annotate.prompts import PROMPT_VERSION
+from uyam.annotate.prompts_guideline import dataset_prompt_set
 
 logger = logging.getLogger(__name__)
 console = Console()
@@ -66,12 +62,13 @@ def annotation_row(
     endpoint_url: str,
     model_digest: str | None,
     ollama_version: str | None,
+    prompt_version: str = PROMPT_VERSION,
 ) -> dict[str, Any]:
     parsed = result.parsed
     return {
         "reddit_fullname": fullname,
         "model_key": annotator.key,
-        "prompt_version": PROMPT_VERSION,
+        "prompt_version": prompt_version,
         "role": role,
         "language": parsed.language,
         "literal_sentiment": parsed.literal_sentiment,
@@ -96,12 +93,8 @@ def annotation_row(
 
 
 def check_prompt_contract(cfg: AnnotationConfig) -> None:
-    """annotation.yaml and prompts.py must name the same prompt version."""
-    if cfg.prompt_version != PROMPT_VERSION:
-        raise RuntimeError(
-            f"annotation.yaml prompt_version={cfg.prompt_version!r} does not match "
-            f"prompts.PROMPT_VERSION={PROMPT_VERSION!r} — align them before running."
-        )
+    """annotation.yaml must name a prompt version the code defines (raises otherwise)."""
+    dataset_prompt_set(cfg.prompt_version)
 
 
 def make_progress() -> Progress:
@@ -143,30 +136,35 @@ def run_annotator(
     """
     check_prompt_contract(cfg)
     annotator = cfg.annotator(annotator_key)
+    # The instructions follow the config's prompt_version; the context snapshot
+    # is always the sarc-v2 one, so a guideline-prompt dataset sees exactly
+    # what the v1-v3 annotators saw.
+    prompts = dataset_prompt_set(cfg.prompt_version)
+    pv = prompts.version
 
     with AnnotationDatabase(cfg.db_path) as db:
-        db.check_prompt_version(PROMPT_VERSION, prompt_content_hash())
+        db.check_prompt_version(pv, prompts.content_hash)
 
         if retry_failed:
-            cleared = db.clear_failures(annotator.key, PROMPT_VERSION, role)
+            cleared = db.clear_failures(annotator.key, pv, role)
             if cleared:
                 console.print(f"Cleared {cleared} recorded failures for {annotator.key}")
 
         if only_fullname:
             pending = [only_fullname]
         elif role == "adjudicator":
-            pending = db.pending_adjudicator_items(annotator.key, PROMPT_VERSION)
+            pending = db.pending_adjudicator_items(annotator.key, pv)
         elif target is not None:
-            pending = db.pending_target_items(annotator.key, PROMPT_VERSION, target)
+            pending = db.pending_target_items(annotator.key, pv, target)
         else:
-            pending = db.pending_annotator_items(annotator.key, PROMPT_VERSION)
+            pending = db.pending_annotator_items(annotator.key, pv)
         if limit is not None:
             pending = pending[:limit]
 
         stats = {"done": 0, "failed": 0, "skipped": 0}
         if not pending:
             if target is not None and role == "annotator":
-                prog = db.target_progress(PROMPT_VERSION, target, [annotator.key])
+                prog = db.target_progress(pv, target, [annotator.key])
                 mine = prog["models"][annotator.key]
                 if mine["done"] >= prog["in_target"]:
                     console.print(
@@ -190,7 +188,7 @@ def run_annotator(
                 if record is None:
                     continue
                 block, _ = get_or_build_context(db, record, cfg.context, PROMPT_VERSION)
-                prompt = render_user_prompt(block, str(record["record_type"]), str(record["text"]))
+                prompt = prompts.render(block, str(record["record_type"]), str(record["text"]))
                 console.rule(f"{fullname} -> {annotator.model}")
                 console.print(prompt)
             console.print(
@@ -219,13 +217,13 @@ def run_annotator(
                         progress.advance(task)
                         continue
                     block, _ = get_or_build_context(db, record, cfg.context, PROMPT_VERSION)
-                    prompt = render_user_prompt(
+                    prompt = prompts.render(
                         block, str(record["record_type"]), str(record["text"])
                     )
                     try:
-                        result = client.annotate(annotator, SYSTEM_PROMPT, prompt, cfg.options)
+                        result = client.annotate(annotator, prompts.system, prompt, cfg.options)
                     except AnnotationCallError as exc:
-                        db.record_failure(fullname, annotator.key, PROMPT_VERSION, role, str(exc))
+                        db.record_failure(fullname, annotator.key, pv, role, str(exc))
                         stats["failed"] += 1
                         progress.advance(task)
                         continue
@@ -238,6 +236,7 @@ def run_annotator(
                             endpoint_url=cfg.endpoint_url(annotator.endpoint),
                             model_digest=model_digest,
                             ollama_version=ollama_version,
+                            prompt_version=pv,
                         )
                     )
                     stats["done" if inserted else "skipped"] += 1

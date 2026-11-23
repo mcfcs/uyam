@@ -258,11 +258,17 @@ def load_annotation_config(config_path: Path | None = None) -> AnnotationConfig:
 
     evaluators = [_parse_annotator(e) for e in (raw.get("evaluators") or [])]
     _check_evaluator_keys(annotators, adjudicator, evaluators)
+    # Dataset annotators all use the prompt the config's prompt_version names:
+    # guide-* means the guideline prompt (the v4 pilot), anything else sarc-v2.
+    dataset_prompt = (
+        "guideline" if str(raw.get("prompt_version", "")).startswith("guide-") else "sarc-v2"
+    )
     for ann in [*annotators, *([adjudicator] if adjudicator else [])]:
-        if ann.prompt != "sarc-v2":
+        if ann.prompt != dataset_prompt:
             raise ValueError(
-                f"annotator {ann.key!r}: only evaluators may use another prompt "
-                "(the dataset prompt is hash-guarded)"
+                f"annotator {ann.key!r}: prompt {ann.prompt!r} does not match the dataset "
+                f"prompt_version (expects prompt: {dataset_prompt}); only evaluators may "
+                "differ"
             )
     for ev in evaluators:
         if ev.prompt not in {"sarc-v2", "guideline"}:

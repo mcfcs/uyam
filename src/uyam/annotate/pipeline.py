@@ -107,6 +107,16 @@ def _job_name(cfg: AnnotationConfig, name: str) -> str:
     return name if stem == "annotation" else f"{stem}-{name}"
 
 
+def _next_steps_hint(cfg: AnnotationConfig) -> str:
+    """What to run after the pipeline, with this config's --config-path."""
+    opt = f" --config-path {cfg.source_path.as_posix()}" if cfg.source_path is not None else ""
+    return (
+        "Next: label the gold subset in the Streamlit [bold]Annotation Review[/bold] tab, "
+        f"then run [bold]uyam annotate aggregate{opt}[/bold] and "
+        f"[bold]uyam annotate export --version vN{opt}[/bold] (the next unused version)."
+    )
+
+
 def _start_or_adopt(backend: JobBackend, name: str, args: list[str]) -> None:
     if backend.is_running(name):
         console.print(f"[yellow]{name}[/yellow] is already running — adopting it.")
@@ -317,10 +327,6 @@ def run_pipeline(
 
     elapsed = time.time() - t0
     _phase(f"done in {elapsed / 3600:.1f} h")
-    console.print(
-        "Next: label the gold subset in the Streamlit [bold]Annotation Review[/bold] tab, "
-        "then run [bold]uyam annotate aggregate[/bold] and "
-        "[bold]uyam annotate export --version v1[/bold]."
-    )
+    console.print(_next_steps_hint(cfg))
     summary["elapsed_seconds"] = round(elapsed, 1)
     return summary

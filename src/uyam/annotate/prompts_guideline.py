@@ -1,7 +1,10 @@
-"""Guideline-aligned prompt, for EVALUATION ONLY (never the dataset).
+"""Guideline-aligned prompt: evaluators, and the guideline-prompt pilot (v4).
 
-The dataset annotators use the hash-guarded `sarc-v2` prompt (prompts.py),
-written before docs/GUIDELINE.md. Gio's gold labels follow the guideline, so
+The v1-v3 dataset annotators use the hash-guarded `sarc-v2` prompt
+(prompts.py), written before docs/GUIDELINE.md. A dataset whose config sets
+`prompt_version: guide-v1.1` (the v4 pilot) labels with this prompt instead;
+its votes are stored under that version and hash-guarded the same way.
+Gio's gold labels follow the guideline, so
 part of the human-vs-LLM gap is a different definition, not a worse
 annotator. Evaluators configured with `prompt: guideline` use this condensed
 guideline instead, on the gold items, with the same context snapshots, and are
@@ -14,6 +17,19 @@ All examples are made up (the repository is public).
 """
 
 from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+
+from uyam.annotate.prompts import (
+    FEW_SHOTS,
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    USER_TEMPLATE,
+    prompt_content_hash,
+)
+from uyam.annotate.schemas import LLM_OUTPUT_SCHEMA
 
 GUIDE_PROMPT_VERSION = "guide-v1.1"
 
@@ -124,3 +140,49 @@ Answer: {"language": "tagalog", "literal_sentiment": "positive", "cues": \
 "hyperbole": false}, "sarcastic": false, "intended_sentiment": "positive", "confidence": 0.5, \
 "rationale": "Only the unseen image could show a gap; from the text alone it is sincere."}
 """
+
+
+def guide_content_hash() -> str:
+    """Hash of everything that defines the prompt contract for GUIDE_PROMPT_VERSION."""
+    payload = "\n---\n".join(
+        [
+            GUIDE_SYSTEM_PROMPT,
+            GUIDE_FEW_SHOTS,
+            USER_TEMPLATE,
+            json.dumps(LLM_OUTPUT_SCHEMA, sort_keys=True),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PromptSet:
+    """One prompt contract: stored version label, instructions and content hash."""
+
+    version: str
+    system: str
+    few_shots: str
+    content_hash: str
+
+    def render(self, context_block: str, target_type: str, target_text: str) -> str:
+        return USER_TEMPLATE.format(
+            few_shots=self.few_shots,
+            context_block=context_block,
+            target_type=target_type,
+            target_text=target_text,
+        )
+
+
+def dataset_prompt_set(prompt_version: str) -> PromptSet:
+    """The prompt a dataset config's `prompt_version` names (sarc-v2 or guide-v1.1)."""
+    if prompt_version == PROMPT_VERSION:
+        return PromptSet(PROMPT_VERSION, SYSTEM_PROMPT, FEW_SHOTS, prompt_content_hash())
+    if prompt_version == GUIDE_PROMPT_VERSION:
+        return PromptSet(
+            GUIDE_PROMPT_VERSION, GUIDE_SYSTEM_PROMPT, GUIDE_FEW_SHOTS, guide_content_hash()
+        )
+    raise RuntimeError(
+        f"annotation.yaml prompt_version={prompt_version!r} matches neither "
+        f"prompts.PROMPT_VERSION={PROMPT_VERSION!r} nor {GUIDE_PROMPT_VERSION!r}; "
+        "align them before running."
+    )

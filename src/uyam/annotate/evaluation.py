@@ -37,13 +37,14 @@ from uyam.annotate.prompts import (
     FEW_SHOTS,
     PROMPT_VERSION,
     SYSTEM_PROMPT,
-    USER_TEMPLATE,
     prompt_content_hash,
 )
 from uyam.annotate.prompts_guideline import (
     GUIDE_FEW_SHOTS,
     GUIDE_PROMPT_VERSION,
     GUIDE_SYSTEM_PROMPT,
+    dataset_prompt_set,
+    guide_content_hash,
 )
 from uyam.annotate.runner import (
     AnnotatorClient,
@@ -204,7 +205,8 @@ def run_evaluator(
     evaluator = cfg.evaluator(evaluator_key)
     # The context snapshot is always the sarc-v2 one (what the annotators saw);
     # only the instructions differ for a guideline evaluator.
-    label, system_prompt, few_shots = prompt_set(evaluator)
+    label = prompt_set(evaluator)[0]
+    prompts = dataset_prompt_set(label)  # same rendering as a dataset annotator
     stats = {
         "selected": 0,
         "done": 0,
@@ -217,6 +219,8 @@ def run_evaluator(
 
     with AnnotationDatabase(cfg.db_path) as db:
         db.check_prompt_version(PROMPT_VERSION, prompt_content_hash())
+        if label == GUIDE_PROMPT_VERSION:
+            db.check_prompt_version(GUIDE_PROMPT_VERSION, guide_content_hash())
 
         if retry_failed:
             cleared = db.clear_failures(evaluator.key, label, EVALUATOR_ROLE)
@@ -276,14 +280,11 @@ def run_evaluator(
             with progress:
                 task = progress.add_task(evaluator.key, total=len(queue))
                 for fullname, record, context_text in queue:
-                    prompt = USER_TEMPLATE.format(
-                        few_shots=few_shots,
-                        context_block=context_text,
-                        target_type=str(record["record_type"]),
-                        target_text=str(record["text"]),
+                    prompt = prompts.render(
+                        context_text, str(record["record_type"]), str(record["text"])
                     )
                     try:
-                        result = client.annotate(evaluator, system_prompt, prompt, cfg.options)
+                        result = client.annotate(evaluator, prompts.system, prompt, cfg.options)
                     except AnnotationCallError as exc:
                         db.record_failure(
                             fullname, evaluator.key, label, EVALUATOR_ROLE, str(exc)
@@ -510,3 +511,43 @@ def render_eval_markdown(report: dict[str, Any]) -> str:
             f"{fmt_metric(r['agreement'])} | {fmt_metric(r['kappa'])} |"
         )
     return "\n".join(lines) + "\n"
+
+def import_eval_votes(
+    src: Path, dst: Path, *, mapping: dict[str, str], prompt_version: str
+) -> dict[str, int]:
+    """Copy evaluation-only votes from ``src`` into ``dst`` as annotator votes.
+
+    For the v4 pilot: the definition test already labeled the 300 gold items
+    with the guideline prompt and the same models. ``mapping`` is
+    {dst annotator key: src evaluator key}; only ``prompt_version`` rows for
+    items in ``dst``'s target set are copied, and votes ``dst`` already has
+    are kept. The caller checks that model and options match. The source's
+    eval_annotations table is only read, never changed, and ``dst`` must be a
+    different database: evaluation votes never become votes of their own
+    dataset.
+    """
+    if src.resolve() == dst.resolve():
+        raise ValueError("eval votes cannot be imported into their own database")
+    source = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True)
+    source.row_factory = sqlite3.Row
+    stats = {"copied": 0, "already_present": 0}
+    try:
+        with AnnotationDatabase(dst) as db:
+            targets = {
+                str(r[0]) for r in db.conn.execute("SELECT reddit_fullname FROM target_priority")
+            }
+            for annotator_key, evaluator_key in mapping.items():
+                for r in source.execute(
+                    "SELECT * FROM eval_annotations WHERE model_key = ? AND prompt_version = ?",
+                    (evaluator_key, prompt_version),
+                ):
+                    if str(r["reddit_fullname"]) not in targets:
+                        continue
+                    row = dict(r) | {"model_key": annotator_key, "role": "annotator"}
+                    if db.insert_llm_annotation(row):
+                        stats["copied"] += 1
+                    else:
+                        stats["already_present"] += 1
+    finally:
+        source.close()
+    return stats

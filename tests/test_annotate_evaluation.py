@@ -28,6 +28,7 @@ from uyam.annotate.evaluation import (
 from uyam.annotate.export import run_export
 from uyam.annotate.ollama_client import AnnotationCallError
 from uyam.annotate.prompts import PROMPT_VERSION
+from uyam.annotate.prompts_guideline import GUIDE_PROMPT_VERSION
 from uyam.annotate.runner import run_annotator
 from uyam.annotate.schemas import LLMAnnotationOut
 
@@ -514,14 +515,32 @@ def test_guideline_evaluator_uses_its_prompt_and_its_own_label(tmp_path: Path) -
     assert "vs_human_blind_only" in report
 
 
-def test_only_evaluators_may_use_the_guideline_prompt(tmp_path: Path) -> None:
+def test_dataset_annotators_must_use_the_config_prompt(tmp_path: Path) -> None:
+    # A sarc-v2 dataset: one guideline annotator would mix two prompts in one vote.
     bad = _write_yaml(tmp_path).read_text(encoding="utf-8").replace(
         "{key: a1, model: m1, endpoint: local}",
         "{key: a1, model: m1, endpoint: local, prompt: guideline}",
     )
     (tmp_path / "annotation.yaml").write_text(bad, encoding="utf-8")
-    with pytest.raises(ValueError, match="only evaluators may use another prompt"):
+    with pytest.raises(ValueError, match="expects prompt: sarc-v2"):
         load_annotation_config(tmp_path / "annotation.yaml")
+    # A guide-v1.1 dataset (the v4 pilot): every annotator must use the guideline.
+    guide = (
+        _BASE_YAML.format(pv=GUIDE_PROMPT_VERSION)
+        .replace("endpoint: local}", "endpoint: local, prompt: guideline}")
+        .replace("adjudicator: {key: adj, model: madj, endpoint: remote}\n", "")
+        + "aggregation: {sarcasm_rule: majority, tie_break: confidence}\n"
+    )
+    (tmp_path / "annotation.yaml").write_text(guide, encoding="utf-8")
+    with pytest.raises(ValueError, match="expects prompt: guideline"):
+        load_annotation_config(tmp_path / "annotation.yaml")  # a2 is still sarc-v2
+    (tmp_path / "annotation.yaml").write_text(
+        guide.replace("endpoint: remote}", "endpoint: remote, prompt: guideline}"),
+        encoding="utf-8",
+    )
+    cfg = load_annotation_config(tmp_path / "annotation.yaml")
+    assert cfg.prompt_version == GUIDE_PROMPT_VERSION
+    assert {a.prompt for a in cfg.annotators} == {"guideline"}
     path = _write_yaml(
         tmp_path, "evaluators:\n  - {key: e1, model: m, endpoint: local, prompt: v9}\n"
     )

@@ -19,8 +19,16 @@ from uyam.annotate.candidates import select_candidates
 from uyam.annotate.config import AggregationConfig, load_annotation_config
 from uyam.annotate.corpus import index_corpus
 from uyam.annotate.db import AnnotationDatabase
-from uyam.annotate.fork import fork_for_reannotation, parse_extend, sync_gold
-from uyam.annotate.prompts import PROMPT_VERSION
+from uyam.annotate.evaluation import import_eval_votes, insert_eval_annotation
+from uyam.annotate.fork import fork_for_reannotation, fork_subset, parse_extend, sync_gold
+from uyam.annotate.prompts import PROMPT_VERSION, SYSTEM_PROMPT
+from uyam.annotate.prompts_guideline import (
+    GUIDE_FEW_SHOTS,
+    GUIDE_PROMPT_VERSION,
+    GUIDE_SYSTEM_PROMPT,
+    dataset_prompt_set,
+)
+from uyam.annotate.runner import run_annotator
 
 V3 = AggregationConfig(sarcasm_rule="majority", tie_break="confidence")
 
@@ -163,6 +171,30 @@ def test_the_repo_v3_config_loads_with_an_equal_size_local_lineup() -> None:
     assert {a.endpoint for a in cfg.annotators} == {"local"}
     assert cfg.db_path.name == "annotation-v3.sqlite3"
     assert "remote" not in cfg.endpoints
+
+
+def test_the_repo_v4_config_is_the_v3_lineup_on_the_guideline_prompt() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    v3 = load_annotation_config(repo / "config" / "annotation-v3.yaml")
+    v4 = load_annotation_config(repo / "config" / "annotation-v4.yaml")
+    assert v4.prompt_version == GUIDE_PROMPT_VERSION
+    assert {a.prompt for a in v4.annotators} == {"guideline"}
+    same = [(a.key, a.model, a.think, a.merge_system_prompt) for a in v4.annotators]
+    assert same == [(a.key, a.model, a.think, a.merge_system_prompt) for a in v3.annotators]
+    assert v4.options == v3.options and v4.context == v3.context
+    assert v4.aggregation == V3 and v4.adjudicator is None
+    assert {a.endpoint for a in v4.annotators} == {"local"} and "remote" not in v4.endpoints
+    assert v4.db_path.name == "annotation-v4.sqlite3"
+    assert v4.pipeline.target_items == 5000
+    # The definition-test evaluators it reuses votes from match it exactly.
+    main = load_annotation_config(repo / "config" / "annotation.yaml")
+    pairs = {"qwen3": "qwen3-guide", "sealion": "sealion-guide", "llamasealion": "llama-guide"}
+    for ann_key, ev_key in pairs.items():
+        ann, ev = v4.annotator(ann_key), main.evaluator(ev_key)
+        assert (ann.model, ann.think, ann.merge_system_prompt, ann.prompt) == (
+            ev.model, ev.think, ev.merge_system_prompt, ev.prompt
+        )
+    assert main.options == v4.options
 
 
 # ---------------------------------------------------------------------------
@@ -393,3 +425,196 @@ def test_default_config_jobs_keep_their_names(tmp_path: Path) -> None:
     loaded = load_annotation_config(_write_config(tmp_path, aggregation={
         "sarcasm_rule": "majority", "tie_break": "confidence"}))
     assert loaded.source_path == (tmp_path / "annotation.yaml").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Guideline-prompt datasets (the v4 pilot)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingClient:
+    """Answers every call with a fixed label and keeps the prompts it saw."""
+
+    def __init__(self) -> None:
+        from tests.test_annotate_runner import FakeClient
+
+        self._fake = FakeClient()
+        self.calls: list[tuple[str, str]] = []
+
+    def annotate(self, annotator: Any, system_prompt: str, user_prompt: str, opts: Any) -> Any:
+        self.calls.append((system_prompt, user_prompt))
+        return self._fake.annotate(annotator, system_prompt, user_prompt, opts)
+
+    def server_version(self) -> str | None:
+        return None
+
+    def model_digest(self, model: str) -> str | None:
+        return None
+
+
+def test_guideline_dataset_labels_with_the_guideline_and_the_sarc_v2_context(
+    tmp_path: Path,
+) -> None:
+    cfg = _source(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        contexts_before = db.conn.execute(
+            "SELECT reddit_fullname, prompt_version, context_text FROM contexts ORDER BY 1"
+        ).fetchall()
+        sarc_votes = db.conn.execute(
+            "SELECT COUNT(*) FROM llm_annotations WHERE prompt_version = ?", (PROMPT_VERSION,)
+        ).fetchone()[0]
+    guide = dataclasses.replace(cfg, prompt_version=GUIDE_PROMPT_VERSION)
+    client = _RecordingClient()
+
+    stats = run_annotator(guide, "a1", target=3, client_factory=lambda c, a: client)
+    assert stats["done"] == 3
+    assert {system for system, _ in client.calls} == {GUIDE_SYSTEM_PROMPT}
+    assert all(GUIDE_FEW_SHOTS in user for _, user in client.calls)
+    assert all(SYSTEM_PROMPT not in system for system, _ in client.calls)
+    with AnnotationDatabase(cfg.db_path) as db:
+        rows = db.conn.execute(
+            "SELECT prompt_version, COUNT(*) FROM llm_annotations GROUP BY 1"
+        ).fetchall()
+        counts = {str(r[0]): int(r[1]) for r in rows}
+        assert counts[GUIDE_PROMPT_VERSION] == 3
+        assert counts[PROMPT_VERSION] == sarc_votes  # sarc-v2 votes untouched
+        # The context snapshots are reused as they are, never rebuilt or re-keyed.
+        contexts_after = db.conn.execute(
+            "SELECT reddit_fullname, prompt_version, context_text FROM contexts ORDER BY 1"
+        ).fetchall()
+        assert [tuple(r) for r in contexts_after][: len(contexts_before)] == [
+            tuple(r) for r in contexts_before
+        ]
+        assert {str(r[1]) for r in contexts_after} <= {PROMPT_VERSION}
+        hashes = {
+            str(r[0]): str(r[1])
+            for r in db.conn.execute("SELECT prompt_version, content_hash FROM prompt_versions")
+        }
+    assert hashes[GUIDE_PROMPT_VERSION] == dataset_prompt_set(GUIDE_PROMPT_VERSION).content_hash
+    # Its target set counts only guide-v1.1 votes: a2 still has all 3 to do.
+    with AnnotationDatabase(cfg.db_path) as db:
+        assert len(db.pending_target_items("a2", GUIDE_PROMPT_VERSION, 3)) == 3
+
+
+def test_guideline_prompt_hash_is_guarded(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.check_prompt_version(GUIDE_PROMPT_VERSION, "0" * 64)  # an older guideline text
+    guide = dataclasses.replace(cfg, prompt_version=GUIDE_PROMPT_VERSION)
+    with pytest.raises(RuntimeError, match="Prompt content changed"):
+        run_annotator(guide, "a1", target=1, client_factory=lambda c, a: _RecordingClient())
+
+
+def test_unknown_prompt_version_is_refused(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    with pytest.raises(RuntimeError, match="matches neither"):
+        run_annotator(
+            dataclasses.replace(cfg, prompt_version="sarc-v9"),
+            "a1",
+            target=1,
+            client_factory=lambda c, a: _RecordingClient(),
+        )
+
+
+def _target(path: Path) -> list[tuple[str, int, str]]:
+    conn = sqlite3.connect(path)
+    try:
+        rows = conn.execute(
+            "SELECT reddit_fullname, priority, reason FROM target_priority ORDER BY 1"
+        ).fetchall()
+        return [(str(r[0]), int(r[1]), str(r[2])) for r in rows]
+    finally:
+        conn.close()
+
+
+def test_fork_subset_keeps_all_gold_samples_the_rest_and_drops_every_vote(
+    tmp_path: Path,
+) -> None:
+    cfg = _source(tmp_path)
+    before = _snapshot(cfg.db_path)
+    dst = tmp_path / "v4.sqlite3"
+    stats = fork_subset(cfg.db_path, dst, base_prompt_version=PROMPT_VERSION, size=4, seed=13)
+    assert _snapshot(cfg.db_path) == before  # the source is untouched
+    assert stats["gold"] == 1 and stats["sampled"] == 3 and stats["target_total"] == 4
+    target = _target(dst)
+    assert ("t1_c2", 2, "gold") in target
+    assert len(target) == 4
+    labeled = {"t1_c1", "t1_c3", "t1_c4", "t1_c5", "t3_sub1"}
+    assert {f for f, prio, _ in target if prio == 1} <= labeled  # only source-labeled items
+    after = _snapshot(dst)
+    assert after["llm_annotations"] == 0 and after["aggregates"] == 0  # labels from scratch
+    assert after["human_reviews"] == before["human_reviews"]  # gold labels carry over
+
+    # Same seed, same subset; the whole source when size covers it.
+    fork_subset(cfg.db_path, tmp_path / "v4b.sqlite3", base_prompt_version=PROMPT_VERSION,
+                size=4, seed=13)
+    assert _target(tmp_path / "v4b.sqlite3") == target
+    full = fork_subset(cfg.db_path, tmp_path / "v4c.sqlite3",
+                       base_prompt_version=PROMPT_VERSION, size=6)
+    assert full["sampled"] == 5 and full["sampled_sarcastic"] == 1
+
+
+def test_fork_subset_refuses_impossible_sizes(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    with pytest.raises(ValueError, match="needs 6 non-gold items"):
+        fork_subset(cfg.db_path, tmp_path / "a.sqlite3", base_prompt_version=PROMPT_VERSION,
+                    size=7)
+    with pytest.raises(ValueError, match="smaller than the 1 gold"):
+        fork_subset(cfg.db_path, tmp_path / "b.sqlite3", base_prompt_version=PROMPT_VERSION,
+                    size=0)
+
+
+def test_import_eval_votes_reuses_gold_votes_in_a_separate_pilot_db(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        for fullname in ("t1_c2", "t1_jun0"):  # a gold item, and one outside the pilot
+            row = _ann(fullname, "e1-guide", sarcastic=1) | {
+                "prompt_version": GUIDE_PROMPT_VERSION
+            }
+            assert insert_eval_annotation(db, row)
+        # A sarc-v2 eval vote must not be picked up for a guide-v1.1 pilot.
+        assert insert_eval_annotation(db, _ann("t1_c2", "e1-guide"))
+        eval_before = db.conn.execute("SELECT COUNT(*) FROM eval_annotations").fetchone()[0]
+    dst = tmp_path / "v4.sqlite3"
+    fork_subset(cfg.db_path, dst, base_prompt_version=PROMPT_VERSION, size=3)
+
+    with pytest.raises(ValueError, match="their own database"):
+        import_eval_votes(cfg.db_path, cfg.db_path, mapping={"a1": "e1-guide"},
+                          prompt_version=GUIDE_PROMPT_VERSION)
+    stats = import_eval_votes(cfg.db_path, dst, mapping={"a1": "e1-guide"},
+                              prompt_version=GUIDE_PROMPT_VERSION)
+    assert stats == {"copied": 1, "already_present": 0}
+    with AnnotationDatabase(dst) as db:
+        rows = db.conn.execute(
+            "SELECT reddit_fullname, model_key, role, prompt_version, sarcastic "
+            "FROM llm_annotations"
+        ).fetchall()
+        assert [tuple(r) for r in rows] == [
+            ("t1_c2", "a1", "annotator", GUIDE_PROMPT_VERSION, 1)
+        ]
+        # The pilot's a1 queue skips the imported item.
+        assert "t1_c2" not in db.pending_target_items("a1", GUIDE_PROMPT_VERSION, 3)
+    with AnnotationDatabase(cfg.db_path) as db:
+        assert db.conn.execute("SELECT COUNT(*) FROM eval_annotations").fetchone()[0] == (
+            eval_before
+        )
+        # Nothing reached the source's own votes.
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM llm_annotations WHERE prompt_version = ?",
+            (GUIDE_PROMPT_VERSION,),
+        ).fetchone()[0] == 0
+    again = import_eval_votes(cfg.db_path, dst, mapping={"a1": "e1-guide"},
+                              prompt_version=GUIDE_PROMPT_VERSION)
+    assert again == {"copied": 0, "already_present": 1}
+
+
+def test_pipeline_next_steps_name_the_config_and_no_fixed_version(tmp_path: Path) -> None:
+    from uyam.annotate.pipeline import _next_steps_hint
+
+    cfg = load_annotation_config(
+        _write_config(tmp_path, aggregation={"sarcasm_rule": "majority", "tie_break": "confidence"})
+    )
+    hint = _next_steps_hint(cfg)
+    assert "--version v1" not in hint
+    assert f"aggregate --config-path {cfg.source_path.as_posix()}" in hint
+

@@ -463,6 +463,69 @@ def fork(
         console.print(f"[yellow]Short months (not enough items):[/yellow] {short}")
 
 
+@annotate_app.command(name="fork-subset")
+def fork_subset_cmd(
+    to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),
+    size: int = typer.Option(5000, help="Items in the subset, gold items included"),
+    seed: int = typer.Option(13, help="Seed for the stratified sample"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Fork a stratified subset (all gold + a sample) of a labeled dataset for a pilot (v4)."""
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.fork import fork_subset
+
+    stats = fork_subset(
+        cfg.db_path, to, base_prompt_version=cfg.prompt_version, size=size, seed=seed
+    )
+    console.print(
+        f"[green]Forked subset[/green] {cfg.db_path.name} -> {to}: {stats['gold']} gold + "
+        f"{stats['sampled']} sampled ({stats['sampled_sarcastic']} labeled sarcastic in the "
+        f"source) = target set {stats['target_total']}; dropped {stats['dropped_votes']} "
+        "votes (the pilot labels from scratch)."
+    )
+
+
+@annotate_app.command(name="import-eval-votes")
+def import_eval_votes_cmd(
+    source: Path = typer.Option(
+        Path("data/db/annotation.sqlite3"), "--from", help="Database holding the eval votes"
+    ),
+    source_config: Path | None = typer.Option(
+        None, "--from-config", help="Config that defines the evaluators (default config)"
+    ),
+    pair: list[str] = typer.Option(
+        ..., "--map", help="annotator=evaluator, e.g. qwen3=qwen3-guide (repeat)"
+    ),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Reuse evaluation-only votes as annotator votes when model, prompt and options match."""
+    cfg = load_annotation_config(config_path)
+    src_cfg = load_annotation_config(source_config)
+    from uyam.annotate.evaluation import import_eval_votes, prompt_set
+
+    mapping: dict[str, str] = {}
+    for spec in pair:
+        ann_key, _, ev_key = spec.partition("=")
+        ann, ev = cfg.annotator(ann_key), src_cfg.evaluator(ev_key)
+        same = (ann.model, ann.think, ann.merge_system_prompt) == (
+            ev.model,
+            ev.think,
+            ev.merge_system_prompt,
+        )
+        if not same or prompt_set(ev)[0] != cfg.prompt_version:
+            raise typer.BadParameter(f"{spec}: model, settings or prompt version differ")
+        mapping[ann_key] = ev_key
+    if cfg.options != src_cfg.options:
+        raise typer.BadParameter("the two configs use different decoding options")
+    stats = import_eval_votes(
+        source, cfg.db_path, mapping=mapping, prompt_version=cfg.prompt_version
+    )
+    console.print(
+        f"[green]Imported[/green] {stats['copied']} eval votes into {cfg.db_path.name} "
+        f"({stats['already_present']} already there)."
+    )
+
+
 @annotate_app.command(name="sync-gold")
 def sync_gold_cmd(
     source: Path = typer.Option(

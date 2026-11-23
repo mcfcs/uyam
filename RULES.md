@@ -120,6 +120,8 @@ replacing it:
 | Raw JSONL rewrites split records on newlines only (never U+2028/U+2029/U+0085) and keep every untouched line byte-identical | `test_retag_calendar_walk.py` |
 | Evaluation-only votes (eval_annotations) never reach aggregation, target sets, agreement or export | `test_annotate_evaluation.py` |
 | Gold sync into a fork reads the source read-only, refuses mismatched gold queues, and never touches votes or the target set | `test_annotate_v3.py` |
+| A guideline-prompt dataset (v4) labels with its own hash-guarded prompt over the unchanged sarc-v2 context snapshots and never touches sarc-v2 votes | `test_annotate_v3.py` |
+| Eval votes become dataset votes only by an explicit import into a *separate* database, for items in its target set; the source eval table is never changed | `test_annotate_v3.py` |
 | Re-tagging changes only the date-keyword records, backs up first, keeps other lines byte-identical | `test_retag_calendar_walk.py` |
 | The dataset card is strict JSON (no NaN) | `test_annotate_export.py` |
 | Every exported row carries media_context (post type + unseen-media flags) and the card reports it per slice | `test_media_context.py` |
