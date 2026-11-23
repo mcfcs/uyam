@@ -463,6 +463,33 @@ def fork(
         console.print(f"[yellow]Short months (not enough items):[/yellow] {short}")
 
 
+@annotate_app.command(name="sync-gold")
+def sync_gold_cmd(
+    source: Path = typer.Option(
+        Path("data/db/annotation.sqlite3"), "--from", help="Database Gio labels gold in"
+    ),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Copy gold reviews, queue state and assist suggestions into a fork (back it up first)."""
+    cfg = load_annotation_config(config_path)
+    if source.resolve() == cfg.db_path.resolve():
+        raise typer.BadParameter("--from is the configured database itself")
+    from uyam.annotate.fork import sync_gold
+
+    stats = sync_gold(source, cfg.db_path)
+    console.print(
+        f"[green]Synced gold[/green] {source.name} -> {cfg.db_path.name}: "
+        f"{stats['reviews_added']} reviews added, {stats['reviews_updated']} updated, "
+        f"{stats['reviews_unchanged']} unchanged; {stats['gold_completed']} gold items done; "
+        f"{stats['assist_copied']} assist suggestions copied."
+    )
+    if stats["dst_only_reviews"]:
+        console.print(
+            f"[yellow]{stats['dst_only_reviews']} gold reviews exist only in "
+            f"{cfg.db_path.name}[/yellow] (outside the shared gold queue; left as is)"
+        )
+
+
 @annotate_app.command(name="gold-sample")
 def gold_sample(
     size: int | None = typer.Option(None, help="Sample size (default: annotation.yaml gold_size)"),

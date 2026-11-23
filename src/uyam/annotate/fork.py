@@ -156,3 +156,96 @@ def fork_for_reannotation(
         )
         db.commit()
     return stats
+
+
+def sync_gold(src: Path, dst: Path) -> dict[str, int]:
+    """Mirror the human side of the gold set from ``src`` into a fork ``dst``.
+
+    Gio labels gold items in the main database (the labeling site writes
+    there), so a fork falls behind as he works. This copies, for the gold
+    items both databases share, the human reviews, the queue's completed flag
+    and the assist suggestions. It never touches votes, aggregates or the
+    target set, and ``src`` is opened read-only. Safe to re-run.
+    """
+    source = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True)
+    try:
+        src_gold = {
+            str(r[0])
+            for r in source.execute(
+                "SELECT reddit_fullname FROM review_queue WHERE reason = 'gold'"
+            )
+        }
+        with AnnotationDatabase(dst) as db:
+            conn = db.conn
+            dst_gold = {
+                str(r[0])
+                for r in conn.execute(
+                    "SELECT reddit_fullname FROM review_queue WHERE reason = 'gold'"
+                )
+            }
+            if src_gold != dst_gold:
+                raise ValueError(
+                    f"gold queues differ ({len(src_gold - dst_gold)} only in {src.name}, "
+                    f"{len(dst_gold - src_gold)} only in {dst.name}); redraw one to match first"
+                )
+            stats = {"reviews_added": 0, "reviews_updated": 0, "reviews_unchanged": 0}
+            _mirror_rows(source, conn, "human_reviews", dst_gold, stats, "is_gold = 1")
+            assist = {"reviews_added": 0, "reviews_updated": 0, "reviews_unchanged": 0}
+            _mirror_rows(source, conn, "assist_suggestions", dst_gold, assist, "1 = 1")
+            stats["assist_copied"] = assist["reviews_added"] + assist["reviews_updated"]
+            done = [
+                (int(r[1]), str(r[0]))
+                for r in source.execute(
+                    "SELECT reddit_fullname, completed FROM review_queue WHERE reason = 'gold'"
+                )
+            ]
+            conn.executemany(
+                "UPDATE review_queue SET completed = ? WHERE reddit_fullname = ? "
+                "AND reason = 'gold'",
+                done,
+            )
+            stats["gold_completed"] = sum(c for c, _ in done)
+            stats["dst_only_reviews"] = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM human_reviews WHERE is_gold = 1 AND reddit_fullname "
+                    f"NOT IN ({','.join('?' for _ in dst_gold) or 'NULL'})",
+                    sorted(dst_gold),
+                ).fetchone()[0]
+            )
+            db.commit()
+    finally:
+        source.close()
+    return stats
+
+
+def _mirror_rows(
+    source: sqlite3.Connection,
+    conn: sqlite3.Connection,
+    table: str,
+    keep: set[str],
+    stats: dict[str, int],
+    where: str,
+) -> None:
+    """INSERT OR REPLACE ``table`` rows for ``keep`` ids, on the shared columns."""
+    src_cols = [str(r[1]) for r in source.execute(f"PRAGMA table_info({table})")]
+    dst_cols = {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})")}
+    cols = [c for c in src_cols if c in dst_cols]
+    col_sql = ", ".join(cols)
+    key = cols.index("reddit_fullname")
+    current = {str(r[key]): tuple(r) for r in conn.execute(f"SELECT {col_sql} FROM {table}")}
+    rows = []
+    for r in source.execute(f"SELECT {col_sql} FROM {table} WHERE {where}"):
+        row = tuple(r)
+        name = str(row[key])
+        if name not in keep:
+            continue
+        old = current.get(name)
+        if old == row:
+            stats["reviews_unchanged"] += 1
+            continue
+        stats["reviews_updated" if old is not None else "reviews_added"] += 1
+        rows.append(row)
+    conn.executemany(
+        f"INSERT OR REPLACE INTO {table} ({col_sql}) VALUES ({', '.join('?' for _ in cols)})",
+        rows,
+    )

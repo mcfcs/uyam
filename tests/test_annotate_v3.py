@@ -19,7 +19,7 @@ from uyam.annotate.candidates import select_candidates
 from uyam.annotate.config import AggregationConfig, load_annotation_config
 from uyam.annotate.corpus import index_corpus
 from uyam.annotate.db import AnnotationDatabase
-from uyam.annotate.fork import fork_for_reannotation, parse_extend
+from uyam.annotate.fork import fork_for_reannotation, parse_extend, sync_gold
 from uyam.annotate.prompts import PROMPT_VERSION
 
 V3 = AggregationConfig(sarcasm_rule="majority", tie_break="confidence")
@@ -264,6 +264,70 @@ def test_fork_refuses_to_overwrite(tmp_path: Path) -> None:
             cfg.db_path, dst, prompt_version=PROMPT_VERSION, keep_annotators=["a1"], extend={}
         )
     assert dst.read_bytes() == b"existing"
+
+
+def test_sync_gold_copies_new_reviews_and_never_touches_votes(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.enqueue_review("t1_c4", "gold")
+        db.commit()
+    dst = tmp_path / "v3.sqlite3"
+    fork_for_reannotation(
+        cfg.db_path, dst, prompt_version=PROMPT_VERSION, keep_annotators=["a1"], extend={}
+    )
+    with AnnotationDatabase(dst) as db:
+        votes_before = db.conn.execute("SELECT COUNT(*) FROM llm_annotations").fetchone()[0]
+        target_before = db.conn.execute("SELECT COUNT(*) FROM target_priority").fetchone()[0]
+    src_before = _snapshot(cfg.db_path)
+    # Gio keeps labeling in the main DB after the fork: one new, one revised review.
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.upsert_human_review(
+            {"reddit_fullname": "t1_c4", "sarcastic": 1, "is_gold": 1, "notes": "new"}
+        )
+        db.upsert_human_review(
+            {"reddit_fullname": "t1_c2", "sarcastic": 1, "is_gold": 1, "notes": "revised"}
+        )
+        db.conn.execute("UPDATE review_queue SET completed = 1")
+        db.conn.execute(
+            "INSERT INTO assist_suggestions (reddit_fullname, source, sarcastic, created_at) "
+            "VALUES ('t1_c4', 'claude-code:test', 1, '2026-11-23T00:00:00Z')"
+        )
+        db.commit()
+    src_after = _snapshot(cfg.db_path)
+
+    stats = sync_gold(cfg.db_path, dst)
+    assert _snapshot(cfg.db_path) == src_after  # the source is read-only
+    assert src_after["human_reviews"] == src_before["human_reviews"] + 1
+    assert stats["reviews_added"] == 1 and stats["reviews_updated"] == 1
+    assert stats["gold_completed"] == 2 and stats["assist_copied"] == 1
+    with AnnotationDatabase(dst) as db:
+        new = db.get_human_review("t1_c4")
+        old = db.get_human_review("t1_c2")
+        assert new is not None and new["sarcastic"] == 1 and new["notes"] == "new"
+        assert old is not None and old["notes"] == "revised"
+        assert db.conn.execute("SELECT COUNT(*) FROM llm_annotations").fetchone()[0] == votes_before
+        n_target = db.conn.execute("SELECT COUNT(*) FROM target_priority").fetchone()[0]
+        assert n_target == target_before
+        assert db.conn.execute(
+            "SELECT COUNT(*) FROM review_queue WHERE completed = 1"
+        ).fetchone()[0] == 2
+
+    again = sync_gold(cfg.db_path, dst)  # re-running is a no-op
+    assert again["reviews_added"] == again["reviews_updated"] == 0
+    assert again["reviews_unchanged"] == 2 and again["assist_copied"] == 0
+
+
+def test_sync_gold_refuses_different_gold_queues(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    dst = tmp_path / "v3.sqlite3"
+    fork_for_reannotation(
+        cfg.db_path, dst, prompt_version=PROMPT_VERSION, keep_annotators=["a1"], extend={}
+    )
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.enqueue_review("t1_c5", "gold")
+        db.commit()
+    with pytest.raises(ValueError, match="gold queues differ"):
+        sync_gold(cfg.db_path, dst)
 
 
 def test_target_priority_survives_reselect(tmp_path: Path) -> None:

@@ -119,6 +119,7 @@ replacing it:
 | Assist suggestions never render before the reviewer's first save unless the reviewer turns on the upfront toggle, and a save made with it showing is recorded (assist_before_first_pass); first_pass_json is never replaced; every gold score (κ, eval-report, LID accuracy) uses the first pass and leaves out items whose votes were shown before it (votes_seen) | `test_annotate_review_ui.py`, `test_annotate_export.py` |
 | Raw JSONL rewrites split records on newlines only (never U+2028/U+2029/U+0085) and keep every untouched line byte-identical | `test_retag_calendar_walk.py` |
 | Evaluation-only votes (eval_annotations) never reach aggregation, target sets, agreement or export | `test_annotate_evaluation.py` |
+| Gold sync into a fork reads the source read-only, refuses mismatched gold queues, and never touches votes or the target set | `test_annotate_v3.py` |
 | Re-tagging changes only the date-keyword records, backs up first, keeps other lines byte-identical | `test_retag_calendar_walk.py` |
 | The dataset card is strict JSON (no NaN) | `test_annotate_export.py` |
 | Every exported row carries media_context (post type + unseen-media flags) and the card reports it per slice | `test_media_context.py` |
