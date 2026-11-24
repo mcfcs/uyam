@@ -810,6 +810,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
 
 (
     tab_reminders,
+    tab_progress,
     tab_collect,
     tab_proxies,
     tab_data,
@@ -827,6 +828,7 @@ except Exception:  # noqa: BLE001 - a broken reminders file must not take the ap
     on_change="rerun",
     tabs=[
         _reminders_label,
+        "Progress notes",
         "Collection",
         "Proxies",
         "Data Browser",
@@ -849,6 +851,18 @@ with tab_reminders:
             render_reminders_tab(REMINDERS_CONFIG, REMINDERS_STATE, DATA_DIR)
         except Exception as exc:  # noqa: BLE001 - keep the collector UI alive
             st.error(f"Reminders unavailable: {exc}")
+
+# ===========================================================================
+# Progress notes (consultation / defense notes; live figures are read-only)
+# ===========================================================================
+with tab_progress:
+    if tab_progress.open:
+        try:
+            from uyam.progress_notes_ui import render_progress_notes
+
+            render_progress_notes(DATA_DIR)
+        except Exception as exc:  # noqa: BLE001 - keep the rest of the app alive
+            st.error(f"Progress notes unavailable: {exc}")
 
 # ===========================================================================
 # Proxies (view / test / replace proxies.txt; backups in data/proxy-backups/)
