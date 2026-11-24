@@ -51,7 +51,22 @@ guideline decisions D2, D3 and D5 are open.
 
 ## In progress
 
-Nothing is running. Streamlit runs on 8501 (main) and 8502 (labeling site).
+**dataset-v5 run STARTED 2026-11-24 19:50 PHT** (Gio's "go v5"). It's
+detached: PowerShell pid 164172 runs `data/.v5-run.ps1` (stage 1
+`--target 16362`, then stage 2 `--target 21000`). Lane job
+`annotation-v5-run-all-local` (qwen3 → sealion → llamasealion), local only.
+Logs: `data/.v5-run.log` (UTF-16) and
+`data/.annotate-status/annotation-v5-run-all-local.log`; also visible in
+Annotation → Current annotation runs.
+- ETA at 10.6 s per item across the three models: stage 1 is 11,362 items,
+  about 33 h (around Thu 26 Nov 05:00); stage 2 is 4,638 items, about 14 h
+  (around Thu 26 Nov 19:00).
+- After stage 1 (optional early cut) or stage 2: `sync-gold`, aggregate, and
+  `export --version v5 --config-path config/annotation-v5.yaml`. Language for
+  analysis is `aux.lid.language_rule` (already computed for all 21,000).
+- To resume after a stop, re-run the script; finished items are skipped.
+
+Streamlit runs on 8501 (main) and 8502 (labeling site).
 Gio's apps (arbit, manabi/GPT-SoVITS) share the laptop: **don't close
 them**. ComfyUI is closed.
 
@@ -111,6 +126,30 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-24 (late night) — dataset-v5 started; gold-assist decision
+
+**Decisions (Gio):**
+- "go v5": the guideline-prompt dataset at v3's size, with the same
+  prompt, models and majority vote as the v4 pilot.
+- **The remaining 187 gold items may be labeled with the Claude toggle on,
+  and they count as his gold labels.** The code needs no change: assisted
+  first passes already count in the main gold κ (ALL). The
+  `assist_before_first_pass` flag is still recorded truthfully, so the
+  blind-only view stays available as a sensitivity check. It is not the
+  primary number.
+
+**Done:**
+- `7289dbe`: `fork-extend` (copies the pilot, keeps its votes, and stages the
+  target set: gold 4, pilot 3, v1/v2 posts 2, new months 1) and
+  `config/annotation-v5.yaml`. Tests: 428 → 430.
+- `data/db/annotation-v5.sqlite3` built from v4 (5,000 kept, 300 gold) plus
+  v3's targets: 11,362 first-stage and 4,638 later. `language_rule` computed
+  for all 21,000. The dry run showed the guideline prompt.
+- Run started (see *In progress*).
+
+**Not done:** leische's `gold_queue` export flag (§5e.4) waits on Gio's go.
+It fits best with the v5 export.
 
 ### 2026-11-24 (night) — leische's exploratory initial-vs-current comparison
 

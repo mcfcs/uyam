@@ -364,6 +364,16 @@ reminders:
       the language that uses it more. No LLM. Say yes and an agent installs it,
       re-scores the rule against your gold once, and re-exports if it helps.
 
+  - id: v5-export-and-send-2026-11
+    section: Annotation
+    title: After the v5 run (around Thu 26 Nov) - export v5 and send it to leische
+    details: >
+      dataset-v5 (guideline prompt, 21,000 posts) started 2026-11-24 19:50 on the
+      laptop. Stage 1 (the 15,000 v1/v2 posts) is due around Thu 05:00, stage 2
+      around Thu 19:00. Then an agent syncs gold, aggregates and exports v5 (ask
+      for the gold_queue flag leische wanted at the same time), and you send it to
+      phillmyeol and give leische the go for training (~20 GPU-h, around your games).
+
   - id: media-context-v2-to-leische-2026-11
     section: Handoff to leische
     title: Send media_context-v2.jsonl to the leische machine (small file)

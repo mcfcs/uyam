@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-24 (evening), uyam `74c4bb1`+ (plus this file's commit)
+- **Last updated:** 2026-11-24 (late night), uyam `7289dbe`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -40,6 +40,17 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   - The corpus dump holds 352,176 records.
   - **leische doesn't have v3 yet** (Gio sends the bundle). Like v2, keep
     v3 figures out of the manuscript until leische has results on it.
+- **`dataset-v5` is being annotated (started 2026-11-24 19:50, Gio's go):**
+  the guideline-prompt setup of the v4 pilot (same prompt `guide-v1.1`, same
+  three equal-size models, majority vote) at v3's 21,000 posts. The 5,000
+  pilot items keep their votes. Stage 1 finishes the 15,000 v1/v2 posts
+  (around Thu 26 Nov 05:00); stage 2 adds 4,638 new-month posts (around Thu
+  19:00). Language for analysis: `aux.lid.language_rule`. Gio's plan is for
+  it to be the final dataset, with v3 as the fallback. Nothing to quote yet.
+- **Gold-label decision (Gio, 2026-11-24):** first passes made with the
+  Claude suggestion showing count as his gold labels (the primary κ, "all").
+  The flag is still recorded, and the blind-only κ stays a reported
+  sensitivity check.
 - **`dataset-v4` pilot is done and exported (2026-11-24, card
   `dataset_card-v4.json`; a pilot, not a training set to send).** 5,000
   items (all 300 gold + 4,700 v3 items stratified by month × v3 label × v3
@@ -500,6 +511,12 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-24 (late night)**: dataset-v5 annotation started (the
+  guideline-prompt dataset at 21,000 posts; ~47 h on the laptop). Gio's
+  decision: Claude-assisted first passes are his gold labels (primary κ);
+  the blind-only κ is a sensitivity check. leische's exploratory comparison
+  (LEISCHE_LATEST §5d) motivated the run: the current setup's context model
+  agrees with the gold better than the initial one (+0.195 F1, exploratory).
 - **2026-11-24 (late afternoon)**: the rule-based language now tags words
   with English and Filipino word-frequency lists (`wordfreq`, installed with
   Gio's OK; `L-rules-v2`). Against the gold: κ 0.84 (91%), Tagalog 7/11
