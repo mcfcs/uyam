@@ -162,6 +162,13 @@ Gold progress, agreement and v5 progress are live and read-only
 numbers change (v5 export, leische results), update the prose there.**
 Tests: 430 → 437.
 
+**2026-11-25 02:50:** Gio said 8501 wasn't really loading, though its health
+endpoint answered in ~0.01 s, so the main app's page work is slow, not the
+server. `57402c0` puts the notes on the light **8502** site as a second,
+lazy tab ("Progress notes"); labeling still runs only the review page. 8502
+was restarted. Open question: why 8501 loads slowly for Gio (startup work
+or tab bodies). Not investigated yet.
+
 ### 2026-11-24 (night) — leische's exploratory initial-vs-current comparison
 
 **leische (LEISCHE_LATEST 2026-11-24 night, leische `0a995e3`, §5d/§5e):**
