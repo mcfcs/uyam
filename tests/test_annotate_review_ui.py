@@ -529,7 +529,7 @@ def test_upfront_flag_is_kept_on_revision_and_counted_in_kappa(tmp_path: Path) -
         assert result["sarcastic_blind_only"] is None
 
 
-def test_label_site_renders_only_the_review_page(
+def test_label_site_runs_only_the_review_page_until_notes_are_opened(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config_yaml, _ = _setup(tmp_path, {"t1_c3": "gold"}, assists=())
@@ -540,8 +540,11 @@ def test_label_site_renders_only_the_review_page(
     at = AppTest.from_file(str(app), default_timeout=30)
     at.run()
     assert not at.exception
-    assert not at.tabs  # no other tabs: nothing else runs on a click
+    assert [t.label for t in at.tabs] == ["Gold labeling", "Progress notes"]
     assert "Wow ang galing naman" in _rendered_text(at)  # the queue's item is on screen
+    # The notes tab is lazy: its page doesn't run while labeling.
+    assert not [h for h in at.header if h.value == "Progress notes"]
+    assert "Gold labeled" not in [m.label for m in at.metric]  # the notes' first metric
 
 
 # ---------------------------------------------------------------------------
