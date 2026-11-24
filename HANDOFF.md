@@ -151,6 +151,17 @@ still covers everything up to ~2 days ago.
 **Not done:** leische's `gold_queue` export flag (§5e.4) waits on Gio's go.
 It fits best with the v5 export.
 
+**Later:** `7a08f9b` adds a **Progress notes** tab (second tab on 8501) for
+Gio's consultation and defense. Its 11 sections cover: adviser items, Arctic
+Shift collection, annotators and before-vs-now agreement with the gold, the
+5 dataset versions, data usage, media flags, model results with leische's
+exploratory comparison, the routing plan, the gold set, next steps with
+expected results, and likely panel questions. It has 8 Graphviz diagrams.
+Gold progress, agreement and v5 progress are live and read-only
+(`progress_notes.py`); the prose lives in `progress_notes_ui.py`. **When
+numbers change (v5 export, leische results), update the prose there.**
+Tests: 430 → 437.
+
 ### 2026-11-24 (night) — leische's exploratory initial-vs-current comparison
 
 **leische (LEISCHE_LATEST 2026-11-24 night, leische `0a995e3`, §5d/§5e):**
