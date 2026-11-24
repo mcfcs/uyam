@@ -372,7 +372,9 @@ reminders:
       §9.1). data/annotated/media_context-v2.jsonl (3 MB) lets leische report
       results on the text-only slice of v2 now. Send it the same way as the
       bundle (Taildrop, or copy it), then point the leische chat at UYAM_LATEST
-      §9. v3's export will carry the flag inline.
+      §9. v3's export will carry the flag inline. Since 2026-11-24 the app has a
+      download for it: Annotation tab -> section 3 -> Side files. Put it at
+      data/incoming-v2/media_context-v2.jsonl on the leische machine.
 
   - id: leische-adviser-items-2026-11
     section: Adviser items (meeting Wed 2026-11-25)

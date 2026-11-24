@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-24 (late afternoon), uyam `8e63f08`+ (plus this file's commit)
+- **Last updated:** 2026-11-24 (evening), uyam `74c4bb1`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -453,6 +453,12 @@ these requests reach them without uyam editing their repos.
   Judge it on the text-only slice and the gold labels, because sarcasm is
   ~2× more common under image posts and the tag could be a shortcut. See
   docs/dataset-contract-leische.md.
+  **Status 2026-11-24: leische doesn't have `media_context-v2.jsonl` yet.**
+  Gio downloads it from the uyam app (Annotation tab → section 3 → *Side
+  files*) and copies it to the leische machine at
+  `data/incoming-v2/media_context-v2.jsonl`. It holds 15,000 lines of
+  `{reddit_fullname, media_context}` with no text, and it is never committed
+  to any repo. It joins on `reddit_fullname` with v1 and v2 (same ids).
 
 ### 9.1 Media the model never sees (found 2026-11-22)
 
