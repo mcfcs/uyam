@@ -140,6 +140,11 @@ rows and sarcastic counts from its own card); the 8501 app was restarted.
 Gio said leische doesn't have `media_context-v2.jsonl`. The same section now
 offers it under *Side files* (`list_side_files`). It is never committed to
 tsis or any repo (RULES §5.11); UYAM_LATEST §9 has the status.
+Gio asked to commit the downloads to tsis. I declined (RULES §5.11, ethics
+storage, files over 100 MB) and offered Taildrop. **The leische computer is
+`phillmyeol` (100.102.10.69), the gaming PC.** Sent by Taildrop:
+`uyam-dataset-v3.zip` (sha256 9dbefa9f…) and `media_context-v2.jsonl`
+(a6627cac…). Gio has the full A/B/C/D/D0 comparison prompt for leische.
 
 ### 2026-11-24 (afternoon) — rule-based language field; v4 bundle for a smoke retrain
 
