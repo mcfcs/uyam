@@ -133,6 +133,11 @@ still covers everything up to ~2 days ago.
 **Left open:** the rule still calls 4 of 11 Tagalog gold items Taglish. Any
 more tuning needs a separate language dev set, not the gold.
 
+**Later:** Gio downloaded the v4 bundle to the leische machine and has the
+smoke-test prompt for the leische chat. `74c4bb1` adds a bundle picker to the
+Annotation tab's download (every `uyam-dataset-*.zip`, newest first, with
+rows and sarcastic counts from its own card); the 8501 app was restarted.
+
 ### 2026-11-24 (afternoon) — rule-based language field; v4 bundle for a smoke retrain
 
 **Context (Gio):** asked whether language can be redone for v4, and about
