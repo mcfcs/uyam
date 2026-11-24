@@ -404,3 +404,33 @@ def test_latest_bundle_picks_the_newest_zip(tmp_path: Path) -> None:
         os.utime(path, (mtime, mtime))
     (tmp_path / "uyam-dataset-v3.zip.tmp").write_bytes(b"partial")  # never offered
     assert latest_bundle(tmp_path) == new
+
+
+def test_list_bundles_and_bundle_info_for_the_download_picker(tmp_path: Path) -> None:
+    import os
+    import zipfile
+
+    from uyam.annotate.export import bundle_info, list_bundles
+
+    assert list_bundles(tmp_path) == []
+    specs = (("v2", 1_000_000, 15000, 1601), ("v4", 3_000_000, 5000, 1104))
+    for version, mtime, rows, positives in specs:
+        path = tmp_path / f"uyam-dataset-{version}.zip"
+        card = {"counts": {"exported_rows": rows}, "readiness": {"sarcastic_positives": positives}}
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr(f"dataset_card-{version}.json", json.dumps(card))
+            zf.writestr("dataset_card.json", json.dumps({}))  # the unversioned copy is ignored
+        os.utime(path, (mtime, mtime))
+    broken = tmp_path / "uyam-dataset-v3.zip"
+    broken.write_bytes(b"not a zip")
+    os.utime(broken, (2_000_000, 2_000_000))
+    (tmp_path / "uyam-dataset-v5.zip.tmp").write_bytes(b"partial")  # never offered
+
+    assert [p.name for p in list_bundles(tmp_path)] == [
+        "uyam-dataset-v4.zip", "uyam-dataset-v3.zip", "uyam-dataset-v2.zip"
+    ]
+    v4 = bundle_info(tmp_path / "uyam-dataset-v4.zip")
+    assert (v4["version"], v4["rows"], v4["sarcastic"]) == ("v4", 5000, 1104)
+    v3 = bundle_info(broken)  # still listed, just without counts
+    assert v3["version"] == "v3" and v3["rows"] is None and v3["sarcastic"] is None
+

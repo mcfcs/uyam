@@ -568,14 +568,49 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def list_bundles(out_dir: Path) -> list[Path]:
+    """Every finished uyam-dataset-*.zip in out_dir, newest first."""
+    bundles = [p for p in out_dir.glob("uyam-dataset-*.zip") if p.is_file()]
+    return sorted(bundles, key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+
+
 def latest_bundle(out_dir: Path) -> Path | None:
     """The most recently written uyam-dataset-*.zip in out_dir, or None.
 
     Lets the app offer the bundle to any browser (e.g. the leische machine over
     Tailscale), not only to the session that ran the export.
     """
-    bundles = [p for p in out_dir.glob("uyam-dataset-*.zip") if p.is_file()]
-    return max(bundles, key=lambda p: p.stat().st_mtime) if bundles else None
+    bundles = list_bundles(out_dir)
+    return bundles[0] if bundles else None
+
+
+def bundle_info(path: Path) -> dict[str, Any]:
+    """Version, size, time and the card's row/positive counts of one bundle.
+
+    The counts come from the versioned card inside the zip, so the picker shows
+    what will actually be downloaded. A zip without a readable card still
+    lists, with None counts.
+    """
+    stat = path.stat()
+    version = path.stem.removeprefix("uyam-dataset-")
+    info: dict[str, Any] = {
+        "version": version,
+        "size_mb": round(stat.st_size / 1e6, 1),
+        "modified": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+        "rows": None,
+        "sarcastic": None,
+    }
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = set(zf.namelist())
+            member = f"dataset_card-{version}.json"
+            member = member if member in names else "dataset_card.json"
+            card = json.loads(zf.read(member).decode("utf-8"))
+    except (KeyError, OSError, ValueError, zipfile.BadZipFile):
+        return info
+    info["rows"] = (card.get("counts") or {}).get("exported_rows")
+    info["sarcastic"] = (card.get("readiness") or {}).get("sarcastic_positives")
+    return info
 
 
 def write_bundle(out_dir: Path, dataset_version: str, members: Sequence[Path]) -> Path:

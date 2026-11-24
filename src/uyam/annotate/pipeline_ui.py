@@ -362,25 +362,48 @@ def _render_export_download(out_dir: Path) -> None:
     downloads the bundle straight onto that device — nothing has to be copied
     off this box by hand. Without an export in this browser session (the
     export ran from the CLI or another browser), the newest bundle on disk is
-    offered.
+    offered. A picker lists every bundle on disk (v2, v3, v4, ...), newest
+    first, with the row and sarcastic counts from its own card.
     """
-    from uyam.annotate.export import latest_bundle
+    from uyam.annotate.export import bundle_info, list_bundles
 
     result = st.session_state.get("export_result")
+    just_exported: Path | None = None
     if result:
         st.json(result, expanded=False)
         zip_str = result.get("zip")
-        zip_path = Path(zip_str) if zip_str else None
-        if zip_path is None or not zip_path.exists():
+        just_exported = Path(zip_str) if zip_str else None
+        if just_exported is None or not just_exported.exists():
             st.warning("Bundle missing — re-run the export.")
-            return
-    else:
-        zip_path = latest_bundle(out_dir)
-        if zip_path is None:
-            return
+            just_exported = None
+    bundles = list_bundles(out_dir)
+    if not bundles:
+        return
+    infos = {str(p): bundle_info(p) for p in bundles}
+
+    def _label(key: str) -> str:
+        i = infos[key]
+        counts = (
+            f" · {i['rows']:,} rows, {i['sarcastic']:,} sarcastic"
+            if i["rows"] is not None and i["sarcastic"] is not None
+            else ""
+        )
+        return f"{i['version']} · {i['size_mb']} MB · {i['modified']}{counts}"
+
+    keys = list(infos)
+    default = keys.index(str(just_exported)) if str(just_exported) in infos else 0
+    choice = st.selectbox(
+        "Bundle to download",
+        keys,
+        index=default,
+        format_func=_label,
+        key="export_bundle_choice",
+        help="Every uyam-dataset-*.zip in the export folder, newest first.",
+    )
+    zip_path = Path(choice)
     stat = zip_path.stat()
     st.download_button(
-        f"Download bundle (.zip, {stat.st_size / 1e6:.1f} MB)",
+        f"Download {zip_path.name} ({stat.st_size / 1e6:.1f} MB)",
         data=_bundle_bytes(str(zip_path), stat.st_size, stat.st_mtime),
         file_name=zip_path.name,
         mime="application/zip",
