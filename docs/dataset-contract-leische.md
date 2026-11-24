@@ -162,12 +162,15 @@ Auxiliary signals (`aux`):
   - `language_rule` / `rule_version` (v3 and v4 re-exports, 2026-11-24): the
     guideline's L2–L4b rules on the same token tags (laughter and internet
     tokens aren't counted; a lone particle keeps the main language; repeats
-    count). The card reports `language_rule_vs_human_gold` (accuracy and κ).
-    On the gold set it gets English right 48/49 and Taglish 44/51, but
-    Tagalog only 1/11: the token tagger reads many Tagalog content words as
-    English, so it almost never says `tagalog` (200 of 21,000 v3 rows). Use
-    it to separate English from not-English. Don't use it for Tagalog yet.
-    No label changed; `labels.language` is still the ensemble's.
+    count). Words are tagged with wordfreq's English and Filipino frequency
+    lists (Tagalog if ≥10× more frequent in Filipino), and fastText decides
+    only words neither list knows (`rule_version` `L-rules-v2`). The card
+    reports `language_rule_vs_human_gold`: on the 111 gold items, κ 0.84 (91%;
+    English 46/49, Taglish 48/51, Tagalog 7/11), against 0.28 for the v3
+    ensemble and 0.08 for the v4 ensemble. **Recommended language label for
+    per-language analyses.** No label changed; `labels.language` is still the
+    ensemble's. v3: English 6,537, Tagalog 1,217, Taglish 13,246; the
+    smallest language × sarcasm cell is Tagalog-sarcastic, 360.
 
 `context` — see §5. `provenance` — `prompt_version`, `dataset_version`.
 

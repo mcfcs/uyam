@@ -112,6 +112,27 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-24 (late afternoon) — Tagalog fix for the rule-based language
+
+**Context (Gio):** "yes, try to fix the Tagalog LID, may download".
+
+**Done:**
+- `pip install wordfreq` (3.1.1; it has `small_en` and `small_fil`).
+- One-shot evaluation with the 10× threshold set a priori: κ 0.71 → 0.84,
+  accuracy 84% → 91%, English 48 → 46/49, Taglish 44 → 48/51, Tagalog
+  1 → 7/11. No tuning on the gold.
+- `8e63f08`: `lexicon_language()` and `LanguageIdentifier.rule_tags()`
+  (`L-rules-v2`; falls back to v1 without wordfreq). wordfreq added to the
+  `annotate` extras. Tests: 417 → 426.
+- Backups (`*-pre-lrule2.bak.sqlite3`); `--refresh-rule` for v3 (21,000)
+  and v4 (5,000); both re-exported. Labels unchanged, checksums OK, all rows
+  `L-rules-v2`.
+- v3 rule language: English 6,537, Tagalog 1,217, Taglish 13,246. The
+  smallest cell is Tagalog-sarcastic, 360. v4: 1,549 / 290 / 3,161.
+
+**Left open:** the rule still calls 4 of 11 Tagalog gold items Taglish. Any
+more tuning needs a separate language dev set, not the gold.
+
 ### 2026-11-24 (afternoon) — rule-based language field; v4 bundle for a smoke retrain
 
 **Context (Gio):** asked whether language can be redone for v4, and about

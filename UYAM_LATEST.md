@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-24 (afternoon), uyam `520df28`+ (plus this file's commit)
+- **Last updated:** 2026-11-24 (late afternoon), uyam `8e63f08`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -434,8 +434,8 @@ these requests reach them without uyam editing their repos.
   schema as v3). Please run one short condition on it (1 fold, a few epochs)
   to check that the loader and training work. It is a pilot, so don't report
   its numbers as results. Its `labels.language` is unreliable (κ 0.08 vs the
-  gold). For language slices use `aux.lid.language_rule` for English vs
-  not-English, and nothing for Tagalog yet (see the contract).
+  gold). For language slices use `aux.lid.language_rule` (κ 0.84 vs the
+  gold; see the contract).
 - **To leische (2026-11-23): `dataset-v3` exists** (the adviser's
   equal-size, majority-vote re-annotation; 21,000 rows). Gio will send the
   bundle. Its schema is v2's, plus inline `media_context` and the card's
@@ -494,6 +494,13 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-24 (late afternoon)**: the rule-based language now tags words
+  with English and Filipino word-frequency lists (`wordfreq`, installed with
+  Gio's OK; `L-rules-v2`). Against the gold: κ 0.84 (91%), Tagalog 7/11
+  (was 1/11). v3 and v4 were re-exported with labels unchanged. v3 by rule
+  language: English 6,537 / Tagalog 1,217 / Taglish 13,246 (the LLM labels
+  said 3,621 / 3,971 / 13,408). For the thesis, the rule-based language is
+  the better per-language label (κ 0.84 vs 0.28 for the v3 ensemble).
 - **2026-11-24 (afternoon)**: a rule-based language field
   (`aux.lid.language_rule`, the guideline's L-rules on the fastText tokens)
   was added to the v3 and v4 exports. No labels changed. Against the gold:
