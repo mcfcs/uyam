@@ -112,6 +112,29 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-24 (night) — leische's exploratory initial-vs-current comparison
+
+**leische (LEISCHE_LATEST 2026-11-24 night, leische `0a995e3`, §5d/§5e):**
+30 trainings (A v1 / B v2 / C v3 on v1 posts / D0 v3 on v4 posts / D v4;
+text-only and conv+temp; 3 seeds; fold 0; gold held out), scored on Gio's
+gold (111 items, 11 +; blind 32, 6 +).
+- A→D, context model: F1 0.158 → 0.353 (+0.195 [+0.042, +0.350]), κ 0.03 →
+  0.25. Exploratory; 1 of 16 step tests.
+- B→C (equal-size + majority), text-only: +0.188 [+0.065, +0.313]. Recall vs
+  Gio goes 0.15 → 0.67, precision 0.11 → 0.21: v1-trained models missed most
+  of Gio's positives.
+- D0→D (guideline prompt): clears zero only on blind (+0.19 / +0.22).
+- A→B (more history): +0.09 F1 for the context model (CI spans zero); Δκ
+  +0.121 clears zero. The noise floor is about 0.06–0.10 F1.
+- 9 of Gio's 11 gold positives are media-dependent; the text-only slice has
+  2 positives.
+- **Request to uyam (§5e.4):** flag all 300 gold-queue rows in the export
+  (`gold_queue: true`) so leische can hold out the unlabeled 187 too. Not
+  done yet; offered to Gio (needs a re-export and a re-send).
+- leische's view: labels are a bigger lever than corpus size; a full
+  guideline re-annotation looks worth doing; more blind gold positives
+  matter most.
+
 ### 2026-11-24 (late afternoon) — Tagalog fix for the rule-based language
 
 **Context (Gio):** "yes, try to fix the Tagalog LID, may download".
