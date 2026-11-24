@@ -574,6 +574,15 @@ def list_bundles(out_dir: Path) -> list[Path]:
     return sorted(bundles, key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
 
 
+def list_side_files(out_dir: Path) -> list[Path]:
+    """Per-row side files shipped outside a bundle (media_context-v2.jsonl, ...).
+
+    v2 was exported before rows carried media_context inline, so its flags
+    live in a separate file that leische joins on reddit_fullname.
+    """
+    return sorted(p for p in out_dir.glob("media_context-*.jsonl") if p.is_file())
+
+
 def latest_bundle(out_dir: Path) -> Path | None:
     """The most recently written uyam-dataset-*.zip in out_dir, or None.
 

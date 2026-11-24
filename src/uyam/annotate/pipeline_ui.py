@@ -365,7 +365,7 @@ def _render_export_download(out_dir: Path) -> None:
     offered. A picker lists every bundle on disk (v2, v3, v4, ...), newest
     first, with the row and sarcastic counts from its own card.
     """
-    from uyam.annotate.export import bundle_info, list_bundles
+    from uyam.annotate.export import bundle_info, list_bundles, list_side_files
 
     result = st.session_state.get("export_result")
     just_exported: Path | None = None
@@ -415,6 +415,21 @@ def _render_export_download(out_dir: Path) -> None:
         "http://<tailscale-ip>:8501 from the leische machine to land it there. "
         f"Also on disk at {zip_path}. Verify after transfer with `sha256sum -c SHA256SUMS.txt`."
     )
+    side_files = list_side_files(out_dir)
+    if side_files:
+        st.caption(
+            "Side files (not in any bundle): v2's per-row media flags. v3 and later "
+            "carry media_context inline."
+        )
+        for side in side_files:
+            side_stat = side.stat()
+            st.download_button(
+                f"Download {side.name} ({side_stat.st_size / 1e6:.1f} MB)",
+                data=_bundle_bytes(str(side), side_stat.st_size, side_stat.st_mtime),
+                file_name=side.name,
+                mime="application/jsonl",
+                key=f"side_file_{side.name}",
+            )
 
 
 def render_annotation_tab(config_path: Path | None = None) -> None:

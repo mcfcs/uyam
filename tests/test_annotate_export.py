@@ -434,3 +434,13 @@ def test_list_bundles_and_bundle_info_for_the_download_picker(tmp_path: Path) ->
     v3 = bundle_info(broken)  # still listed, just without counts
     assert v3["version"] == "v3" and v3["rows"] is None and v3["sarcastic"] is None
 
+
+def test_list_side_files_offers_media_context_only(tmp_path: Path) -> None:
+    from uyam.annotate.export import list_side_files
+
+    assert list_side_files(tmp_path) == []
+    (tmp_path / "media_context-v2.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "dataset-v2.jsonl").write_text("{}\n", encoding="utf-8")  # in the bundle
+    (tmp_path / "uyam-dataset-v2.zip").write_bytes(b"zip")
+    assert [p.name for p in list_side_files(tmp_path)] == ["media_context-v2.jsonl"]
+
