@@ -345,6 +345,25 @@ reminders:
       prompt (guide-v1.2) or language from v3/LID, a new pilot, then ~2-3 days of
       laptop GPU. Numbers in UYAM_LATEST (top).
 
+  - id: send-v4-smoke-to-leische-2026-11
+    section: Handoff to leische
+    title: Send the v4 pilot bundle to leische for a retrain smoke test
+    details: >
+      data/annotated/uyam-dataset-v4.zip (5,000 rows, guideline-prompt labels, with
+      the new rule-based language field). Same transfer as v3; the request to the
+      leische chat is in UYAM_LATEST section 9 (1 fold, a few epochs, numbers not
+      reported).
+
+  - id: approve-wordfreq-tagger-2026-11
+    section: Annotation
+    title: OK to install wordfreq for the Tagalog fix in the language rule?
+    details: >
+      The rule-based language gets English right (48/49 gold) but Tagalog only 1/11:
+      fastText reads common Tagalog words as English. wordfreq (pip, ~57 MB, no
+      model) has English and Filipino word-frequency lists to tag each word by
+      the language that uses it more. No LLM. Say yes and an agent installs it,
+      re-scores the rule against your gold once, and re-exports if it helps.
+
   - id: media-context-v2-to-leische-2026-11
     section: Handoff to leische
     title: Send media_context-v2.jsonl to the leische machine (small file)

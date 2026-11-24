@@ -159,6 +159,15 @@ Auxiliary signals (`aux`):
   reports `lid_vs_ensemble_language` and, once gold labels exist,
   `lid_vs_human_gold_language` accuracy. Each annotator's own language vote
   is in `reliability.annotators[].language`.
+  - `language_rule` / `rule_version` (v3 and v4 re-exports, 2026-11-24): the
+    guideline's L2–L4b rules on the same token tags (laughter and internet
+    tokens aren't counted; a lone particle keeps the main language; repeats
+    count). The card reports `language_rule_vs_human_gold` (accuracy and κ).
+    On the gold set it gets English right 48/49 and Taglish 44/51, but
+    Tagalog only 1/11: the token tagger reads many Tagalog content words as
+    English, so it almost never says `tagalog` (200 of 21,000 v3 rows). Use
+    it to separate English from not-English. Don't use it for Tagalog yet.
+    No label changed; `labels.language` is still the ensemble's.
 
 `context` — see §5. `provenance` — `prompt_version`, `dataset_version`.
 

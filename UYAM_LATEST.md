@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-24, uyam `93619ea`+ (plus this file's commit)
+- **Last updated:** 2026-11-24 (afternoon), uyam `520df28`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -429,6 +429,13 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-24): a retrain smoke test on `dataset-v4`.** Gio
+  will send `uyam-dataset-v4.zip` (5,000 rows, guideline-prompt labels, same
+  schema as v3). Please run one short condition on it (1 fold, a few epochs)
+  to check that the loader and training work. It is a pilot, so don't report
+  its numbers as results. Its `labels.language` is unreliable (κ 0.08 vs the
+  gold). For language slices use `aux.lid.language_rule` for English vs
+  not-English, and nothing for Tagalog yet (see the contract).
 - **To leische (2026-11-23): `dataset-v3` exists** (the adviser's
   equal-size, majority-vote re-annotation; 21,000 rows). Gio will send the
   bundle. Its schema is v2's, plus inline `media_context` and the card's
@@ -487,6 +494,15 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-24 (afternoon)**: a rule-based language field
+  (`aux.lid.language_rule`, the guideline's L-rules on the fastText tokens)
+  was added to the v3 and v4 exports. No labels changed. Against the gold:
+  κ 0.71 (84%), compared with v3 models 0.28, v4 models 0.08 and the plain
+  detector 0.57. It is right on English (48/49) but nearly never says
+  Tagalog (1/11 on gold, 200 of 21,000 v3 rows), because the tagger reads
+  Tagalog words as English. The proposed fix is an English/Filipino
+  word-frequency tagger (`wordfreq`; installing it needs Gio's OK). leische
+  is asked to run a smoke retrain on v4.
 - **2026-11-24**: v4 pilot finished and exported (5,000 items, guideline
   prompt). Sarcasm κ vs the gold doubles (0.24 → 0.48; blind 0.18 → 0.64).
   Inter-model agreement falls (0.40 → 0.26), and the language label breaks

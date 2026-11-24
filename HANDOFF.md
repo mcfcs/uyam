@@ -112,6 +112,33 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-24 (afternoon) — rule-based language field; v4 bundle for a smoke retrain
+
+**Context (Gio):** asked whether language can be redone for v4, and about
+v4's next steps. His choices: the language fix only, no new LLM run; send v4
+to leische for a retrain smoke test.
+
+**Done:**
+- `520df28`: `lid_results.language_rule` and `rule_version` (GUIDELINE
+  L2–L4b on the fastText token tags), `annotate lid --refresh-rule`,
+  `aux.lid.language_rule` in the export, and `language_rule_vs_human_gold`
+  in the card. Tests: 406 → 417.
+- Backups (`*-pre-lrule.bak.sqlite3`), then the rule was computed for v3
+  (21,000) and v4 (5,000). v3 and v4 were re-exported: labels unchanged
+  (4,011 / 1,104 sarcastic), bundle checksums OK.
+- Result on the gold: κ 0.71, 84%. English 48/49, Taglish 44/51, **Tagalog
+  1/11**. The rule says `tagalog` for only 200 of 21,000 v3 rows, because
+  the tagger takes the first of en/tl in fastText's top 5, and fastText ranks
+  English first for common Tagalog words.
+- A request to leische for a v4 smoke retrain (UYAM_LATEST §9); contract
+  updated.
+
+**Blocked:** `pip install wordfreq`, for an English/Filipino word-frequency
+tagger (it has `small_en` and `small_fil` lists). Auto mode denied it, so
+it needs Gio's OK. Plan: tag each token by the higher zipf frequency
+(en vs fil), keep fastText as the fallback, bump to `L-rules-v2`, and score
+it once against the gold without tuning.
+
 ### 2026-11-24 — v4 pilot finished, exported and compared with v3
 
 **Context (Gio):** "what's the current update".
