@@ -6,13 +6,17 @@ only when >= mono_threshold (default 0.9) of its alphabetic tokens are that
 language, otherwise taglish. A Filipino function-word list backstops fastText,
 which is unreliable on short, informal single tokens.
 
-`language_rule` (2026-11-24) applies docs/GUIDELINE.md L2-L4b to the same
-token tags: laughter and internet tokens are not counted, a lone function
-word from the other language keeps the main language (L4), repeats count
-(L4b), and otherwise the 90% rule applies (L3). The LLM language votes
-under the guideline prompt called most English targets Taglish (v4 pilot:
-kappa 0.08 vs the gold); this rule scored kappa 0.71 on the same items. The
-plain `language` field is kept unchanged for v1-v3 comparability.
+`language_rule` (2026-11-24) applies docs/GUIDELINE.md L2-L4b: laughter and
+internet tokens are not counted, a lone function word from the other
+language keeps the main language (L4), repeats count (L4b), and otherwise
+the 90% rule applies (L3). Its token tags come from wordfreq's English and
+Filipino frequency lists (L-rules-v2): a word is Tagalog when it is at least
+10x more frequent in Filipino than in English, else English, and fastText
+only decides words neither list knows. fastText alone ranks English above
+Tagalog for common Tagalog words (L-rules-v1 got 1/11 Tagalog gold items;
+v2 gets 7/11, kappa 0.84 overall). The LLM language votes under the
+guideline prompt called most English targets Taglish (v4 pilot: kappa 0.08).
+The plain `language` field is kept unchanged for v1-v3 comparability.
 
 Uses fasttext-predict (prediction-only wheel that installs on Windows py3.11;
 the official fasttext package needs an MSVC source build).
@@ -22,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +35,13 @@ from uyam.annotate.db import AnnotationDatabase
 
 logger = logging.getLogger(__name__)
 
-RULE_VERSION = "L-rules-v1"
+RULE_VERSION = "L-rules-v2"  # wordfreq token tags
+RULE_VERSION_NO_LEXICON = "L-rules-v1"  # fastText token tags (wordfreq not installed)
+# A word is Tagalog when its Filipino zipf frequency is at least this much
+# higher than its English one (1.0 = 10x more frequent). Set a priori, not
+# fitted to the gold labels.
+_FIL_MARGIN = 1.0
+_MIN_ZIPF = 1.0  # below this in both lists, the lists don't know the word
 
 LID_MODEL_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
 
@@ -81,6 +92,24 @@ _NOT_COUNTED_RE = re.compile(
 )
 
 
+def lexicon_language(word: str, zipf: Callable[[str, str], float]) -> str | None:
+    """"tl" / "en" from en vs fil word frequencies; None when neither list knows it.
+
+    Filipino corpora use many English loanwords at English-like rates ("bag",
+    "birthday"), so a word only counts as Tagalog when it is clearly more
+    Filipino (10x); English loanwords stay English, as the guideline wants.
+    """
+    low = word.lower()
+    if low in _TL_FUNCTION_WORDS:
+        return "tl"
+    if low in _EN_FUNCTION_WORDS:
+        return "en"
+    en, fil = zipf(low, "en"), zipf(low, "fil")
+    if max(en, fil) < _MIN_ZIPF:
+        return None
+    return "tl" if fil - en >= _FIL_MARGIN else "en"
+
+
 def rule_language(tagged: list[tuple[str, str]]) -> str | None:
     """GUIDELINE L2-L4b on (token, "en" | "tl" | "other") tags; None if nothing counts.
 
@@ -114,6 +143,13 @@ class LanguageIdentifier:
         self._model = fasttext.load_model(str(ensure_lid_model(cfg.model_path)))
         self._threshold = cfg.mono_threshold
         self._model_name = cfg.model_path.name
+        self._zipf: Callable[[str, str], float] | None
+        try:
+            from wordfreq import zipf_frequency
+        except ImportError:  # optional: the rule falls back to fastText tags
+            self._zipf = None
+        else:
+            self._zipf = zipf_frequency
 
     def _predict_label(self, text: str, k: int = 1) -> list[tuple[str, float]]:
         labels, probs = self._model.predict(text.replace("\n", " "), k=k)
@@ -136,6 +172,17 @@ class LanguageIdentifier:
 
     def tag_tokens(self, text: str) -> list[tuple[str, str]]:
         return [(token, self._token_language(token)) for token in _TOKEN_RE.findall(text)]
+
+    def rule_tags(self, text: str) -> tuple[list[tuple[str, str]], str]:
+        """Token tags for `language_rule` and the rule version they imply."""
+        zipf = self._zipf
+        if zipf is None:
+            return self.tag_tokens(text), RULE_VERSION_NO_LEXICON
+        tags = [
+            (token, lexicon_language(token, zipf) or self._token_language(token))
+            for token in _TOKEN_RE.findall(text)
+        ]
+        return tags, RULE_VERSION
 
     def identify(self, text: str) -> dict[str, Any]:
         preds = self._predict_label(text, k=1)
@@ -160,10 +207,11 @@ class LanguageIdentifier:
         else:
             language = "taglish"
 
+        rule_tagged, rule_version = self.rule_tags(text)
         return {
             "language": language,
-            "language_rule": rule_language(tagged) or language,
-            "rule_version": RULE_VERSION,
+            "language_rule": rule_language(rule_tagged) or language,
+            "rule_version": rule_version,
             "en_ratio": round(en_ratio, 4),
             "tl_ratio": round(tl_ratio, 4),
             "other_ratio": round(other_ratio, 4),
@@ -245,8 +293,8 @@ def refresh_language_rule(
         lid = db.conn.execute(
             "SELECT language FROM lid_results WHERE reddit_fullname = ?", (fullname,)
         ).fetchone()
-        tagged = identifier.tag_tokens(str(record["text"]))
-        db.set_language_rule(fullname, rule_language(tagged) or str(lid[0]), RULE_VERSION)
+        tagged, rule_version = identifier.rule_tags(str(record["text"]))
+        db.set_language_rule(fullname, rule_language(tagged) or str(lid[0]), rule_version)
         processed += 1
         if processed % 500 == 0:
             db.commit()

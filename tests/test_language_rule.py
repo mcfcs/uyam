@@ -13,7 +13,12 @@ from uyam.annotate.aggregate import _language_rule_vs_human_gold
 from uyam.annotate.candidates import select_candidates
 from uyam.annotate.corpus import index_corpus
 from uyam.annotate.db import AnnotationDatabase
-from uyam.annotate.lid import RULE_VERSION, refresh_language_rule, rule_language
+from uyam.annotate.lid import (
+    RULE_VERSION,
+    lexicon_language,
+    refresh_language_rule,
+    rule_language,
+)
 from uyam.annotate.prompts import PROMPT_VERSION
 
 
@@ -54,11 +59,12 @@ class _FakeIdentifier:
     def __init__(self, cfg: Any) -> None:
         pass
 
-    def tag_tokens(self, text: str) -> list[tuple[str, str]]:
-        return [
+    def rule_tags(self, text: str) -> tuple[list[tuple[str, str]], str]:
+        tags = [
             (tok, "tl" if tok.lower() in lid_module._TL_FUNCTION_WORDS else "en")
             for tok in lid_module._TOKEN_RE.findall(text)
         ]
+        return tags, RULE_VERSION
 
 
 def test_refresh_sets_only_language_rule_for_the_target_set(
@@ -108,3 +114,43 @@ def test_card_scores_language_rule_against_the_blind_gold(tmp_path: Path) -> Non
         db.commit()
         score = _language_rule_vs_human_gold(db)
     assert score["n"] == 2 and score["accuracy"] == 0.5
+
+
+# Made-up zipf frequencies (wordfreq's scale): word -> (english, filipino).
+_ZIPF = {
+    "sumali": (0.0, 4.8),     # Tagalog only
+    "kahit": (1.8, 6.1),      # Tagalog, rare in English text
+    "bag": (4.8, 4.9),        # English loanword used in Filipino at English rates
+    "birthday": (4.8, 4.7),
+    "guarantee": (4.4, 0.0),  # English only
+    "nagstop": (0.0, 0.0),    # Taglish coinage neither list knows
+}
+
+
+def _zipf(word: str, lang: str) -> float:
+    en, fil = _ZIPF.get(word, (0.0, 0.0))
+    return en if lang == "en" else fil
+
+
+@pytest.mark.parametrize(
+    ("word", "expected"),
+    [
+        ("sumali", "tl"),
+        ("Kahit", "tl"),  # case-insensitive
+        ("bag", "en"),  # a loanword stays English unless it is 10x more Filipino
+        ("birthday", "en"),
+        ("guarantee", "en"),
+        ("nagstop", None),  # unknown to both lists: the caller falls back to fastText
+        ("po", "tl"),  # function-word lists win first
+        ("the", "en"),
+    ],
+)
+def test_lexicon_language_tags_by_relative_frequency(word: str, expected: str | None) -> None:
+    assert lexicon_language(word, _zipf) == expected
+
+
+def test_rule_with_lexicon_tags_keeps_a_tagalog_target_tagalog() -> None:
+    text = "Kahit sumali pa sila"
+    tags = [(w, lexicon_language(w, _zipf) or "tl") for w in text.split()]
+    assert rule_language(tags) == "tagalog"
+

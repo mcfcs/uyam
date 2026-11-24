@@ -44,6 +44,7 @@ annotate = [
     "scikit-learn>=1.4",         # cohen_kappa_score
     "krippendorff>=0.6",
     "pyarrow>=16",               # parquet export
+    "wordfreq>=3.1",             # en/fil word frequencies for the rule-based language tags
 ]
 
 [project.scripts]
