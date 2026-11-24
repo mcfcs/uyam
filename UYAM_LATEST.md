@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-23, uyam `badebe7`+ (plus this file's commit)
+- **Last updated:** 2026-11-24, uyam `93619ea`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -40,14 +40,36 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   - The corpus dump holds 352,176 records.
   - **leische doesn't have v3 yet** (Gio sends the bundle). Like v2, keep
     v3 figures out of the manuscript until leische has results on it.
-- **`dataset-v4` pilot is prepared, not run (2026-11-23):** 5,000 items
-  (all 300 gold + 4,700 v3 items stratified by month × v3 label × v3
-  language) re-labeled by the **same three models with the guideline prompt**
-  (`guide-v1.1`) instead of sarc-v2. The 900 gold votes are reused from the
-  definition test. It needs about 14 h of laptop GPU and **waits on Gio's
-  go**. It tests whether a guideline-based prompt gives labels closer to a
-  human across a training-size sample, not just the 300 gold items. Nothing
-  to quote yet.
+- **`dataset-v4` pilot is done and exported (2026-11-24, card
+  `dataset_card-v4.json`; a pilot, not a training set to send).** 5,000
+  items (all 300 gold + 4,700 v3 items stratified by month × v3 label × v3
+  language) re-labeled by the same three models with the guideline prompt
+  (`guide-v1.1`); 13.8 h on the laptop, 0 failures.
+
+| Same 5,000 items | v3 (sarc-v2 prompt) | v4 (guideline prompt) |
+|---|---|---|
+| Sarcastic | 972 (19.4%) | 1,104 (22.1%) |
+| Sarcasm κ vs Gio, all 111 gold | 0.24 | **0.48** |
+| Sarcasm κ vs Gio, 32 blind gold | 0.18 | **0.64** |
+| Per-model positive rate (Llama / qwen3 / SEA-LION) | 20% / 21% / 25% | 9% / 26% / 41% |
+| Agreement among the 3 models on sarcasm (Fleiss κ) | 0.40 (all 21,000) | 0.26 |
+| Language κ vs Gio | 0.28 | **0.08** |
+| English-sarcastic cell | (v3: 545 of 21,000) | 24 of 5,000 |
+
+- **Sarcasm agrees with Gio about twice as well.** This repeats the
+  definition test, and it isn't independent evidence: the gold votes are the
+  imported definition-test votes.
+- **The labels change a lot.** v3 and v4 agree at κ 0.59 on sarcasm: 407
+  items flip to sarcastic and 275 flip away.
+- **The models disagree more with each other.** SEA-LION calls 41%
+  sarcastic and Llama-SEA-LION 9%. The majority vote absorbs it, but a
+  re-annotation should reconsider SEA-LION.
+- **Language gets worse.** The guideline prompt makes the models call most
+  English items Taglish: 39 of Gio's 49 English gold items, and qwen3 says
+  English for only 76 of 5,000. The prompt's L-rules over-apply the
+  one-Filipino-word rule (L4). A full guideline re-annotation would need a
+  fixed language section (`guide-v1.2`), or the language label taken from
+  v3 or the fastText LID.
 - **Definition test (2026-11-23):** with the guideline as their prompt, the
   same models agree with Gio's gold labels about twice as well (majority κ
   0.24 → 0.48; on his 32 unassisted labels 0.18 → 0.64), so much of the
@@ -465,6 +487,10 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-24**: v4 pilot finished and exported (5,000 items, guideline
+  prompt). Sarcasm κ vs the gold doubles (0.24 → 0.48; blind 0.18 → 0.64).
+  Inter-model agreement falls (0.40 → 0.26), and the language label breaks
+  (κ vs gold 0.08; English items called Taglish). Not for training as is.
 - **2026-11-23 (evening)**: **`dataset-v3` exported** (21,000 rows, 4,011
   sarcastic, majority vote, gold κ 0.24). Before the export: qwen3's 2 failed
   items were retried, LID was run on the 6,000 new items, and Gio's 113 gold

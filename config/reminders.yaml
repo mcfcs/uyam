@@ -334,6 +334,17 @@ reminders:
       config/annotation-v4.yaml --skip-prep --skip-gold`), then aggregates and
       exports v4 and compares it with v3 on the same ids and against your gold.
 
+  - id: decide-guideline-reannotation-2026-11
+    section: Annotation
+    title: After the adviser meeting - full guideline re-annotation or keep v3?
+    details: >
+      The v4 pilot (2026-11-24, 5,000 items) doubles sarcasm agreement with your
+      gold labels (kappa 0.24 -> 0.48, blind 0.18 -> 0.64) but breaks the language
+      label (kappa 0.08: English items called Taglish) and the models disagree
+      more (Fleiss 0.40 -> 0.26; SEA-LION 41% positive). A full run needs a fixed
+      prompt (guide-v1.2) or language from v3/LID, a new pilot, then ~2-3 days of
+      laptop GPU. Numbers in UYAM_LATEST (top).
+
   - id: media-context-v2-to-leische-2026-11
     section: Handoff to leische
     title: Send media_context-v2.jsonl to the leische machine (small file)

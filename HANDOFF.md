@@ -9,7 +9,7 @@ a chat (see [RULES.md §1](RULES.md)).
 
 ---
 
-## Current state (as of 2026-11-23, evening)
+## Current state (as of 2026-11-24)
 
 **Corpus (raw JSONL, `data/raw/`)**: **588,507 records** (40,125
 submissions, 548,382 comments) from r/Philippines, r/CasualPH and
@@ -27,9 +27,10 @@ Reddit API approval and ethics clearance (RULES §5.10). Every record is
 - `data/db/annotation-v3.sqlite3` (`config/annotation-v3.yaml`): the
   equal-size majority-vote run, complete. Gold synced 2026-11-23.
 - `data/db/annotation-v4.sqlite3` (`config/annotation-v4.yaml`, prompt
-  `guide-v1.1`): the guideline-prompt pilot. 5,000 targets: 300 gold +
-  4,700 stratified from v3. Only the 900 imported gold votes so far.
-  **Not run.**
+  `guide-v1.1`): the guideline-prompt pilot, **complete** (2026-11-24
+  00:52, 13.8 h, 0 failures) and exported as `dataset-v4` (a pilot; don't
+  send it as training data). Results are in UYAM_LATEST and in the session
+  log below.
 - Backups from 2026-11-23: `annotation-20261123T104802.bak.sqlite3` and
   `annotation-v3-20261123T104802.bak.sqlite3`.
 
@@ -39,8 +40,9 @@ Reddit API approval and ethics clearance (RULES §5.10). Every record is
   of 11.
 - **`dataset-v3`**: exported 2026-11-23 (21,000 rows, 4,011 sarcastic, gold
   κ 0.24 / blind 0.18). Not sent to leische yet.
+- `dataset-v4`: the 5,000-item pilot (2026-11-24). `dataset_card.json` is
+  now the v4 card; use the versioned cards.
 - `media_context-v2.jsonl`: per-row flags for v2.
-- `dataset_card.json` is now the v3 card.
 
 **Known gaps the thesis must address**: no official API (ethics); a single
 human annotator; gold κ 0.24 (0.18 blind) on the sarc-v2 labels, which
@@ -49,16 +51,7 @@ guideline decisions D2, D3 and D5 are open.
 
 ## In progress
 
-**v4 pilot STARTED 2026-11-23 11:06 PHT** (Gio's go). Detached orchestrator
-pid 229520, lane job `annotation-v4-run-all-local` (qwen3 → sealion →
-llamasealion, 4,700 items each, local only). Logs: `data/.v4-pipeline.log`
-and `data/.annotate-status/annotation-v4-run-all-local.log`; also visible in
-Annotation → Current annotation runs. ETA about 14 h (SEA-LION is the slow
-one). To resume after a stop, re-run the same command. When it ends:
-`sync-gold`, aggregate, and export v4 with `--config-path
-config/annotation-v4.yaml`, then compare with v3.
-
-Streamlit runs on 8501 (main) and 8502 (labeling site).
+Nothing is running. Streamlit runs on 8501 (main) and 8502 (labeling site).
 Gio's apps (arbit, manabi/GPT-SoVITS) share the laptop: **don't close
 them**. ComfyUI is closed.
 
@@ -68,9 +61,11 @@ These are also the to-dos in the Streamlit **Reminders** tab
 (`config/reminders.yaml`), where Gio ticks them off. `data/reminders.json`
 records which ones are done.
 
-1. **v4 pilot is running** (started on Gio's go). Agent, when it ends: run `sync-gold`, aggregate, and export v4 with
-   the v4 config. Compare with v3 on the same ids and against the gold labels
-   (blind and all).
+1. **Decide on a guideline re-annotation after the adviser meeting.** The
+   v4 pilot says yes for sarcasm (κ doubles) but no for language as it
+   stands. A full run would need `guide-v1.2` with a fixed language section,
+   or language from v3/LID, and maybe without SEA-LION: another pilot, then
+   about 2–3 days of laptop GPU.
 2. **Label the remaining 187 gold items** (labeling site, port 8502).
 3. **Adviser meeting Wed 2026-11-25**: `../tsis/ADVISER_UPDATE_2026-11-23.md`
    has the questions, including Q8 (v4 / full guideline re-annotation).
@@ -116,6 +111,35 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-24 — v4 pilot finished, exported and compared with v3
+
+**Context (Gio):** "what's the current update".
+
+**Done:**
+- v4 finished at 00:52 (13.8 h, 15,000 votes, 0 failures). I backed up the
+  v4 DB, ran `sync-gold` (113 unchanged), aggregated (859 unanimous, 4,141
+  majority) and exported `dataset-v4` (5,000 rows, `uyam-dataset-v4.zip`).
+- leische: nothing new (LEISCHE_LATEST still 2026-11-22, origin/main
+  `1ddc9e8`). Gold is still 113/300.
+
+**v3 vs v4 on the same 5,000 ids:**
+- Sarcastic: 972 → 1,104.
+- κ v3–v4 on sarcasm: 0.59 (407 items flip to 1, 275 flip to 0).
+- Gold κ: all 0.24 → 0.48, blind 0.18 → 0.64. These are the same votes as
+  the definition test.
+- Fleiss κ on sarcasm: 0.40 → 0.26. Per-model positive rates: Llama 9%,
+  qwen3 26%, SEA-LION 41%.
+- Language κ vs gold: 0.28 → 0.08. 39 of Gio's 49 English items become
+  taglish, and qwen3 says English for 76 of 5,000. Only 24
+  English-sarcastic rows.
+- Gold κ by media: text-only 0.22 (n 64), media-dependent 0.70 (n 47). The
+  n is small.
+
+**Left open:** the decision on a full guideline re-annotation (adviser Q8).
+If yes, write `guide-v1.2` (fix the L-rules in the prompt so a lone particle
+doesn't flip English to taglish, or take language from LID), re-pilot, and
+consider replacing SEA-LION.
 
 ### 2026-11-23 (evening) — dataset-v3 exported; v4 guideline-prompt pilot prepared
 
