@@ -353,3 +353,91 @@ def fork_subset(
         )
         db.commit()
     return stats
+
+
+def fork_extend(
+    src: Path,
+    dst: Path,
+    *,
+    targets_from: Path,
+    first_reason: str,
+) -> dict[str, Any]:
+    """Copy ``src`` (a pilot) to ``dst`` and grow its target set to ``targets_from``'s.
+
+    dataset-v5 (2026-11-24): the v4 guideline-prompt pilot (5,000 items) grows
+    to v3's 21,000. Every vote, context snapshot, LID row and gold review in
+    ``src`` carries over. The target set is re-ranked so a staged run labels
+    the most useful items first (the runner works top priority down):
+
+    - 4: gold items (the pilot's ``gold`` rows)
+    - 3: the pilot's other items (already labeled)
+    - 2: ``targets_from`` items whose reason is ``first_reason`` (for v5: the
+      15,000 v1/v2 posts, ``source-labeled`` in v3)
+    - 1: the rest of ``targets_from`` (v3's Jun/Jul/Oct/Nov extension)
+
+    Eligible items outside the target set rank 0, so ``--target`` equal to the
+    count of priority >= 2 items stops after the first stage. ``src`` and
+    ``targets_from`` are opened read-only; ``dst`` must not exist.
+    """
+    if dst.exists():
+        raise FileExistsError(f"{dst} already exists; the fork is written once")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(f"file:{src.as_posix()}?mode=ro", uri=True)
+    target = sqlite3.connect(dst)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+
+    other = sqlite3.connect(f"file:{targets_from.as_posix()}?mode=ro", uri=True)
+    try:
+        wanted = [
+            (str(r[0]), str(r[1]))
+            for r in other.execute(
+                "SELECT reddit_fullname, reason FROM target_priority ORDER BY reddit_fullname"
+            )
+        ]
+    finally:
+        other.close()
+
+    with AnnotationDatabase(dst) as db:
+        conn = db.conn
+        existing = {
+            str(r[0]): str(r[1])
+            for r in conn.execute("SELECT reddit_fullname, reason FROM target_priority")
+        }
+        conn.executemany(
+            "UPDATE target_priority SET priority = ? WHERE reddit_fullname = ?",
+            [(4 if reason == "gold" else 3, name) for name, reason in existing.items()],
+        )
+        stem = targets_from.stem
+        new = [(n, r) for n, r in wanted if n not in existing]
+        conn.executemany(
+            "INSERT INTO target_priority (reddit_fullname, priority, reason) VALUES (?, ?, ?)",
+            [(n, 2 if r == first_reason else 1, f"{stem}:{r}") for n, r in new],
+        )
+        stats: dict[str, Any] = {
+            "kept": len(existing),
+            "kept_gold": sum(1 for r in existing.values() if r == "gold"),
+            "added_first": sum(1 for _, r in new if r == first_reason),
+            "added_rest": sum(1 for _, r in new if r != first_reason),
+        }
+        stats["stage1_target"] = stats["kept"] + stats["added_first"]
+        stats["target_total"] = stats["stage1_target"] + stats["added_rest"]
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS fork_info (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        info = {
+            "extended_from": str(src),
+            "targets_from": str(targets_from),
+            "extended_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "first_reason": first_reason,
+            **{f"extend_{k}": v for k, v in stats.items()},
+        }
+        conn.executemany(
+            "INSERT OR REPLACE INTO fork_info (key, value) VALUES (?, ?)",
+            [(k, json.dumps(v)) for k, v in info.items()],
+        )
+        db.commit()
+    return stats

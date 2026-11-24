@@ -468,6 +468,32 @@ def fork(
         console.print(f"[yellow]Short months (not enough items):[/yellow] {short}")
 
 
+@annotate_app.command(name="fork-extend")
+def fork_extend_cmd(
+    to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),
+    targets_from: Path = typer.Option(
+        ..., "--targets-from", help="Database whose target set to grow to (e.g. v3's)"
+    ),
+    first_reason: str = typer.Option(
+        "source-labeled", help="Its target reason to label first (stage 1)"
+    ),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Grow a pilot's database to a larger target set, keeping its votes (dataset-v5)."""
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.fork import fork_extend
+
+    stats = fork_extend(
+        cfg.db_path, to, targets_from=targets_from, first_reason=first_reason
+    )
+    console.print(
+        f"[green]Extended[/green] {cfg.db_path.name} -> {to}: kept {stats['kept']} "
+        f"({stats['kept_gold']} gold), added {stats['added_first']} first-stage and "
+        f"{stats['added_rest']} later items. Stage 1 target {stats['stage1_target']}, "
+        f"full target {stats['target_total']}."
+    )
+
+
 @annotate_app.command(name="fork-subset")
 def fork_subset_cmd(
     to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),

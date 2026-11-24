@@ -20,7 +20,13 @@ from uyam.annotate.config import AggregationConfig, load_annotation_config
 from uyam.annotate.corpus import index_corpus
 from uyam.annotate.db import AnnotationDatabase
 from uyam.annotate.evaluation import import_eval_votes, insert_eval_annotation
-from uyam.annotate.fork import fork_for_reannotation, fork_subset, parse_extend, sync_gold
+from uyam.annotate.fork import (
+    fork_extend,
+    fork_for_reannotation,
+    fork_subset,
+    parse_extend,
+    sync_gold,
+)
 from uyam.annotate.prompts import PROMPT_VERSION, SYSTEM_PROMPT
 from uyam.annotate.prompts_guideline import (
     GUIDE_FEW_SHOTS,
@@ -617,4 +623,54 @@ def test_pipeline_next_steps_name_the_config_and_no_fixed_version(tmp_path: Path
     hint = _next_steps_hint(cfg)
     assert "--version v1" not in hint
     assert f"aggregate --config-path {cfg.source_path.as_posix()}" in hint
+
+
+def test_fork_extend_keeps_pilot_votes_and_stages_the_new_targets(tmp_path: Path) -> None:
+    cfg = _source(tmp_path)
+    v3 = tmp_path / "v3.sqlite3"
+    fork_for_reannotation(
+        cfg.db_path, v3, prompt_version=PROMPT_VERSION, keep_annotators=["a1"],
+        extend={"2026-06": 3},
+    )
+    pilot = tmp_path / "v4.sqlite3"
+    fork_subset(cfg.db_path, pilot, base_prompt_version=PROMPT_VERSION, size=3)
+    with AnnotationDatabase(pilot) as db:
+        first = db.conn.execute("SELECT reddit_fullname FROM target_priority").fetchone()[0]
+        db.insert_llm_annotation(_ann(str(first), "a1") | {"prompt_version": GUIDE_PROMPT_VERSION})
+    before = {p: _snapshot(p) for p in (pilot, v3)}
+
+    dst = tmp_path / "v5.sqlite3"
+    stats = fork_extend(pilot, dst, targets_from=v3, first_reason="source-labeled")
+    assert {p: _snapshot(p) for p in (pilot, v3)} == before  # both sources untouched
+    assert stats["kept"] == 3 and stats["kept_gold"] == 1
+    assert stats["added_first"] == 6 - 3  # v3's 6 source-labeled, minus the 3 pilot items
+    assert stats["added_rest"] == 3  # the June extension
+    assert stats["stage1_target"] == 6 and stats["target_total"] == 9
+
+    with AnnotationDatabase(dst) as db:
+        prio = {str(r[0]): int(r[1]) for r in db.conn.execute(
+            "SELECT reddit_fullname, priority FROM target_priority")}
+        assert prio["t1_c2"] == 4  # gold
+        assert sorted(prio.values()).count(1) == 3 and sorted(prio.values()).count(2) == 3
+        # The pilot's vote carries over and still counts.
+        assert db.conn.execute("SELECT COUNT(*) FROM llm_annotations").fetchone()[0] == 1
+        # Stage 1 (--target 6) holds every gold, pilot and first-reason item and no June item.
+        stage1 = db.target_items(GUIDE_PROMPT_VERSION, stats["stage1_target"])
+        assert {f for f, p in prio.items() if p >= 2} == set(stage1)
+        assert set(db.target_items(GUIDE_PROMPT_VERSION, 9)) == set(prio)
+    with pytest.raises(FileExistsError):
+        fork_extend(pilot, dst, targets_from=v3, first_reason="source-labeled")
+
+
+def test_the_repo_v5_config_is_v4_at_v3_size() -> None:
+    repo = Path(__file__).resolve().parent.parent
+    v4 = load_annotation_config(repo / "config" / "annotation-v4.yaml")
+    v5 = load_annotation_config(repo / "config" / "annotation-v5.yaml")
+    assert v5.prompt_version == v4.prompt_version == GUIDE_PROMPT_VERSION
+    assert [(a.key, a.model, a.prompt) for a in v5.annotators] == [
+        (a.key, a.model, a.prompt) for a in v4.annotators
+    ]
+    assert v5.options == v4.options and v5.aggregation == v4.aggregation
+    assert {a.endpoint for a in v5.annotators} == {"local"} and "remote" not in v5.endpoints
+    assert v5.db_path.name == "annotation-v5.sqlite3" and v5.pipeline.target_items == 21000
 

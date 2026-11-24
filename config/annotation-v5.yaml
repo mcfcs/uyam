@@ -1,0 +1,93 @@
+# dataset-v5: the v4 guideline-prompt pilot grown to v3's 21,000 posts (Gio's
+# go, 2026-11-24). Same prompt (guide-v1.1), same three local models, majority
+# vote; the 5,000 pilot items keep their votes. Language for analysis comes from
+# aux.lid.language_rule (kappa 0.84 vs the gold), not from the model votes.
+#
+# Use with --config-path config/annotation-v5.yaml. Its OWN database, made once:
+#   uyam annotate fork-extend --config-path config/annotation-v4.yaml \
+#     --to data/db/annotation-v5.sqlite3 --targets-from data/db/annotation-v3.sqlite3
+# Run in two stages so the 15,000 v1/v2 posts are done by all three models first:
+#   uyam annotate pipeline --config-path config/annotation-v5.yaml --skip-prep \
+#     --skip-gold --target <stage1_target>   (then again with --target 21000)
+#
+# All on this laptop. No remote box: 100.102.10.69 (phillmyeol) is Gio's gaming PC
+# and the leische machine (RULES §6). Ask Gio before any run.
+
+db_path: data/db/annotation-v5.sqlite3
+data_dir: data
+
+# The guideline prompt (prompts_guideline.py), hash-guarded like sarc-v2. The
+# context snapshots are still the sarc-v2 ones, so v4 sees what v3 saw.
+prompt_version: guide-v1.1
+
+endpoints:
+  local: http://127.0.0.1:11434
+
+annotators:
+  - key: qwen3
+    model: "qwen3:8b"                                     # 8B, Qwen3 family, ~5.2 GB q4
+    endpoint: local
+    think: false
+    prompt: guideline
+  - key: sealion
+    model: "aisingapore/Gemma-SEA-LION-v3-9B-IT:q4_k_m"   # 9B, Gemma 2 family, Filipino-tuned
+    endpoint: local
+    merge_system_prompt: true
+    prompt: guideline
+  - key: llamasealion
+    model: "aisingapore/Llama-SEA-LION-v3-8B-IT:q4_k_m"   # 8B, Llama 3.1 family, Filipino-tuned
+    endpoint: local
+    prompt: guideline
+
+# Majority vote, adviser's item: three binary votes always have a majority, and
+# a 1-1-1 tie on a 3-class label takes the most confident vote. Nothing is
+# escalated, so there is no adjudicator (the v2 one was a 32B model).
+aggregation:
+  sarcasm_rule: majority
+  tie_break: confidence
+
+options:
+  temperature: 0.0
+  seed: 7
+  num_ctx: 8192
+  num_predict: 700
+  keep_alive: 30m
+  timeout_seconds: 300
+  max_retries: 3
+
+context:
+  max_parent_chain: 6
+  max_replies: 3
+  max_context_chars: 6000
+
+candidate_filters:
+  min_chars: 12
+  min_tokens: 3
+  exclude_authors: [AutoModerator]
+  exclude_distinguished_moderator: true
+  include_link_posts: false
+  exclude_phatic: true
+  phatic_max_tokens: 10
+  phatic_max_leftover: 2
+
+lid:
+  model_path: data/models/lid.176.bin
+  mono_threshold: 0.9
+
+tx_sentiment:
+  model: cardiffnlp/twitter-xlm-roberta-base-sentiment
+  device: auto
+  batch_size: 32
+
+review:
+  gold_size: 300
+  adjudicator_confidence_floor: 0.6
+  gold_split_oversample: 2.0
+  gold_sarcastic_oversample: 2.0
+
+# v3's 21,000 posts: 300 gold, the 4,700 pilot items, 15,000 v1/v2 posts, 6,000 new.
+pipeline:
+  target_items: 21000
+
+export:
+  out_dir: data/annotated
