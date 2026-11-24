@@ -313,6 +313,9 @@ def build_export_row(
                 {
                     "auto_label": lid["language"],
                     "language": lid["language"],
+                    # GUIDELINE L2-L4b on the same tokens (None if not computed).
+                    "language_rule": lid["language_rule"],
+                    "rule_version": lid["rule_version"],
                     "en_ratio": lid["en_ratio"],
                     "tl_ratio": lid["tl_ratio"],
                     "other_ratio": lid["other_ratio"],

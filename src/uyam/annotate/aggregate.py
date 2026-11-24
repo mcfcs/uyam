@@ -473,6 +473,32 @@ def _lid_vs_human_gold(db: AnnotationDatabase) -> dict[str, Any]:
     return {"n": len(pairs), "accuracy": round(agree / len(pairs), 4)}
 
 
+def _language_rule_vs_human_gold(db: AnnotationDatabase) -> dict[str, Any]:
+    """The rule-based language (lid_results.language_rule) against the blind
+    first-pass gold language: accuracy and Cohen's kappa."""
+    gold, _ = db.blind_gold_labels()
+    pairs: list[tuple[str, str]] = []
+    for fullname, labels in gold.items():
+        if labels.get("language") is None:
+            continue
+        row = db.conn.execute(
+            "SELECT language_rule FROM lid_results WHERE reddit_fullname = ?", (fullname,)
+        ).fetchone()
+        if row is not None and row["language_rule"] is not None:
+            pairs.append((str(labels["language"]), str(row["language_rule"])))
+    if not pairs:
+        return {"n": 0, "accuracy": None, "cohen_kappa": None}
+    from sklearn.metrics import cohen_kappa_score
+
+    agree = sum(1 for human, rule in pairs if human == rule)
+    kappa = float(cohen_kappa_score(*zip(*pairs, strict=True))) if len(pairs) >= 2 else math.nan
+    return {
+        "n": len(pairs),
+        "accuracy": round(agree / len(pairs), 4),
+        "cohen_kappa": None if math.isnan(kappa) else round(kappa, 4),
+    }
+
+
 def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, Any]:
     """Full agreement report — printed by `annotate aggregate --report` and
     embedded in the dataset card at export."""
@@ -498,4 +524,5 @@ def compute_agreement(cfg: AnnotationConfig, prompt_version: str) -> dict[str, A
         report["gold_vs_ensemble_cohen_kappa"] = _gold_cohen_kappa(db)
         report["lid_vs_ensemble_language"] = _lid_agreement(db)
         report["lid_vs_human_gold_language"] = _lid_vs_human_gold(db)
+        report["language_rule_vs_human_gold"] = _language_rule_vs_human_gold(db)
         return report

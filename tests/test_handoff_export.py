@@ -82,6 +82,7 @@ def test_export_rows_and_card_carry_handoff_fields(tmp_path: Path) -> None:
         assert row["sampling_strategy"] == "natural"  # comments inherit, never blank
         if row["aux"]["lid"] is not None:
             assert row["aux"]["lid"]["auto_label"] == row["aux"]["lid"]["language"]
+            assert "language_rule" in row["aux"]["lid"]  # GUIDELINE L-rules, may be None
 
     card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))
     assert card["readiness"]["exported_rows"] == len(rows)
@@ -92,6 +93,7 @@ def test_export_rows_and_card_carry_handoff_fields(tmp_path: Path) -> None:
     assert card["collection_window"]["exported_rows"]["from"] is not None
     assert card["temporal_context_coverage"]["n_rows"] == len(rows)
     assert "lid_vs_human_gold_language" in card["agreement"]
+    assert "language_rule_vs_human_gold" in card["agreement"]
     assert card["label_distributions"]["sarcastic_per_label_resolution"] == {
         "unanimous": len(rows)
     }

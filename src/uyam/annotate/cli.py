@@ -103,6 +103,9 @@ def lid(
     target: int | None = typer.Option(
         None, "--target", help="Only the pipeline target set. " + _TARGET_HELP
     ),
+    refresh_rule: bool = typer.Option(
+        False, "--refresh-rule", help="Only (re)compute language_rule (GUIDELINE L2-L4b)"
+    ),
     config_path: Path | None = _CONFIG_OPT,
     log_level: str = typer.Option("INFO"),
 ) -> None:
@@ -118,8 +121,10 @@ def lid(
             force=force,
             target=_resolve_target(cfg, target),
             prompt_version=cfg.prompt_version,
+            refresh_rule=refresh_rule,
         )
-    console.print(f"[green]LID[/green] processed {stats['processed']} items")
+    what = "language_rule for" if refresh_rule else "LID"
+    console.print(f"[green]{what}[/green] processed {stats['processed']} items")
 
 
 @annotate_app.command()

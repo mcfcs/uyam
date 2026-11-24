@@ -6,6 +6,14 @@ only when >= mono_threshold (default 0.9) of its alphabetic tokens are that
 language, otherwise taglish. A Filipino function-word list backstops fastText,
 which is unreliable on short, informal single tokens.
 
+`language_rule` (2026-11-24) applies docs/GUIDELINE.md L2-L4b to the same
+token tags: laughter and internet tokens are not counted, a lone function
+word from the other language keeps the main language (L4), repeats count
+(L4b), and otherwise the 90% rule applies (L3). The LLM language votes
+under the guideline prompt called most English targets Taglish (v4 pilot:
+kappa 0.08 vs the gold); this rule scored kappa 0.71 on the same items. The
+plain `language` field is kept unchanged for v1-v3 comparability.
+
 Uses fasttext-predict (prediction-only wheel that installs on Windows py3.11;
 the official fasttext package needs an MSVC source build).
 """
@@ -21,6 +29,8 @@ from uyam.annotate.config import LidConfig
 from uyam.annotate.db import AnnotationDatabase
 
 logger = logging.getLogger(__name__)
+
+RULE_VERSION = "L-rules-v1"
 
 LID_MODEL_URL = "https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin"
 
@@ -64,6 +74,39 @@ def ensure_lid_model(model_path: Path) -> Path:
     return model_path
 
 
+# L2: laughter and internet tokens count as neither language.
+_NOT_COUNTED_RE = re.compile(
+    r"^(h+a+[ha]*|h+e+[he]*|lo+l|lmao+|lmfao|rofl|op|char|charot|ok|okay|okey|xd|omg)$",
+    re.IGNORECASE,
+)
+
+
+def rule_language(tagged: list[tuple[str, str]]) -> str | None:
+    """GUIDELINE L2-L4b on (token, "en" | "tl" | "other") tags; None if nothing counts.
+
+    Tokens tagged "other" (names, noise) and L2 tokens are not counted. The
+    main language is the one with more counted words. A single minority word
+    that is a function word or particle keeps the main language (L4);
+    otherwise the target is Taglish once the minority reaches 10% (L3), with
+    repeats counted (L4b).
+    """
+    counted = [
+        (tok.lower(), tag)
+        for tok, tag in tagged
+        if tag in ("en", "tl") and not _NOT_COUNTED_RE.match(tok)
+    ]
+    if not counted:
+        return None
+    n_en = sum(1 for _, tag in counted if tag == "en")
+    main = "en" if n_en >= len(counted) - n_en else "tl"
+    minority = [tok for tok, tag in counted if tag != main]
+    name = "english" if main == "en" else "tagalog"
+    function_words = _TL_FUNCTION_WORDS if main == "en" else _EN_FUNCTION_WORDS
+    if not minority or (len(minority) == 1 and minority[0] in function_words):
+        return name
+    return name if len(minority) / len(counted) < 0.10 else "taglish"
+
+
 class LanguageIdentifier:
     def __init__(self, cfg: LidConfig) -> None:
         import fasttext  # fasttext-predict exposes the same module name
@@ -91,14 +134,18 @@ class LanguageIdentifier:
                 return label
         return "other"
 
+    def tag_tokens(self, text: str) -> list[tuple[str, str]]:
+        return [(token, self._token_language(token)) for token in _TOKEN_RE.findall(text)]
+
     def identify(self, text: str) -> dict[str, Any]:
         preds = self._predict_label(text, k=1)
         msg_label, msg_prob = preds[0] if preds else ("und", 0.0)
 
-        tokens = _TOKEN_RE.findall(text)
+        tagged = self.tag_tokens(text)
+        tokens = [token for token, _ in tagged]
         counts = {"en": 0, "tl": 0, "other": 0}
-        for token in tokens:
-            counts[self._token_language(token)] += 1
+        for _, tag in tagged:
+            counts[tag] += 1
         n = max(1, len(tokens))
         en_ratio = counts["en"] / n
         tl_ratio = counts["tl"] / n
@@ -115,6 +162,8 @@ class LanguageIdentifier:
 
         return {
             "language": language,
+            "language_rule": rule_language(tagged) or language,
+            "rule_version": RULE_VERSION,
             "en_ratio": round(en_ratio, 4),
             "tl_ratio": round(tl_ratio, 4),
             "other_ratio": round(other_ratio, 4),
@@ -130,14 +179,19 @@ def run_lid(
     force: bool = False,
     target: int | None = None,
     prompt_version: str | None = None,
+    refresh_rule: bool = False,
 ) -> dict[str, int]:
     """Language-identify every eligible candidate missing an LID result.
 
-    With `target`, only the pipeline's N-item target set is covered.
+    With `target`, only the pipeline's N-item target set is covered. With
+    `refresh_rule`, only `language_rule` is (re)computed for items that
+    already have a result; `language` is never changed.
     """
     if force:
         db.conn.execute("DELETE FROM lid_results")
         db.commit()
+    if refresh_rule:
+        return refresh_language_rule(db, cfg, target=target, prompt_version=prompt_version)
     if target is not None:
         if not prompt_version:
             raise ValueError("prompt_version is required when target is set")
@@ -153,6 +207,46 @@ def run_lid(
         if record is None:
             continue
         db.upsert_lid(fullname, identifier.identify(str(record["text"])))
+        processed += 1
+        if processed % 500 == 0:
+            db.commit()
+    db.commit()
+    return {"processed": processed}
+
+
+def refresh_language_rule(
+    db: AnnotationDatabase,
+    cfg: LidConfig,
+    *,
+    target: int | None = None,
+    prompt_version: str | None = None,
+) -> dict[str, int]:
+    """(Re)compute `language_rule` for items with an LID result (the target set if given)."""
+    if target is not None:
+        if not prompt_version:
+            raise ValueError("prompt_version is required when target is set")
+        in_scope = set(db.target_items(prompt_version, target))
+        names = [
+            str(r[0])
+            for r in db.conn.execute("SELECT reddit_fullname FROM lid_results ORDER BY 1")
+            if str(r[0]) in in_scope
+        ]
+    else:
+        names = [
+            str(r[0])
+            for r in db.conn.execute("SELECT reddit_fullname FROM lid_results ORDER BY 1")
+        ]
+    identifier = LanguageIdentifier(cfg)
+    processed = 0
+    for fullname in names:
+        record = db.get_record(fullname)
+        if record is None:
+            continue
+        lid = db.conn.execute(
+            "SELECT language FROM lid_results WHERE reddit_fullname = ?", (fullname,)
+        ).fetchone()
+        tagged = identifier.tag_tokens(str(record["text"]))
+        db.set_language_rule(fullname, rule_language(tagged) or str(lid[0]), RULE_VERSION)
         processed += 1
         if processed % 500 == 0:
             db.commit()

@@ -272,6 +272,12 @@ _ADDED_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {
         # "second judgement"): the first pass is Claude-informed, not blind.
         ("assist_before_first_pass", "INTEGER DEFAULT 0"),
     ),
+    # Rule-based language (2026-11-24): docs/GUIDELINE.md L2-L4b applied to
+    # the same token tags. `language` (the 90%-only rule) stays as it was.
+    "lid_results": (
+        ("language_rule", "TEXT"),
+        ("rule_version", "TEXT"),
+    ),
 }
 
 
@@ -466,8 +472,8 @@ class AnnotationDatabase:
             """
             INSERT OR REPLACE INTO lid_results
               (reddit_fullname, language, en_ratio, tl_ratio, other_ratio,
-               confidence, lid_model, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               confidence, lid_model, created_at, language_rule, rule_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 reddit_fullname,
@@ -478,7 +484,15 @@ class AnnotationDatabase:
                 result.get("confidence"),
                 result.get("lid_model"),
                 _utc_now_iso(),
+                result.get("language_rule"),
+                result.get("rule_version"),
             ),
+        )
+
+    def set_language_rule(self, reddit_fullname: str, language: str, rule_version: str) -> None:
+        self._conn.execute(
+            "UPDATE lid_results SET language_rule = ?, rule_version = ? WHERE reddit_fullname = ?",
+            (language, rule_version, reddit_fullname),
         )
 
     _MISSING_LID_SQL = """
