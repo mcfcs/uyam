@@ -270,8 +270,8 @@ def test_export_ships_majority_flags_and_review_fields(tmp_path: Path) -> None:
     assert c1["labels"]["sarcasm_vote_share"] == 0.6667
     assert rows["t1_c2"]["labels"]["sarcastic_majority"] is True
     assert rows["t1_c3"]["labels"]["sarcastic_majority"] is False
-    assert rows["t1_c2"]["flags"] == {"phatic": True}
-    assert c1["flags"] == {"phatic": False}
+    assert rows["t1_c2"]["flags"] == {"phatic": True, "gold_queue": False}
+    assert c1["flags"] == {"phatic": False, "gold_queue": False}  # reviewed, never queued
     gold = c1["human_gold"]
     assert gold["sarcastic"] is True and gold["sarcastic_span"] == "Ang galing mo naman"
     assert gold["unsure"] is True and gold["assist_seen"] is True and gold["votes_seen"] is True
@@ -443,4 +443,26 @@ def test_list_side_files_offers_media_context_only(tmp_path: Path) -> None:
     (tmp_path / "dataset-v2.jsonl").write_text("{}\n", encoding="utf-8")  # in the bundle
     (tmp_path / "uyam-dataset-v2.zip").write_bytes(b"zip")
     assert [p.name for p in list_side_files(tmp_path)] == ["media_context-v2.jsonl"]
+
+
+def test_gold_queue_flag_marks_every_queued_post_labeled_or_not(tmp_path: Path) -> None:
+    cfg = _run_pipeline(tmp_path)
+    with AnnotationDatabase(cfg.db_path) as db:
+        db.enqueue_review("t1_c1", "gold")  # queued, never labeled
+        db.enqueue_review("t1_c2", "gold")
+        db.upsert_human_review({"reddit_fullname": "t1_c2", "sarcastic": 0, "is_gold": 1})
+        db.commit()
+    result = run_export(cfg, PROMPT_VERSION, dataset_version="vtest", formats=("jsonl",))
+    rows = {
+        json.loads(line)["reddit_fullname"]: json.loads(line)
+        for line in Path(result["jsonl"]).read_text(encoding="utf-8").splitlines()
+    }
+    assert rows["t1_c1"]["flags"]["gold_queue"] is True
+    assert rows["t1_c1"]["human_gold"] is None  # queued but unlabeled: only the flag shows it
+    assert rows["t1_c2"]["flags"]["gold_queue"] is True and rows["t1_c2"]["human_gold"]
+    assert all(
+        not r["flags"]["gold_queue"] for name, r in rows.items() if name not in {"t1_c1", "t1_c2"}
+    )
+    card = json.loads(Path(result["card"]).read_text(encoding="utf-8"))
+    assert card["counts"]["gold_queue_rows"] == 2
 

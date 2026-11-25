@@ -176,6 +176,19 @@ def _phatic_flag(db: AnnotationDatabase, fullname: str) -> bool:
     return bool(row and row["phatic"])
 
 
+def _gold_queue_flag(db: AnnotationDatabase, fullname: str) -> bool:
+    """In the gold queue, labeled or not (leische request 2026-11-24, §5e.4).
+
+    leische holds every gold-queue post out of training, so a gold label added
+    later is never on a post the model has seen. ``human_gold`` alone marks
+    only the labeled ones.
+    """
+    row = db.conn.execute(
+        "SELECT 1 FROM review_queue WHERE reddit_fullname = ? AND reason = 'gold'", (fullname,)
+    ).fetchone()
+    return row is not None
+
+
 def build_export_row(
     db: AnnotationDatabase,
     agg: dict[str, Any],
@@ -328,7 +341,10 @@ def build_export_row(
         "context": context,
         # U9: a phatic item (greeting / thanks / HBD only) that was already
         # labeled is kept with its label and flagged, never dropped.
-        "flags": {"phatic": _phatic_flag(db, fullname)},
+        "flags": {
+            "phatic": _phatic_flag(db, fullname),
+            "gold_queue": _gold_queue_flag(db, fullname),
+        },
         # What kind of post the item hangs on, and whether media appears in
         # it or its thread: nobody (annotators or model) saw images or video.
         "media_context": _media_context(db, record, context, post_urls),
@@ -706,6 +722,7 @@ def run_export(
                         **{f"label_{k}": v for k, v in row["labels"].items() if k != "cues"},
                         **{f"cue_{k}": v for k, v in row["labels"]["cues"].items()},
                         "flag_phatic": row["flags"]["phatic"],
+                        "flag_gold_queue": row["flags"]["gold_queue"],
                         "resolved_by": row["reliability"]["resolved_by"],
                         "sarcasm_votes": row["reliability"]["sarcasm_votes"],
                         "mean_confidence": row["reliability"]["mean_confidence"],
@@ -779,6 +796,7 @@ def run_export(
             "skipped_unresolved": skipped_unresolved,
             "skipped_ineligible": skipped_ineligible,
             "phatic_flagged_rows": sum(1 for r in rows if r["flags"]["phatic"]),
+            "gold_queue_rows": sum(1 for r in rows if r["flags"]["gold_queue"]),
             "corpus_dump_rows": corpus_written,
         },
         "corpus_dump_scope": corpus_scope,

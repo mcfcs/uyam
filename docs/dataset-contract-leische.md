@@ -270,6 +270,11 @@ pool to that fold's TRAINING rows only — never retrieve from validation/test.
   thesis rule). `label_sets` compares `labels.sarcastic` with
   `labels.sarcastic_majority`. `counts.phatic_flagged_rows` counts
   `flags.phatic`. `corpus_dump_scope` (see §1).
+- From the 2026-11-25 re-exports (v3, v4) and v5: `flags.gold_queue` is true
+  on every post in the 300-item gold queue, labeled or not, and
+  `counts.gold_queue_rows` counts them. Hold all of them out of training and
+  validation. `human_gold` is set only where Gio's label exists (all 300 since
+  2026-11-25). The parquet has the same flag as `flag_gold_queue`.
   `gold_vs_ensemble_cohen_kappa.n_excluded_votes_seen` counts the gold items
   left out of the κ.
 

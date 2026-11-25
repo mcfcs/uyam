@@ -109,6 +109,7 @@ replacing it:
 | Candidate exclusions always record a reason | `test_annotate_candidates.py` |
 | Archive throttle answers are retried; real 4xx fail fast | `test_archive_source.py` |
 | Ineligible items never reach the export | `test_annotate_export.py` |
+| Every gold-queue post is flagged `flags.gold_queue` in the export, labeled or not | `test_annotate_export.py` |
 | Every annotator labels the same target set | `test_annotate_target.py` |
 | Gold labels are evaluation-only; gold sample is deterministic per seed | `test_annotate_review.py`, `test_annotate_export.py` |
 | Export bundle checksums match its members | `test_annotate_export.py` |
