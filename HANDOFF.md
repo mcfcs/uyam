@@ -81,7 +81,7 @@ records which ones are done.
    stands. A full run would need `guide-v1.2` with a fixed language section,
    or language from v3/LID, and maybe without SEA-LION: another pilot, then
    about 2–3 days of laptop GPU.
-2. **Label the remaining 187 gold items** (labeling site, port 8502).
+2. ~~Label the remaining 187 gold items~~ **done 2026-11-25** (300/300).
 3. **Adviser meeting Wed 2026-11-25**: `../tsis/ADVISER_UPDATE_2026-11-23.md`
    has the questions, including Q8 (v4 / full guideline re-annotation).
 4. Send `uyam-dataset-v3.zip` to leische when Gio wants v3 runs. Before any
@@ -126,6 +126,25 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-25 (evening) — gold set complete; final agreement
+
+**Context (Gio):** finished the gold annotation; asked what now.
+
+**Done:**
+- Backups `annotation-{v3,v4,v5}-*-pre-goldsync.bak.sqlite3` (sqlite backup
+  API; v5 was being written). `sync-gold` into v3/v4/v5: 187 added each.
+- Final agreement (297 usable, 26 +; numbers in UYAM_LATEST): guideline κ 0.31
+  [0.19, 0.43], v1 0.27, v3 0.20. Guideline − v3 is +0.11 [+0.01, +0.21],
+  the only paired difference that clears zero. 85% of gold positives are
+  under unseen media.
+- Progress notes prose updated to the final numbers. The plan is now to
+  pre-declare majority as primary and unanimous (from the vote share) as a
+  sensitivity check, so the gold is never tuned on.
+
+**Left open (Gio's go):** `gold_queue` flag + re-export v3/v4 with all 300
+gold labels for leische to re-score; v5 export Thu evening; leische
+training; a descriptive error analysis.
 
 ### 2026-11-24 (late night) — dataset-v5 started; gold-assist decision
 

@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-24 (late night), uyam `7289dbe`+ (plus this file's commit)
+- **Last updated:** 2026-11-25, uyam `cf29b0b`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -47,6 +47,24 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   (around Thu 26 Nov 05:00); stage 2 adds 4,638 new-month posts (around Thu
   19:00). Language for analysis: `aux.lid.language_rule`. Gio's plan is for
   it to be the final dataset, with v3 as the fallback. Nothing to quote yet.
+- **Gold set COMPLETE (2026-11-25): 300/300 labeled by Gio**; 297 usable (3 were
+  saved with model votes showing), **26 sarcastic (8.8%)**, 33 blind first
+  passes (6 sarcastic). Synced into the v3/v4/v5 databases. Final agreement of
+  each training-label set with the gold (Cohen's κ, bootstrap 95% CI):
+  | label set | κ vs gold | called sarcastic (of 297) | precision / recall |
+  |---|---|---|---|
+  | v1/v2 (27B + 32B judge, unanimous) | 0.27 [0.14, 0.40] | 62 | 0.26 / 0.62 |
+  | v3 (equal-size, majority, old prompt) | 0.20 [0.09, 0.32] | 78 | 0.21 / 0.62 |
+  | v4/v5 (equal-size, majority, guideline) | **0.31 [0.19, 0.43]** | 78 | 0.27 / 0.81 |
+  | guideline votes, unanimous rule | 0.38 [0.18, 0.56] | 21 | 0.48 / 0.38 |
+  Paired differences: guideline − v3 **+0.11 [+0.01, +0.21]** (the only one
+  whose interval clears zero: the guideline prompt helps with the same
+  models); guideline − v1 +0.04 [−0.07, +0.16] (equal-size + guideline is as
+  good as the big-model setup); unanimous − majority +0.06 [−0.12, +0.24].
+  Every LLM label set over-calls sarcasm (2–3× Gio's rate). **22 of the 26
+  sarcastic gold posts (85%) reply to image/video posts**, against 52% of all
+  gold posts. At 111 items the guideline lead looked like a doubling (0.24 →
+  0.48); it shrank as the set grew, so quote only these final numbers.
 - **Gold-label decision (Gio, 2026-11-24):** first passes made with the
   Claude suggestion showing count as his gold labels (the primary κ, "all").
   The flag is still recorded, and the blind-only κ stays a reported
@@ -511,6 +529,14 @@ remove most positives and change the population.
 
 ## 11. Change log
 
+- **2026-11-25**: gold set complete (300; 297 usable, 26 sarcastic). Final
+  κ of each label set with the gold, with CIs (top of this file). The
+  guideline prompt beats the old prompt with the same models (+0.11
+  [+0.01, +0.21]). Every LLM label set over-calls sarcasm, and 85% of the
+  gold sarcasm is under unseen media. Proposed plan: majority vote as the
+  primary label, unanimous (from the vote share) as a sensitivity check, and
+  no tuning on the gold. v5 annotation is still running (full set due Thu
+  26 Nov ~20:00).
 - **2026-11-24 (late night)**: dataset-v5 annotation started (the
   guideline-prompt dataset at 21,000 posts; ~47 h on the laptop). Gio's
   decision: Claude-assisted first passes are his gold labels (primary κ);

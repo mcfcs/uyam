@@ -373,16 +373,19 @@ Gio's own rate on the gold is about 10%, so the LLMs still over-call relative to
         )
     st.markdown(
         """
-**Reading it (the table is live; the ranking has shifted as gold labels came in):**
-- **The guideline labels (v4/v5) agree with Gio best**, but the lead has narrowed as the gold set grew. At 111 items
-  it looked like a doubling (κ 0.24 → 0.48); at 237 items it is about 0.33 vs 0.27 (v1) and 0.21 (v3). On the 32
-  blind items it is still 0.64 vs 0.18.
-- **Every LLM label set over-calls sarcasm** (2–3× Gio's rate). That is why a stricter vote rule on the same votes
-  matches Gio better (section 10), with no new model run.
-- Llama-SEA-LION with the guideline is the best single model; SEA-LION with the guideline over-calls most. The three
-  models agree **less** with each other under the guideline (Fleiss κ 0.40 → 0.26).
-- Part of the human–LLM gap is the definition of sarcasm (the guideline helps), and part is over-calling (the vote
-  rule helps).
+**Reading it (final gold set, Nov 25: 297 usable items, 26 sarcastic; bootstrap 95% CIs):**
+- **The guideline prompt helps, measurably.** Same three equal-size models, same posts, only the prompt differs:
+  guideline labels κ **0.31 [0.19, 0.43]** vs old-prompt labels (v3) **0.20 [0.09, 0.32]**; paired difference
+  **+0.11 [+0.01, +0.21]**, the one comparison whose interval clears zero.
+- **Equal-size + guideline matches the old big-model setup.** v1/v2 labels (27B + 32B judge) κ 0.27 [0.14, 0.40];
+  guideline minus v1 +0.04 [−0.07, +0.16]. So the adviser's equal-size lineup costs nothing once it has the guideline.
+- **Every LLM label set over-calls sarcasm**: 62–78 of 297 posts vs Gio's 26 (precision 0.21–0.27, recall
+  0.62–0.81). Stricter vote rules trade recall for precision (unanimous guideline votes κ 0.38 [0.18, 0.56]), but
+  their gain over majority is not significant (+0.06 [−0.12, +0.24]).
+- Single models: Llama-SEA-LION with the guideline is the best (κ 0.40 [0.21, 0.55]); SEA-LION with the guideline
+  over-calls most (145 of 297). The three agree less with each other under the guideline (Fleiss κ 0.40 → 0.26).
+- **Overall agreement is "fair" (κ 0.2–0.4).** Sarcasm stays hard even for a careful human-vs-LLM comparison;
+  the gold set is what makes this honest.
 """
     )
 
@@ -465,7 +468,7 @@ def _media(live: dict[str, Any]) -> None:
 **The blind spot.** Image-only posts were excluded as targets, but **comments under image and video posts were not**,
 and nobody (annotators or model) sees the image. In the 15,000 v1/v2 labels, **43% of rows reply to an image or
 video post and they hold 63% of the sarcastic labels**. In v3, replies to image posts are 24% sarcastic and to video
-posts 36%, against 13% for text posts. Of Gio's 22 sarcastic gold posts (at 237 labeled), 18 sit under unseen media.
+posts 36%, against 13% for text posts. **Of Gio's 26 sarcastic gold posts, 22 (85%) sit under unseen media**, while only half the gold posts do (155 of 297).
 
 **What was done (Nov 22):** keep everything, flag it, report slices (rebuilding a text-only dataset would remove most
 positives). Every exported row (v3 on) carries `media_context`: post type, whether the post/parent/target has media,
@@ -617,29 +620,31 @@ them would leak the answer key).
     else:
         st.dataframe(rules, hide_index=True, width="stretch")
         st.caption(
-            "The LLMs over-call sarcasm, so a stricter rule matches you better. This table uses ALL your gold labels, "
-            "so treat it as a hint: the real choice should be made on the dev split and confirmed on the test split. "
-            "It also answers the adviser's question about majority vote vs a 3-0 rule, with human data."
+            "Stricter rules raise κ a little by trading recall for precision, but the gain over majority is not "
+            "significant on the final gold (+0.06 [−0.12, +0.24]). Plan: keep majority as the primary label (the "
+            "adviser's rule) and train a unanimous-label variant from `labels.sarcasm_vote_share` as a sensitivity "
+            "check. Nothing is tuned on the gold, so it stays a clean answer key."
         )
     st.markdown(
         """
-### Next actions once the gold set is finished
-| # | step | who | cost |
+### Next actions now that the gold set is finished (Nov 25)
+| # | step | who | status / cost |
 |---|---|---|---|
-| 1 | Sync the 300 gold labels into the v3/v4/v5 databases; final agreement table with bootstrap 95% CIs | agent | minutes |
-| 2 | **Freeze a dev/test split** of the gold (seeded, stratified by sarcasm × language × media) | Gio decides, agent does | minutes |
-| 3 | **Error analysis on the dev split**: list LLM-vs-you disagreements by type (hugot/D1, unseen media, irony, rhetorical questions, language) | agent drafts, Gio checks | ~1 h |
-| 4 | **Pick the vote rule on dev** (majority / unanimous / without SEA-LION), confirm on test | agent | minutes, no model run |
-| 5 | Export v5 with the chosen rule (+ the `gold_queue` flag), send to phillmyeol | agent + Gio | minutes |
-| 6 | leische trains on v5 (3 main conditions × 3 seeds), scored on the test split and on all 300 | leische, Gio's go | ~20 GPU-h |
-| 7 | Optional, if time: guideline v1.2 from the error analysis → prompt guide-v1.2 → re-annotate (v6) | agent, Gio's go | ~2 days laptop |
-| 8 | D5: re-label your first 31 items blind (2+ weeks later) for an intra-annotator κ | Gio | ~30 min |
-| 9 | Thesis text: gold method (sampling, guideline, Claude-assisted vs blind, dev/test split) | tsis chat | — |
+| 1 | Sync the 300 gold labels into the v3/v4/v5 databases; final agreement table with bootstrap 95% CIs | agent | **done** |
+| 2 | Pre-declare the label plan instead of tuning on the gold: **majority = primary**, unanimous (from the vote share) = sensitivity check | Gio confirms | no cost; keeps the gold a clean test set |
+| 3 | `gold_queue` flag + re-export v3 (and v4) with all 300 gold labels, so leische can re-score its comparison on the full gold now | agent + Gio | minutes + Taildrop |
+| 4 | Export v5 when annotation ends (Thu ~20:00): retry 3 failed items, aggregate (majority), gold + flag | agent | minutes |
+| 5 | leische trains on v5: 3 main conditions × 3 seeds, + the unanimous-label variant; scored on all 297 gold items (overall, text-only, by language) and on its own folds | leische, Gio's go | ~20–25 GPU-h |
+| 6 | Error analysis of LLM-vs-Gio disagreements (descriptive, for the thesis: media, hugot/D1, irony, rhetorical questions) | agent drafts, Gio checks | ~1 h |
+| 7 | Optional / future work: guideline v1.2 → prompt guide-v1.2 → v6 (needs a dev/test split of the gold first) | agent, Gio's go | ~2 days laptop |
+| 8 | D5: re-label the first 31 items blind (2+ weeks after the first pass) for an intra-annotator κ | Gio | ~30 min |
+| 9 | Thesis text: gold method and final agreement table; media finding; equal-size + guideline result | tsis chat | — |
 
-**What to expect:** with 300 items and ~25–30 sarcastic posts, the agreement intervals roughly halve compared with
-the first 111 items. The ranking of label sets has already shifted as labels came in (the guideline labels' lead
-narrowed from κ 0.48 vs 0.24 to about 0.33 vs 0.27), which is exactly why the full set and a held-out test split
-matter before any claim goes in the manuscript.
+**What to expect from the retrained model:** its training labels agree with Gio at κ ≈ 0.31, so a model trained on
+them should land around κ 0.2–0.3 against the gold (the exploratory D was 0.25 on the first 111 items), likely a bit
+higher with v5's ~4× training rows. Because 85% of Gio's sarcasm sits under unseen images/video, text-only results
+will look weaker on the text-only slice and recall on media posts depends on cues in the text. Report κ/F1 with
+intervals; with 26 positives, differences under ~0.1 κ will not be distinguishable.
 """
     )
 
