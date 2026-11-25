@@ -248,3 +248,54 @@ def card_facts(out_dir: Path) -> dict[str, dict[str, Any]]:
             "exclusions": counts.get("candidates") or {},
         }
     return facts
+
+
+VOTE_RULES: dict[str, Any] = {
+    "majority 2 of 3 (current v4/v5 rule)": lambda d: int(sum(d.values()) >= 2),
+    "unanimous 3 of 3": lambda d: int(sum(d.values()) == 3),
+    "qwen3 AND Llama-SEA-LION (drop SEA-LION)": lambda d: int(
+        bool(d.get("qwen3")) and bool(d.get("llamasealion"))
+    ),
+    "Llama-SEA-LION alone": lambda d: int(bool(d.get("llamasealion"))),
+}
+
+
+def vote_rule_table(
+    gold: dict[str, GoldItem], db: Path, prompt_version: str
+) -> list[dict[str, Any]]:
+    """How alternative vote rules over the SAME annotator votes agree with the gold.
+
+    Items need all three votes (qwen3, sealion, llamasealion). No model is run:
+    this only re-counts stored votes, so a rule change is a re-aggregation.
+    """
+    if not db.exists():
+        return []
+    votes: dict[str, dict[str, int]] = {}
+    with _ro(db) as conn:
+        if not _has_table(conn, "llm_annotations"):
+            return []
+        for name, key, value in conn.execute(
+            "SELECT reddit_fullname, model_key, sarcastic FROM llm_annotations "
+            "WHERE prompt_version = ? AND role = 'annotator'",
+            (prompt_version,),
+        ):
+            if value is not None:
+                votes.setdefault(str(name), {})[str(key)] = int(value)
+    keys = {"qwen3", "sealion", "llamasealion"}
+    ids = [f for f in gold if keys <= set(votes.get(f, {}))]
+    human = [gold[f].sarcastic for f in ids]
+    out: list[dict[str, Any]] = []
+    for rule, fn in VOTE_RULES.items():
+        model = [int(fn(votes[f])) for f in ids]
+        k, score = cohen_kappa(human, model), f1(human, model)
+        out.append(
+            {
+                "vote rule (guideline votes)": rule,
+                "gold items": len(ids),
+                "human +": sum(human),
+                "model +": sum(model),
+                "F1 vs gold": None if score is None else round(score, 3),
+                "κ vs gold": None if k is None else round(k, 3),
+            }
+        )
+    return out

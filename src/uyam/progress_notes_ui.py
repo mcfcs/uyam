@@ -24,6 +24,7 @@ from uyam.progress_notes import (
     gold_agreement,
     load_gold,
     run_progress,
+    vote_rule_table,
 )
 
 V5_KEYS = ["qwen3", "sealion", "llamasealion"]
@@ -176,7 +177,25 @@ TIMELINE_DOT = (
 }"""
 )
 
+GOLD_USE_DOT = (
+    "digraph golduse {\n" + _STYLE + """
+  g [label="Gold set: 300 posts\\nlabeled by Gio", fillcolor="#fff4d6", color="#c79a2b"];
+  dev [label="DEV split (~100)\\nallowed to look at"];
+  test [label="TEST split (~200)\\nfrozen, never tuned on"];
+  ea [label="Error analysis\\nwhere do LLMs and Gio disagree?"];
+  rule [label="Vote rule\\n(majority / unanimous /\\ndrop an annotator)\\nminutes, no model run"];
+  gl [label="Guideline v1.2\\n+ prompt guide-v1.2\\n(re-annotation ~2 days)"];
+  lab [label="Chosen training labels\\n(v5 or a v5 variant)"];
+  lei [label="leische trains"];
+  rep [label="Reported scores:\\nlabels and models vs TEST\\n(+ all 300 for context)", fillcolor="#e9f6ec", color="#4c9a5f"];
+  g -> dev; g -> test;
+  dev -> ea -> rule -> lab; ea -> gl -> lab [style=dashed];
+  lab -> lei -> rep; test -> rep;
+}"""
+)
+
 ALL_DIAGRAMS = {
+    "gold_use": GOLD_USE_DOT,
     "pipeline": PIPELINE_DOT,
     "lineage": LINEAGE_DOT,
     "annotation": ANNOTATION_DOT,
@@ -210,6 +229,16 @@ def _live(data_dir: str) -> dict[str, Any]:
         },
         "agreement": gold_agreement(gold, default_sources(db_dir)),
         "v5": run_progress(db_dir / "annotation-v5.sqlite3", GUIDE, V5_KEYS, V5_TARGET),
+        "vote_rules": vote_rule_table(
+            gold,
+            db_dir
+            / (
+                "annotation-v5.sqlite3"
+                if (db_dir / "annotation-v5.sqlite3").exists()
+                else "annotation-v4.sqlite3"
+            ),
+            GUIDE,
+        ),
         "cards": card_facts(base / "annotated"),
     }
 
@@ -236,7 +265,7 @@ def _glance(live: dict[str, Any]) -> None:
 **The story in four sentences.** The thesis asks whether context (the thread, the author's recent posts,
 similar examples) helps a model detect sarcasm in Filipino-English Reddit posts. The first round (v1, in the
 manuscript) found context did **not** help, but every score was agreement with LLM labels that agree with a
-human reader only weakly (κ ≈ 0.24). Since October the data side has been rebuilt around the adviser's
+human reader only weakly (κ about 0.2–0.3 on the gold set; live table in section 3). Since October the data side has been rebuilt around the adviser's
 comments: a 5-month corpus, equal-size annotator models with majority vote, a written sarcasm guideline,
 media flags, and a human gold set of 300 posts. An exploratory comparison already shows the current setup
 agrees with the human gold clearly better than the initial one (F1 0.16 → 0.35, exploratory); the final
@@ -344,11 +373,16 @@ Gio's own rate on the gold is about 10%, so the LLMs still over-call relative to
         )
     st.markdown(
         """
-**Reading it:** the guideline prompt roughly **doubles** agreement with Gio (label κ 0.24 → 0.48; blind 0.18 → 0.64).
-Llama-SEA-LION changes most (from no agreement to the best single model). SEA-LION gets worse with the guideline
-(it calls ~half the gold sarcastic). The three models also agree **less** with each other under the guideline
-(Fleiss κ 0.40 → 0.26), which majority vote absorbs. Much of the human–LLM gap was the definition of sarcasm,
-not the models.
+**Reading it (the table is live; the ranking has shifted as gold labels came in):**
+- **The guideline labels (v4/v5) agree with Gio best**, but the lead has narrowed as the gold set grew. At 111 items
+  it looked like a doubling (κ 0.24 → 0.48); at 237 items it is about 0.33 vs 0.27 (v1) and 0.21 (v3). On the 32
+  blind items it is still 0.64 vs 0.18.
+- **Every LLM label set over-calls sarcasm** (2–3× Gio's rate). That is why a stricter vote rule on the same votes
+  matches Gio better (section 10), with no new model run.
+- Llama-SEA-LION with the guideline is the best single model; SEA-LION with the guideline over-calls most. The three
+  models agree **less** with each other under the guideline (Fleiss κ 0.40 → 0.26).
+- Part of the human–LLM gap is the definition of sarcasm (the guideline helps), and part is over-calling (the vote
+  rule helps).
 """
     )
 
@@ -431,7 +465,7 @@ def _media(live: dict[str, Any]) -> None:
 **The blind spot.** Image-only posts were excluded as targets, but **comments under image and video posts were not**,
 and nobody (annotators or model) sees the image. In the 15,000 v1/v2 labels, **43% of rows reply to an image or
 video post and they hold 63% of the sarcastic labels**. In v3, replies to image posts are 24% sarcastic and to video
-posts 36%, against 13% for text posts. Of Gio's 11 sarcastic gold posts, 9 sit under unseen media.
+posts 36%, against 13% for text posts. Of Gio's 22 sarcastic gold posts (at 237 labeled), 18 sit under unseen media.
 
 **What was done (Nov 22):** keep everything, flag it, report slices (rebuilding a text-only dataset would remove most
 positives). Every exported row (v3 on) carries `media_context`: post type, whether the post/parent/target has media,
@@ -485,15 +519,15 @@ Every manuscript F1 is **agreement with the LLM ensemble**, on held-out folds, n
 | **D current** | **v4 → v4 (guideline)** | **3,176** | 0.311 | **0.353** |
 
 - **Headline:** the current setup's context model agrees with Gio better than the initial one: **+0.195 F1
-  [+0.04, +0.35], κ 0.03 → 0.25**, while training on a third as many rows. Exploratory: 11 human positives, one of
-  16 step tests.
+  [+0.04, +0.35], κ 0.03 → 0.25**, while training on a third as many rows. Exploratory: scored on the first 111 gold
+  items (11 human positives), one of 16 step tests. leische should re-score on the full gold set.
 - **The initial models missed most of Gio's sarcasm** (recall ≈ 0.15): the unanimous rule made labels too
   conservative. Majority labels lift recall to ≈ 0.67.
 - **Labels are the bigger lever than corpus size.** The equal-size/majority step is the clearest single gain
   (text-only +0.19); the guideline step clears zero on blind items; more author history is near the noise floor
   (≈ 0.06–0.10 F1 between identical runs).
 - **Context vs text-only is still not consistently better** within a run, in line with the manuscript's RQ1.
-- **Ceiling:** the best model's κ with Gio (0.25) is half its own labels' κ (0.48); more training rows (v5: ~4×) should help.
+- **Ceiling:** at 111 items the best model's κ with Gio (0.25) was about half its own labels' κ (0.48); more training rows (v5: ~4×) should help.
 """
     )
 
@@ -551,6 +585,65 @@ score is reported as a sensitivity check. Expect a panel question on this.
     )
 
 
+def _after_gold(live: dict[str, Any]) -> None:
+    g = live["gold"]
+    st.markdown(
+        f"""
+**Status:** {g['labeled']} / {g['queue'] or 300} gold posts labeled; {g['scored']} usable; **{g['positives']} sarcastic**
+(about {100 * g['positives'] / max(g['scored'], 1):.0f}%; the LLM label sets call 2–3× more posts sarcastic).
+
+### Why the gold set matters (beyond "accuracy vs a human")
+1. **Measure.** It turns every score from "agreement with LLMs" into "agreement with a human reader" (the
+   manuscript itself names this the most valuable next step).
+2. **Choose.** It is the only fair way to pick between label sets (v1–v5), annotators, and vote rules, because each
+   label set grades models differently.
+3. **Improve — yes, it can improve results.** Your answer is right: disagreements between the LLMs and you show
+   *where* the prompt and guideline are wrong, which leads to a better guideline/prompt (v1.2) and a better vote
+   rule. The cheapest lever is the vote rule (below): it changes the training labels without running any model.
+4. **Evaluate the final model,** including the media and language slices.
+5. **Defend.** It answers the panel's first question: *"how do you know the labels are right?"*
+
+**The one rule when using it to improve things:** whatever you tune on the gold can't also be the score you report,
+or the score is optimistic. So split it: a **dev** part (~100) for error analysis and choices, and a **test** part
+(~200) that stays untouched for the reported numbers. It is never training data (300 posts are too few, and using
+them would leak the answer key).
+"""
+    )
+    st.graphviz_chart(GOLD_USE_DOT)
+    st.markdown("**Example: same votes, different vote rule** (live, guideline-prompt votes vs your gold; no model run needed)")
+    rules = pd.DataFrame(live["vote_rules"])
+    if rules.empty:
+        st.info("No guideline votes found yet.")
+    else:
+        st.dataframe(rules, hide_index=True, width="stretch")
+        st.caption(
+            "The LLMs over-call sarcasm, so a stricter rule matches you better. This table uses ALL your gold labels, "
+            "so treat it as a hint: the real choice should be made on the dev split and confirmed on the test split. "
+            "It also answers the adviser's question about majority vote vs a 3-0 rule, with human data."
+        )
+    st.markdown(
+        """
+### Next actions once the gold set is finished
+| # | step | who | cost |
+|---|---|---|---|
+| 1 | Sync the 300 gold labels into the v3/v4/v5 databases; final agreement table with bootstrap 95% CIs | agent | minutes |
+| 2 | **Freeze a dev/test split** of the gold (seeded, stratified by sarcasm × language × media) | Gio decides, agent does | minutes |
+| 3 | **Error analysis on the dev split**: list LLM-vs-you disagreements by type (hugot/D1, unseen media, irony, rhetorical questions, language) | agent drafts, Gio checks | ~1 h |
+| 4 | **Pick the vote rule on dev** (majority / unanimous / without SEA-LION), confirm on test | agent | minutes, no model run |
+| 5 | Export v5 with the chosen rule (+ the `gold_queue` flag), send to phillmyeol | agent + Gio | minutes |
+| 6 | leische trains on v5 (3 main conditions × 3 seeds), scored on the test split and on all 300 | leische, Gio's go | ~20 GPU-h |
+| 7 | Optional, if time: guideline v1.2 from the error analysis → prompt guide-v1.2 → re-annotate (v6) | agent, Gio's go | ~2 days laptop |
+| 8 | D5: re-label your first 31 items blind (2+ weeks later) for an intra-annotator κ | Gio | ~30 min |
+| 9 | Thesis text: gold method (sampling, guideline, Claude-assisted vs blind, dev/test split) | tsis chat | — |
+
+**What to expect:** with 300 items and ~25–30 sarcastic posts, the agreement intervals roughly halve compared with
+the first 111 items. The ranking of label sets has already shifted as labels came in (the guideline labels' lead
+narrowed from κ 0.48 vs 0.24 to about 0.33 vs 0.27), which is exactly why the full set and a held-out test split
+matter before any claim goes in the manuscript.
+"""
+    )
+
+
 def _next(live: dict[str, Any]) -> None:
     st.graphviz_chart(TIMELINE_DOT)
     v5 = live["v5"]
@@ -563,7 +656,7 @@ def _next(live: dict[str, Any]) -> None:
     st.markdown(
         """
 **Before the defense, in order:**
-1. **Finish gold labeling** (tonight). Every interval above is wide because the key has 11 sarcastic posts.
+1. **Finish gold labeling.** The intervals in leische's comparison are wide because it was scored on 11 sarcastic posts; the full set roughly doubles that.
 2. **Adviser consultation** (Wed): v3 done; exploratory evidence; v5 as the final dataset (decision on the guideline
    re-annotation).
 3. **v5 annotation finishes** (Thu ~19:00; the 15,000 v1/v2 posts are done by ~05:00 if an earlier cut is needed).
@@ -636,8 +729,9 @@ def render_progress_notes(data_dir: Path) -> None:
         ("7 · Model results: manuscript and the new comparison", partial(_results, live)),
         ("8 · leische plans: routing context", _routing),
         ("9 · Gold set (human answer key)", partial(_gold, live)),
-        ("10 · Next steps before the defense, and expected results", partial(_next, live)),
-        ("11 · Other details and likely panel questions", _misc),
+        ("10 · After the gold set: next actions, and why it matters", partial(_after_gold, live)),
+        ("11 · Next steps before the defense, and expected results", partial(_next, live)),
+        ("12 · Other details and likely panel questions", _misc),
     ]
     for title, body in sections:
         with st.expander(title, expanded=False):

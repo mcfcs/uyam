@@ -16,6 +16,7 @@ from uyam.progress_notes import (
     gold_agreement,
     load_gold,
     run_progress,
+    vote_rule_table,
 )
 
 # Four gold items: two blind, one Claude-assisted, one with votes shown (left out).
@@ -145,4 +146,32 @@ def test_progress_tab_renders_without_errors(tmp_path: Path) -> None:
     at.run()
     assert not at.exception
     assert at.metric[0].value == "4 / 5"  # gold labeled / queue
-    assert len(at.expander) == 11
+    assert len(at.expander) == 12
+
+
+def test_vote_rule_table_recounts_stored_votes_read_only(tmp_path: Path) -> None:
+    db_dir = _main_db(tmp_path)
+    gold, _ = load_gold(db_dir / "annotation.sqlite3")
+    v4 = tmp_path / "v4.sqlite3"
+    # t1_a (human 1): 3-0 yes; t1_b (human 0): 2-1 yes (SEA-LION + qwen3); t1_c (human 1): 1-2.
+    votes = {
+        "t1_a": {"qwen3": 1, "sealion": 1, "llamasealion": 1},
+        "t1_b": {"qwen3": 1, "sealion": 1, "llamasealion": 0},
+        "t1_c": {"qwen3": 0, "sealion": 0, "llamasealion": 1},
+    }
+    with AnnotationDatabase(v4) as db:
+        for name, by_model in votes.items():
+            for key, value in by_model.items():
+                db.insert_llm_annotation(
+                    {"reddit_fullname": name, "model_key": key, "prompt_version": GUIDE,
+                     "role": "annotator", "sarcastic": value, "language": "english",
+                     "literal_sentiment": "neutral", "intended_sentiment": "neutral"}
+                )
+    before = v4.read_bytes()
+    rows = {r["vote rule (guideline votes)"]: r for r in vote_rule_table(gold, v4, GUIDE)}
+    assert v4.read_bytes() == before
+    assert rows["majority 2 of 3 (current v4/v5 rule)"]["model +"] == 2  # a, b
+    assert rows["unanimous 3 of 3"]["model +"] == 1  # a
+    assert rows["Llama-SEA-LION alone"]["model +"] == 2  # a, c
+    assert rows["Llama-SEA-LION alone"]["κ vs gold"] == 1.0  # matches a=1, b=0, c=1
+    assert vote_rule_table(gold, tmp_path / "missing.sqlite3", GUIDE) == []

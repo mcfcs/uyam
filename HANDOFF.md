@@ -169,6 +169,16 @@ lazy tab ("Progress notes"); labeling still runs only the review page. 8502
 was restarted. Open question: why 8501 loads slowly for Gio (startup work
 or tab bodies). Not investigated yet.
 
+**2026-11-25 15:15:** gold is at 240/300 (237 usable, 22 sarcastic). The
+label sets' agreement with the gold shifted: guideline majority κ 0.33,
+v1 0.27, v3 0.21 (at 111 items it was 0.48 / 0.24 / 0.24). Every LLM label
+set over-calls (59 model + vs 22 human). The same guideline votes under a
+stricter rule match Gio better: unanimous κ 0.44, qwen3 AND Llama 0.41,
+Llama alone 0.38, against majority 0.33. That's exploratory, on all labels;
+choose on a dev split. The Progress notes get section 10 ("After the gold
+set": why gold matters, dev/test split, next actions, live vote-rule table,
+diagram), and the stale 111-item prose was corrected.
+
 ### 2026-11-24 (night) — leische's exploratory initial-vs-current comparison
 
 **leische (LEISCHE_LATEST 2026-11-24 night, leische `0a995e3`, §5d/§5e):**
