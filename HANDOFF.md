@@ -142,9 +142,17 @@ still covers everything up to ~2 days ago.
   pre-declare majority as primary and unanimous (from the vote share) as a
   sensitivity check, so the gold is never tuned on.
 
-**Left open (Gio's go):** `gold_queue` flag + re-export v3/v4 with all 300
-gold labels for leische to re-score; v5 export Thu evening; leische
-training; a descriptive error analysis.
+**Decisions (Gio):** majority vote is the primary v5 label, and unanimous
+(from the vote share) is a sensitivity check. Re-export now.
+
+**Then done:** `9f15d67` adds `flags.gold_queue` (all 300 queue posts; parquet
+`flag_gold_queue`; card `counts.gold_queue_rows`). v3 and v4 were
+re-exported: labels unchanged, 300 human_gold, 300 flagged, card gold κ
+0.203 / 0.314 on 297. Taildropped to phillmyeol (v3 1ae3ec92…, v4
+fb8910fb…). The UYAM_LATEST §9 request asks leische to re-score.
+
+**Left open:** v5 export Thu evening (retry 3 qwen3 failures, majority, gold,
+flag); leische training (Gio's go); the descriptive error analysis.
 
 ### 2026-11-24 (late night) — dataset-v5 started; gold-assist decision
 

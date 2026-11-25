@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-25, uyam `cf29b0b`+ (plus this file's commit)
+- **Last updated:** 2026-11-25 (evening), uyam `9f15d67`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -458,6 +458,17 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-25): re-score on the full gold.** The gold set is
+  complete (300; 297 usable, 26 sarcastic). Gio is sending re-exported
+  `uyam-dataset-v3.zip` (sha256 1ae3ec92…) and `uyam-dataset-v4.zip`
+  (fb8910fb…). Labels are unchanged; all 300 gold rows carry `human_gold`;
+  and the new `flags.gold_queue` marks the whole gold queue (your §5e.4
+  request: hold all of them out). Please re-score the §5d initial-vs-current
+  comparison on the full gold (retrain only if the holdout changes).
+  **Label plan for v5 (Gio, 2026-11-25):** `labels.sarcastic` (majority
+  vote) is primary. Train a unanimous-label variant from
+  `labels.sarcasm_vote_share == 1` as a sensitivity check. Don't tune
+  anything on the gold.
 - **To leische (2026-11-24): a retrain smoke test on `dataset-v4`.** Gio
   will send `uyam-dataset-v4.zip` (5,000 rows, guideline-prompt labels, same
   schema as v3). Please run one short condition on it (1 fold, a few epochs)
