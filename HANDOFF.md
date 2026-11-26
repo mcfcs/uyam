@@ -51,20 +51,9 @@ guideline decisions D2, D3 and D5 are open.
 
 ## In progress
 
-**dataset-v5 run STARTED 2026-11-24 19:50 PHT** (Gio's "go v5"). It's
-detached: PowerShell pid 164172 runs `data/.v5-run.ps1` (stage 1
-`--target 16362`, then stage 2 `--target 21000`). Lane job
-`annotation-v5-run-all-local` (qwen3 → sealion → llamasealion), local only.
-Logs: `data/.v5-run.log` (UTF-16) and
-`data/.annotate-status/annotation-v5-run-all-local.log`; also visible in
-Annotation → Current annotation runs.
-- ETA at 10.6 s per item across the three models: stage 1 is 11,362 items,
-  about 33 h (around Thu 26 Nov 05:00); stage 2 is 4,638 items, about 14 h
-  (around Thu 26 Nov 19:00).
-- After stage 1 (optional early cut) or stage 2: `sync-gold`, aggregate, and
-  `export --version v5 --config-path config/annotation-v5.yaml`. Language for
-  analysis is `aux.lid.language_rule` (already computed for all 21,000).
-- To resume after a stop, re-run the script; finished items are skipped.
+Nothing is running on the laptop. **dataset-v5 finished 2026-11-26 19:41**
+and was exported 2026-11-27 03:25 (see the session log). leische trains on
+phillmyeol on Gio's go.
 
 Streamlit runs on 8501 (main) and 8502 (labeling site).
 Gio's apps (arbit, manabi/GPT-SoVITS) share the laptop: **don't close
@@ -126,6 +115,25 @@ still covers everything up to ~2 days ago.
 ---
 
 ## Session log
+
+### 2026-11-27 — dataset-v5 exported and sent
+
+**Context (Gio):** "yes, retry + export".
+
+**Done:**
+- v5 annotation ended 2026-11-26 19:41 (all three models, 21,000 each).
+- Backup `annotation-v5-*-pre-export.bak.sqlite3`. qwen3 `--retry-failed`
+  (3 stored, local), `sync-gold` (300 unchanged), aggregate (3,592
+  unanimous / 17,408 majority), `export --version v5`.
+- Verified: 21,000 rows (same ids as v3), 4,635 sarcastic, 1,216 3-of-3,
+  300 gold_queue / human_gold, checksums OK, gold κ 0.314 (blind 0.574),
+  Fleiss 0.26, v3-vs-v5 κ 0.585.
+- Taildropped to phillmyeol (sha256 86c9f052…). UYAM_LATEST was updated and
+  mirrored, and the Progress notes mark v5 as exported.
+
+**Next:** leische §5f on Gio's go (majority seed 13 ~4.8 h → seeds 42/7 →
+unanimous). Presentation items (pairwise κ, version table, false-positive
+report) on Gio's go.
 
 ### 2026-11-26 — consultation notes; v5 stage 2
 

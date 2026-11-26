@@ -74,7 +74,7 @@ LINEAGE_DOT = (
   v2 [label="v2 (Nov 22)\\nsame 15,000 + same labels\\ncorpus 5 weeks -> 5 months\\n(more author history)"];
   v3 [label="v3 (Nov 23)\\n21,000 posts (+6,000 Jun/Jul/Oct/Nov)\\n3 equal-size 8-9B LLMs\\nmajority vote, 19.1% sarcastic"];
   v4 [label="v4 pilot (Nov 24)\\n5,000 posts (300 gold + 4,700)\\nguideline prompt\\n22.1% sarcastic", fillcolor="#fff4d6", color="#c79a2b"];
-  v5 [label="v5 (running, due Thu Nov 26)\\n21,000 posts, guideline prompt\\nplanned final dataset", fillcolor="#e9f6ec", color="#4c9a5f"];
+  v5 [label="v5 (Nov 27)\\n21,000 posts, guideline prompt\\n22.1% sarcastic\\nfinal dataset", fillcolor="#e9f6ec", color="#4c9a5f"];
   v1 -> v2 [label="+ context"];
   v2 -> v3 [label="+ equal-size\\nmajority vote\\n+ new months"];
   v3 -> v4 [label="+ guideline\\nprompt (test)"];
@@ -397,16 +397,12 @@ def _datasets(live: dict[str, Any]) -> None:
     def card(v: str, key: str) -> Any:
         return (cards.get(v) or {}).get(key)
 
-    v5 = live["v5"]
-    v5_state = (
-        f"running: {100 * v5['share']:.0f}% of votes" if v5 else "not started"
-    )
     rows = [
         ("v1", "Sep 15", "15,000", "1,601 (10.7%)", "3 mixed-size + 32B judge, unanimous", "sarc-v2", "37%", "manuscript; leische results"),
         ("v2", "Nov 22", "15,000 (same)", "1,601 (same)", "same labels as v1", "sarc-v2", _pct(card("v2", "history 48 h")), "more author history (5-month corpus); phatic flag; majority field"),
         ("v3", "Nov 23", "21,000", f"{card('v3', 'sarcastic') or 4011:,} (19.1%)", "3 equal-size, majority", "sarc-v2", _pct(card("v3", "history 48 h")), "adviser item 5; +6,000 posts from Jun/Jul/Oct/Nov; media flags; rule-based language"),
         ("v4", "Nov 24", "5,000 (pilot)", f"{card('v4', 'sarcastic') or 1104:,} (22.1%)", "3 equal-size, majority", "guide-v1.1", _pct(card("v4", "history 48 h")), "guideline prompt test; 300 gold + 4,700 stratified"),
-        ("v5", "Thu Nov 26 (due)", "21,000", "–", "3 equal-size, majority", "guide-v1.1", "~50%", f"planned final dataset; {v5_state}"),
+        ("v5", "Nov 27", "21,000", f"{card('v5', 'sarcastic') or 4635:,} (22.1%)", "3 equal-size, majority", "guide-v1.1", _pct(card("v5", "history 48 h")), "final dataset: guideline prompt at v3's size (same posts as v3); sent to leische"),
     ]
     st.dataframe(
         pd.DataFrame(
@@ -666,8 +662,8 @@ Improvements (context routing, a guideline v1.2 re-annotation) move to next seme
 **Before the defense, in order:**
 1. ~~Finish gold labeling~~ **done Nov 25** (300; 297 usable, 26 sarcastic).
 2. ~~Adviser consultation~~ **done Nov 25** (notes in `ADVISER_UPDATE`/UYAM_LATEST §10b).
-3. **v5 annotation finishes** (Thu Nov 26 evening; stage 1, the 15,000 v1/v2 posts, finished 06:06).
-4. **Export v5** (majority vote primary; full gold; `gold_queue` flag) and send to phillmyeol.
+3. ~~v5 annotation~~ **done Nov 26, 19:41** (21,000 posts; 4,635 sarcastic).
+4. ~~Export v5~~ **done Nov 27** (majority vote primary; full gold; `gold_queue` flag); sent to phillmyeol.
 5. **leische retrains on v5:** the 3 main conditions × 3 seeds (~20 GPU-h) + a unanimous-label variant, scored on the
    gold (overall, text-only, by language) and on its own folds.
 6. **Finals presentation items** (adviser):

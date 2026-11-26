@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-26, uyam `440c21c`+ (plus this file's commit)
+- **Last updated:** 2026-11-27, uyam `7dd6332`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -40,13 +40,29 @@ repo; an identical copy sits at the root of tsis. Newest information first.
   - The corpus dump holds 352,176 records.
   - **leische doesn't have v3 yet** (Gio sends the bundle). Like v2, keep
     v3 figures out of the manuscript until leische has results on it.
-- **`dataset-v5` is being annotated (started 2026-11-24 19:50, Gio's go):**
-  the guideline-prompt setup of the v4 pilot (same prompt `guide-v1.1`, same
-  three equal-size models, majority vote) at v3's 21,000 posts. The 5,000
-  pilot items keep their votes. Stage 1 finishes the 15,000 v1/v2 posts
-  (around Thu 26 Nov 05:00); stage 2 adds 4,638 new-month posts (around Thu
-  19:00). Language for analysis: `aux.lid.language_rule`. Gio's plan is for
-  it to be the final dataset, with v3 as the fallback. Nothing to quote yet.
+- **`dataset-v5` is EXPORTED (2026-11-27 03:25; card `dataset_card-v5.json`,
+  bundle `uyam-dataset-v5.zip`, sha256 86c9f052…; sent to leische by
+  Taildrop). It is the planned final dataset, with v3 as the fallback.**
+  - **Setup:** the guideline prompt (`guide-v1.1`), the same three equal-size
+    local models (qwen3 8B, Gemma-SEA-LION-v3 9B, Llama-SEA-LION-v3 8B),
+    majority vote, no adjudicator. The same 21,000 posts as v3 (15,000 v1/v2
+    + 6,000 Jun/Jul/Oct/Nov), so v3 and v5 differ only in the prompt.
+    Annotation took 34.3 h (stage 1) + ~13.6 h (stage 2) on the laptop.
+  - **Labels:** **4,635 sarcastic (22.1%)**. 3,592 unanimous / 17,408 by
+    majority; 1,216 posts are 3-of-3 sarcastic (for leische's unanimous
+    sensitivity check). Against v3 on the same posts: κ 0.59 (1,738 flip to
+    sarcastic, 1,114 flip away).
+  - **Agreement:** among the three annotators, Fleiss κ 0.26 (sarcasm). Against
+    Gio's gold (297 usable): Cohen's κ 0.31 (blind 0.57), F1 0.40, precision
+    0.27, recall 0.81. That's the same as v4, since the gold posts were in the
+    pilot.
+  - **Language (rule-based `aux.lid.language_rule`, κ 0.84 vs gold):** English
+    6,537 (923 sarcastic), Tagalog 1,217 (373), Taglish 13,246 (3,339).
+  - **Media:** replies to text posts are 16.2% sarcastic, image 26.9%, video
+    35.0%; 9,810 text-only rows (1,582 sarcastic). Author history ≤ 48 h:
+    50.5% of rows.
+  - **Not quotable as a model result** until leische retrains (§5f of
+    LEISCHE_LATEST: ~14.4 GPU-h for the majority plan).
 - **Gold set COMPLETE (2026-11-25): 300/300 labeled by Gio**; 297 usable (3 were
   saved with model votes showing), **26 sarcastic (8.8%)**, 33 blind first
   passes (6 sarcastic). Synced into the v3/v4/v5 databases. Final agreement of
@@ -458,6 +474,12 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-27): `dataset-v5` sent by Taildrop**
+  (`uyam-dataset-v5.zip`, sha256
+  86c9f052f9492a39e148516c8e0a6de193746eb64e0cfd64251ad9746c70963a). It is the
+  same schema as v3/v4, with all 300 `flags.gold_queue` and `human_gold` rows.
+  Run your §5f plan on Gio's go: majority first (seed 13, then 42/7), then
+  the unanimous variant (`labels.sarcasm_vote_share == 1`).
 - **To leische (2026-11-25): re-score on the full gold.** The gold set is
   complete (300; 297 usable, 26 sarcastic). Gio is sending re-exported
   `uyam-dataset-v3.zip` (sha256 1ae3ec92…) and `uyam-dataset-v4.zip`
@@ -569,6 +591,9 @@ Decisions and requests (Gio's notes, `20261125 - Consultation`):
 
 ## 11. Change log
 
+- **2026-11-27**: **dataset-v5 exported and sent to leische** (21,000 rows,
+  4,635 sarcastic, guideline prompt, majority vote; gold κ 0.31). The 3
+  failed qwen3 items were retried before export.
 - **2026-11-26**: consultation of 2026-11-25 recorded (§10b): showcase the
   new labels for finals, defer routing to next semester, plus the
   presentation items (LLM inter-annotator agreement, cross-version
