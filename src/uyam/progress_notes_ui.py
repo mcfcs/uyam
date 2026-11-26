@@ -558,9 +558,9 @@ def _routing() -> None:
   context), which turns the negative RQ1 into an analysis rather than a dead end.
 - **Against / risks:** it is a design draft (no run yet); gains are hard to show when the human answer key has few
   positives; and time before the defense is short.
-- **Suggested order:** first train the proven setup on v5 (the 3 main conditions, 3 seeds, ~20 GPU-h). Then, if time
-  allows, one routing row (fold 0, one seed) as an added experiment; otherwise present routing as the main future-work
-  design with the gate statistics as motivation.
+- **Decision (consultation, Nov 25): routing is deferred to next semester.** The panel recommended context routing
+  (to avoid overfitting on heavy context); the adviser agreed to answer the current research questions first and
+  showcase the new labels. If pursued later, it can be tested on a 5,000-post subset (the v4 pilot size).
 """
     )
 
@@ -660,24 +660,32 @@ def _next(live: dict[str, Any]) -> None:
         )
     st.markdown(
         """
+**Consultation (Nov 25) decided the focus for finals: showcase the new outputs from the new labels.**
+Improvements (context routing, a guideline v1.2 re-annotation) move to next semester.
+
 **Before the defense, in order:**
-1. **Finish gold labeling.** The intervals in leische's comparison are wide because it was scored on 11 sarcastic posts; the full set roughly doubles that.
-2. **Adviser consultation** (Wed): v3 done; exploratory evidence; v5 as the final dataset (decision on the guideline
-   re-annotation).
-3. **v5 annotation finishes** (Thu ~19:00; the 15,000 v1/v2 posts are done by ~05:00 if an earlier cut is needed).
-4. **Export v5** with the full gold synced and a `gold_queue` flag on all 300 gold posts, so leische can keep them out
-   of training. Send to phillmyeol by Taildrop.
-5. **leische trains on v5:** the 3 main conditions × 3 seeds (~20 GPU-h; the full 8-condition matrix is ~40 GPU-h),
-   scored both the manuscript way (held-out LLM labels, folds) and on the 300-item gold.
-6. **Manuscript (tsis):** data and annotation method, the guideline appendix, media limitation, language labeling,
-   Claude-assisted gold, Arctic Shift ethics, terminology (Filipino / code-switching), new results.
+1. ~~Finish gold labeling~~ **done Nov 25** (300; 297 usable, 26 sarcastic).
+2. ~~Adviser consultation~~ **done Nov 25** (notes in `ADVISER_UPDATE`/UYAM_LATEST §10b).
+3. **v5 annotation finishes** (Thu Nov 26 evening; stage 1, the 15,000 v1/v2 posts, finished 06:06).
+4. **Export v5** (majority vote primary; full gold; `gold_queue` flag) and send to phillmyeol.
+5. **leische retrains on v5:** the 3 main conditions × 3 seeds (~20 GPU-h) + a unanimous-label variant, scored on the
+   gold (overall, text-only, by language) and on its own folds.
+6. **Finals presentation items** (adviser):
+   - **Inter-annotator agreement across the LLM annotators** (Fleiss κ + pairwise Cohen's κ per version), with the
+     caveat that the models may share training data, so LLM agreement is not a gold standard.
+   - **Comparison table across annotation versions**: labels, code-switching (language profile and sarcasm by
+     language), contextual awareness (context coverage, context-dependent cues).
+   - **Qualitative analysis of false positives** with examples (LLM says sarcastic, Gio says not), e.g. hate speech
+     and plain complaints flagged as sarcasm.
+   - Focus the analysis on **code-switching and contextual awareness** once annotation is done.
+7. **Manuscript (tsis)** with the new dataset and annotation results; **schedule the panelist meeting** early.
 
 **What results to expect (an informed guess, not a promise):**
 - Against the **human gold**: a v5-trained model should at least match the exploratory D (F1 ≈ 0.35, κ ≈ 0.25), likely
   higher with ~4× the training rows, and clearly above the initial setup (≈ 0.16).
 - Against **its own LLM labels**: F1 around 0.45–0.50 at a ~22% positive rate. Not comparable to the manuscript's
   0.368 (different labels and base rate); report it only within v5.
-- **RQ1 (does context help?)** may stay small or null; the routing design is how to make that a finding.
+- **RQ1 (does context help?)** may stay small or null; routing (next semester) is how to turn that into a finding.
 """
     )
 

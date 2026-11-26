@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-25 (evening), uyam `9f15d67`+ (plus this file's commit)
+- **Last updated:** 2026-11-26, uyam `440c21c`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -538,8 +538,42 @@ remove most positives and change the population.
 | 10 | Release the dataset only after the labels are validated and the manuscript is revised | all | **In place:** RULES §5.11. Exports go to leische only, by direct transfer, never GitHub |
 | 11 | Manuscript: "Taglish" → "Filipino"; define code-switching (including intra-sentential) | tsis | Note on the data: the label `taglish` means the target "meaningfully mixes both" (neither language ≥ ~90% of its words). It is assigned per target, so it covers **both intra- and inter-sentential** switching without telling them apart. Recommended: keep the three profiles and rename them in the text (English / Filipino / Filipino–English code-switched). The Chapter 4 by-language result depends on keeping them separate. If the manuscript needs the intra-sentential share, uyam can measure it with the token-level LID |
 
+### 10b. Consultation of 2026-11-25 (adviser + panel input)
+
+Decisions and requests (Gio's notes, `20261125 - Consultation`):
+- **Focus for finals: showcase the new outputs based on the new labels.**
+  Improvements move to next semester: **context routing is deferred** (the
+  panel recommended it against overfitting on heavy context; if pursued, it
+  could be tested on a 5,000-post subset), and so is any guideline v1.2
+  re-annotation.
+- **Finish v5 and retrain on the new dataset; update the manuscript with the
+  new dataset and annotation results; schedule the panelist meeting early.**
+- **Presentation must include:** inter-annotator agreement across the LLM
+  annotators (Cohen's κ / Fleiss κ), with the caveat that there's no true gold
+  standard among LLMs (they may share training data); a **comparison table
+  across annotation versions** (labels, code-switching, contextual
+  awareness); a **qualitative analysis of false positives with examples**
+  (e.g. hate speech flagged as sarcastic); and a focus on code-switching and
+  contextual awareness after annotation.
+
+**Corrections for anything quoted from the notes into the manuscript:**
+- **Lineup.** It is qwen3 8B, Gemma-SEA-LION-v3 9B and Llama-SEA-LION-v3 8B.
+  There is no Gemini; "Gemma" is the base of one SEA-LION model.
+- **Old lineup.** The old big model was gemma3 **27B** (parameters, not GB),
+  plus a qwen3 32B adjudicator.
+- **Data source.** The data didn't switch away from a working API. The Reddit
+  API application is pending, the v1 core came from the browser scraper, and
+  the history from the Arctic Shift archive.
+- **Previous F1.** The manuscript's v1 baseline F1 is 0.368 (against LLM
+  labels); about 0.3 is the rough figure.
+
 ## 11. Change log
 
+- **2026-11-26**: consultation of 2026-11-25 recorded (§10b): showcase the
+  new labels for finals, defer routing to next semester, plus the
+  presentation items (LLM inter-annotator agreement, cross-version
+  comparison table, false-positive analysis). v5 stage 1 (the 15,000 v1/v2
+  posts) finished 2026-11-26 06:06; stage 2 is running.
 - **2026-11-25**: gold set complete (300; 297 usable, 26 sarcastic). Final
   κ of each label set with the gold, with CIs (top of this file). The
   guideline prompt beats the old prompt with the same models (+0.11

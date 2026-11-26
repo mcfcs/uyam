@@ -127,6 +127,30 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-26 — consultation notes; v5 stage 2
+
+**Consultation (2026-11-25, Gio's PDF notes):** showcase new outputs from the
+new labels for finals; routing and other improvements next semester (a 5k
+subset if tested). Presentation items: LLM inter-annotator agreement
+(Cohen's/Fleiss κ, with the shared-training-data caveat), a cross-version
+comparison table (labels, code-switching, contextual awareness), a
+qualitative false-positive analysis with examples, and a code-switching /
+context focus. Also: update the manuscript, and schedule the panel meeting
+early. The notes have small factual slips: "Gemini" (it's Gemma-SEA-LION),
+"27GB" (27B), and "switched from Reddit's API (blocked)" (API pending; scraper
++ archive). UYAM_LATEST §10b records the corrections.
+
+**v5:** stage 1 finished 06:06 (34.3 h): 16,362 aggregated (2,876
+unanimous, 13,486 majority). Stage 2 started 06:06. At 10:37 qwen3 was done
+(20,997 + 3 failures) and SEA-LION at 17,172 (~10/min). ETA: SEA-LION
+~17:00, Llama-SEA-LION ~20:00, then aggregate. Note: `data/.v5-run.log` is
+UTF-16 from PowerShell's `*>>`, so read it with `iconv -f UTF-16LE` or read the DB.
+
+**Agent work queued for after v5 (no LLM):** v5 export, pairwise Cohen's κ
+between annotators per version, a cross-version comparison table, and a
+false-positive example report (local `data/`, never committed: verbatim
+Reddit text).
+
 ### 2026-11-25 (evening) — gold set complete; final agreement
 
 **Context (Gio):** finished the gold annotation; asked what now.
