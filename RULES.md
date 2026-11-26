@@ -130,6 +130,7 @@ replacing it:
 | Every exported row carries media_context (post type + unseen-media flags) and the card reports it per slice | `test_media_context.py` |
 | A re-annotation fork never changes the source DB; only the configured lineup's votes are aggregated; the v3 lineup is local-only with no adjudicator; target_priority survives re-select | `test_annotate_v3.py` |
 | The Progress notes tab is read-only, scores gold on first passes without votes_seen items, and splits blind vs Claude-assisted | `test_progress_notes.py` |
+| The Annotation EDA page is read-only and its vote-count, estimate and version-table figures are computed from stored votes and the gold | `test_annotation_eda.py` |
 | The run-status panel is read-only (never writes the DB) and tests never see the real job registry | `test_run_status.py` |
 
 When you add a new source, filter, or export field, add a row here.

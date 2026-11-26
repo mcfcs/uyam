@@ -132,7 +132,23 @@ still covers everything up to ~2 days ago.
   mirrored, and the Progress notes mark v5 as exported.
 
 **Next:** leische §5f on Gio's go (majority seed 13 ~4.8 h → seeds 42/7 →
-unanimous). Presentation items (pairwise κ, version table, false-positive
+unanimous).
+
+**Later (03:50):** Gio gave leische the go. An **Annotation EDA** tab was
+added to 8502 (`annotation_eda.py` + `_ui.py`). It covers per-model
+sarcasm rates and confidence (v5 vs v3), pairwise Cohen's κ, a vote-count vs
+gold table, a post-stratified estimate of the human rate, confidence vs gold,
+big set vs gold by language and post type, the cross-version table (the
+adviser's presentation item 2), and defense notes. Key numbers:
+- P(Gio sarcastic | 3/2/1/0 votes) = 48% / 19% / 3% / 2% (v5).
+- Estimated human rate in the 21k ≈ 7.5% (vs 22.1% labeled).
+- Confidence barely separates right from wrong.
+- Llama-SEA-LION's v5 rate is 9.6% (Gio 8.8%).
+
+Gio asked whether to add media as a model input before training. Advised
+no: it's a likely shortcut (sarcasm concentrates under media), and it would
+change the design mid-plan. Keep it as a reporting slice; test it next
+semester with routing. Presentation items (pairwise κ, version table, false-positive
 report) on Gio's go.
 
 ### 2026-11-26 — consultation notes; v5 stage 2

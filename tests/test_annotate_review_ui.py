@@ -540,7 +540,7 @@ def test_label_site_runs_only_the_review_page_until_notes_are_opened(
     at = AppTest.from_file(str(app), default_timeout=30)
     at.run()
     assert not at.exception
-    assert [t.label for t in at.tabs] == ["Gold labeling", "Progress notes"]
+    assert [t.label for t in at.tabs] == ["Gold labeling", "Progress notes", "Annotation EDA"]
     assert "Wow ang galing naman" in _rendered_text(at)  # the queue's item is on screen
     # The notes tab is lazy: its page doesn't run while labeling.
     assert not [h for h in at.header if h.value == "Progress notes"]

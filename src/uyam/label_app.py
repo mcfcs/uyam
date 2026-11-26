@@ -16,8 +16,10 @@ import streamlit as st
 st.set_page_config(page_title="Uyam · Gold labeling", page_icon="🏷️", layout="wide")
 
 # Lazy tabs: only the open tab runs, so labeling never pays for the notes.
-tab_label, tab_notes = st.tabs(
-    key="label_site_tabs", on_change="rerun", tabs=["Gold labeling", "Progress notes"]
+tab_label, tab_notes, tab_eda = st.tabs(
+    key="label_site_tabs",
+    on_change="rerun",
+    tabs=["Gold labeling", "Progress notes", "Annotation EDA"],
 )
 
 with tab_label:
@@ -42,3 +44,15 @@ with tab_notes:
             render_progress_notes(_data if _data.is_absolute() else _repo / _data)
         except Exception as exc:  # noqa: BLE001 - never take the labeling site down
             st.error(f"Progress notes unavailable: {exc}")
+
+with tab_eda:
+    if tab_eda.open:
+        try:
+            from uyam.annotation_eda_ui import render_annotation_eda
+            from uyam.config import load_config
+
+            _repo = Path(__file__).resolve().parents[2]
+            _data = load_config().data_dir
+            render_annotation_eda(_data if _data.is_absolute() else _repo / _data)
+        except Exception as exc:  # noqa: BLE001 - never take the labeling site down
+            st.error(f"Annotation EDA unavailable: {exc}")
