@@ -146,6 +146,17 @@ unanimous, 13,486 majority). Stage 2 started 06:06. At 10:37 qwen3 was done
 ~17:00, Llama-SEA-LION ~20:00, then aggregate. Note: `data/.v5-run.log` is
 UTF-16 from PowerShell's `*>>`, so read it with `iconv -f UTF-16LE` or read the DB.
 
+**17:48 update:** SEA-LION finished stage 2 at 16:46. Llama-SEA-LION is at
+17,991/21,000 (~27/min), ETA ~19:40, then the pipeline aggregates. Stage-1
+aggregates: 16,362 items, 3,509 sarcastic (21.4%).
+**leische (LEISCHE_LATEST 2026-11-26, `b42f482`/`44d472a`):** the v3/v4
+full-gold re-exports were received and verified; the whole gold queue is held
+out of training. A v5 plan is ready (§5f) and waits for Gio's go: stage M
+(majority) 3 conditions × 5 folds × 3 seeds ≈ 14.4 GPU-h (seed 13 first,
+~4.8 h); stage U (unanimous) also ≈ 14.4 h, or cheaper subsets (~4.8–10 h).
+The §5d full-gold re-score needs a ~3 h retrain (the holdout changed) and is
+not in the v5 plan.
+
 **Agent work queued for after v5 (no LLM):** v5 export, pairwise Cohen's κ
 between annotators per version, a cross-version comparison table, and a
 false-positive example report (local `data/`, never committed: verbatim
