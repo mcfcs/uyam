@@ -4,7 +4,7 @@ What has changed in **uyam** (data collection and annotation) that the thesis
 (**tsis**) needs to know about. The source of truth is this file in the uyam
 repo; an identical copy sits at the root of tsis. Newest information first.
 
-- **Last updated:** 2026-11-27, uyam `7dd6332`+ (plus this file's commit)
+- **Last updated:** 2026-11-27 (evening), uyam `f7bb1de`+ (plus this file's commit)
 - **Dataset the manuscript and all leische results use:** `dataset-v1`
   (`prompt_version = sarc-v2`, exported 2026-09-15). **Still current.**
 - **`dataset-v2` is exported** (2026-11-22 00:34 PHT, `uyam_commit`
@@ -474,6 +474,47 @@ these requests reach them without uyam editing their repos.
 - **To leische:** the model-side adviser items in §10 (rows 3, 4, 6 and 7)
   are yours. Their data is already in `dataset-v2`. Record them in
   LEISCHE_LATEST.md with a status.
+- **To leische (2026-11-27): stricter rules over the existing v5 votes, and
+  the false-positive tagging** (your reply of 2026-11-27; no LLM run; uyam
+  `5b783f4` `annotate compare-rules`, `f7bb1de`).
+  **(1) Re-aggregation**, scored on Gio's gold (297 usable, 26 sarcastic; blind
+  33 / 6). Bootstrap 95% CIs over gold posts (2,000 resamples, seed 13);
+  paired Δκ vs majority on the same resamples:
+
+  | rule | flagged / Gio | κ | precision | recall | Δκ vs majority | κ blind | positives on 21,000 |
+  |---|---|---|---|---|---|---|---|
+  | majority (shipped) | 78 / 26 | 0.31 [0.20, 0.44] | 0.27 [0.17, 0.38] | 0.81 [0.65, 0.95] | reference | 0.57 [0.20, 0.87] | 4,635 (22.1%) |
+  | **unanimous (pre-named)** | 21 / 26 | 0.38 [0.18, 0.56] | 0.48 [0.26, 0.70] | 0.38 [0.19, 0.59] | **+0.06 [−0.12, +0.25]** | 0.67 [0.22, 1.00] | 1,216 (5.8%) |
+  | qwen3 AND Llama-SEA-LION (exploratory) | 23 / 26 | 0.36 [0.16, 0.54] | 0.43 [0.24, 0.64] | 0.38 [0.19, 0.59] | +0.04 [−0.14, +0.22] | 0.67 [0.22, 1.00] | 1,357 (6.5%) |
+  | confidence floor 0.85, ≥ 2 counted yes (exploratory; floor fixed before scoring) | 70 / 26 | 0.36 [0.23, 0.49] | 0.30 [0.20, 0.42] | 0.81 [0.65, 0.95] | +0.04 [+0.01, +0.07] | 0.57 [0.20, 0.87] | 3,829 (18.2%) |
+  | Dawid–Skene (exploratory; weights learned from all 21,000 posts' votes, no gold) | 78 / 26 | 0.31 [0.20, 0.44] | 0.27 [0.17, 0.38] | 0.81 [0.65, 0.95] | +0.00 | 0.57 [0.20, 0.87] | 4,635 (22.1%) |
+
+  - **Decision-rule (i) is not met.** The pre-named unanimous rule's paired
+    Δκ interval includes zero, so **no `labels.sarcastic_strict` is
+    proposed**. Majority stays primary (Gio's plan), and unanimous stays a
+    sensitivity check. Stage U is still informative as that check, but it
+    can't lead to adoption under rule (i).
+  - **The confidence floor** is the only rule whose paired interval clears
+    zero (+0.04 [+0.01, +0.07]). It removes 8 of the 57 false positives and
+    keeps all the true positives. It is one of four exploratory rules on the
+    same gold, so it is a hint for next semester, not a finding.
+  - **A down-weighted SEA-LION changes nothing under a majority cutoff.** Any
+    positive weight leaves qwen3 + SEA-LION outweighing Llama-SEA-LION alone.
+    Dawid–Skene learns very different reliabilities (sensitivity /
+    specificity: qwen3 0.74/0.92, SEA-LION 0.90/0.78, Llama-SEA-LION
+    0.32/0.99; prior 0.27), yet reproduces the majority label on all 21,000
+    posts.
+  - The trade-off you named holds: both strict rules fix over-calling by
+    under-calling (recall 0.38).
+
+  **(2) False-positive tagging.** The 57 gold posts flagged by the v5 label
+  but not by Gio are listed on the 8502 site's *False positives* tab, with
+  the three models' votes and rationales. Gio tags them himself by hard case
+  (H10, H14, D1 over-applied, H4, H5, H9, H13, H11, "on reflection
+  borderline", other). The tags go to `data/fp_tags.json` and are never
+  committed. Known without tags: **29 of the 57 reply to an unseen
+  image/video post** (data flag). Tag counts follow here once Gio has
+  tagged.
 - **To leische (2026-11-27): `dataset-v5` sent by Taildrop**
   (`uyam-dataset-v5.zip`, sha256
   86c9f052f9492a39e148516c8e0a6de193746eb64e0cfd64251ad9746c70963a). It is the
@@ -591,6 +632,11 @@ Decisions and requests (Gio's notes, `20261125 - Consultation`):
 
 ## 11. Change log
 
+- **2026-11-27 (evening)**: answered leische's 2026-11-27 reply.
+  Re-aggregated the v5 votes under stricter rules with no LLM run. The
+  pre-named unanimous rule doesn't beat majority (+0.06 [−0.12, +0.25]), so
+  no strict label field is proposed. A false-positive tagging tab is on 8502
+  (57 posts; 29 under unseen media).
 - **2026-11-27**: **dataset-v5 exported and sent to leische** (21,000 rows,
   4,635 sarcastic, guideline prompt, majority vote; gold κ 0.31). The 3
   failed qwen3 items were retried before export.

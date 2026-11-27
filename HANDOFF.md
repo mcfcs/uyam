@@ -116,6 +116,35 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-27 (evening) — leische's v5 results; stricter rules; FP tagging
+
+**leische (`8dd7f7f`, UYAM_CHANGE_BRIEF "Reply from leische, 2026-11-27"):**
+- v5 three main conditions × 5 folds × 3 seeds, gold queue held out.
+- On the gold: text-only κ 0.18 [0.10, 0.27], F1 0.30; it flags ~105 vs
+  Gio's 26.
+- Context models are slightly worse (Δκ −0.015 / −0.031). On its own
+  folds, F1 ≈ 0.54. RQ1 still holds on v5.
+- Request: no LLM run; re-aggregate under stricter rules, tag the false
+  positives.
+
+**Decisions (Gio):** Dawid–Skene for the down-weighted rule; a single
+confidence floor of 0.85, fixed before scoring; Gio tags the false positives
+himself.
+
+**Done:**
+- `5b783f4`: `annotate compare-rules` (the rules, Dawid–Skene, bootstrap and
+  paired CIs, the blind subset, positives on all posts). Report in
+  `data/rule-compare-annotation-v5.md`; results in UYAM_LATEST §9.
+  Unanimous +0.06 [−0.12, +0.25], so no strict field. Only the confidence
+  floor clears zero (+0.04 [+0.01, +0.07], exploratory). Dawid–Skene =
+  majority.
+- `f7bb1de`: the 8502 *False positives* tab (57 posts, tags in
+  `data/fp_tags.json`, 29 under unseen media).
+
+**Next:** Gio tags the 57; the agent then adds the counts to UYAM_LATEST §9
+and the Progress notes. Stage U at leische is optional (a sensitivity check
+only, since rule (i) failed).
+
 ### 2026-11-27 — dataset-v5 exported and sent
 
 **Context (Gio):** "yes, retry + export".
