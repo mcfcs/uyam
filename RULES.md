@@ -132,6 +132,7 @@ replacing it:
 | The Progress notes tab is read-only, scores gold on first passes without votes_seen items, and splits blind vs Claude-assisted | `test_progress_notes.py` |
 | The Annotation EDA page is read-only and its vote-count, estimate and version-table figures are computed from stored votes and the gold | `test_annotation_eda.py` |
 | Rule comparison re-aggregates stored votes only (no model run, no DB write); unanimous is the only pre-named rule, the rest are reported as exploratory | `test_rule_compare.py` |
+| False-positive tags are written only to data/fp_tags.json (atomically); gold labels and the database are never changed | `test_fp_tagging.py` |
 | The run-status panel is read-only (never writes the DB) and tests never see the real job registry | `test_run_status.py` |
 
 When you add a new source, filter, or export field, add a row here.

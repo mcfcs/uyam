@@ -16,10 +16,10 @@ import streamlit as st
 st.set_page_config(page_title="Uyam · Gold labeling", page_icon="🏷️", layout="wide")
 
 # Lazy tabs: only the open tab runs, so labeling never pays for the notes.
-tab_label, tab_notes, tab_eda = st.tabs(
+tab_label, tab_notes, tab_eda, tab_fp = st.tabs(
     key="label_site_tabs",
     on_change="rerun",
-    tabs=["Gold labeling", "Progress notes", "Annotation EDA"],
+    tabs=["Gold labeling", "Progress notes", "Annotation EDA", "False positives"],
 )
 
 with tab_label:
@@ -56,3 +56,16 @@ with tab_eda:
             render_annotation_eda(_data if _data.is_absolute() else _repo / _data)
         except Exception as exc:  # noqa: BLE001 - never take the labeling site down
             st.error(f"Annotation EDA unavailable: {exc}")
+
+with tab_fp:
+    if tab_fp.open:
+        try:
+            from uyam.annotate.fp_tagging_ui import render_fp_tagging
+            from uyam.config import load_config
+
+            _repo = Path(__file__).resolve().parents[2]
+            _data = load_config().data_dir
+            _data = _data if _data.is_absolute() else _repo / _data
+            render_fp_tagging(_repo / "config" / "annotation-v5.yaml", _data / "fp_tags.json")
+        except Exception as exc:  # noqa: BLE001 - never take the labeling site down
+            st.error(f"False-positive tagging unavailable: {exc}")
