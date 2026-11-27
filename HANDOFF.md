@@ -116,6 +116,24 @@ still covers everything up to ~2 days ago.
 
 ## Session log
 
+### 2026-11-27 (night) — false-positive tags reviewed
+
+**Gio** tagged all 57 (`data/fp_tags.json`, local) and said he agrees a lot
+with Llama-SEA-LION. **Review:**
+- 57/57 tagged; 53 have a single tag. H10 24, other 19 (notes are
+  "direct" / "direct criticism" / "sincere", so one class with H10: literal
+  statements), H4 5, H5 5, D1 4, H14 1, H9 1, H11 1, doubt 1, H13 0.
+- 29/57 under unseen media (19 of the H10 ones).
+- Vote patterns: (q,s,l) = (1,1,0) 38, (1,1,1) 11, (0,1,1) 6, (1,0,1) 2.
+- Gio's raw agreement on 297 gold: Llama 0.89, qwen3 0.72, SEA-LION 0.59.
+- Exploratory (chosen after looking): "majority, Llama must agree" κ 0.42,
+  Δ +0.10 [−0.04, +0.25]. That's for next semester, pre-named, on a fresh
+  gold sample.
+- Two notes are cryptic ("Sta", "literal confliction"); harmless, under
+  "other".
+UYAM_LATEST §9 updated. Next on go: the Progress notes / EDA update with
+leische's v5 results and these tags, and the false-positive slide draft.
+
 ### 2026-11-27 (evening) — leische's v5 results; stricter rules; FP tagging
 
 **leische (`8dd7f7f`, UYAM_CHANGE_BRIEF "Reply from leische, 2026-11-27"):**

@@ -513,8 +513,45 @@ these requests reach them without uyam editing their repos.
   (H10, H14, D1 over-applied, H4, H5, H9, H13, H11, "on reflection
   borderline", other). The tags go to `data/fp_tags.json` and are never
   committed. Known without tags: **29 of the 57 reply to an unseen
-  image/video post** (data flag). Tag counts follow here once Gio has
-  tagged.
+  image/video post** (data flag).
+  **Gio's tags (all 57 tagged, 2026-11-27; a post can carry several tags):**
+
+  | why the LLMs over-called it | posts | of which under unseen media | Llama-SEA-LION said "not" |
+  |---|---|---|---|
+  | H10 plain complaint, insult, hate speech or slur (literal) | 24 | 19 | 17 |
+  | other, mostly noted "direct" / "direct criticism" / "sincere" | 19 | 6 | 15 |
+  | H4 a joke or banter that means what it says | 5 | 1 | 2 |
+  | H5 a rhetorical or leading question | 5 | 3 | 0 |
+  | D1 over-applied (hugot / self-pity / playful praise meant literally) | 4 | 1 | 3 |
+  | H14 situational irony | 1 | 1 | 1 |
+  | H9 praise with a twist, sincere | 1 | 0 | 1 |
+  | H11 phatic | 1 | 0 | 1 |
+  | Gio in doubt (borderline) | 1 | 1 | 0 |
+  | H13 needs the unseen image | 0 | — | — |
+
+  - **The main failure is reading sarcasm into literal statements.** About
+    three-quarters of the false positives (H10 + "other: direct") are posts
+    that mean what they say, mostly negative: complaints, criticism, insults.
+    Gio's "other" notes are nearly all of this kind, so for slides they merge
+    into one class: *literal / direct statements*. Only 1 is situational irony
+    and 4 are the D1 broad reading over-applied.
+  - **Under unseen media, the LLMs read negativity as sarcasm** (19 of the 24
+    H10 cases). Gio never tagged H13 ("needs the image"): from the text alone
+    these are plainly literal.
+  - **Who over-called:** the vote patterns on the 57 (qwen3, SEA-LION, Llama)
+    are 38 × (yes, yes, no), 11 × (yes, yes, yes), 6 × (no, yes, yes) and
+    2 × (yes, no, yes). SEA-LION said sarcastic on 55 of 57, qwen3 on 51, and
+    Llama-SEA-LION on 19.
+  - **Gio agrees most with Llama-SEA-LION** (raw agreement on the 297 gold
+    posts: Llama 0.89, qwen3 0.72, SEA-LION 0.59; κ 0.40 alone). The gold
+    first passes were made without model votes showing, so this agreement is
+    genuine. The tags were made with the votes visible, so read the
+    "Llama said not" column as descriptive. Exploratory and chosen after
+    looking (not a candidate under rule (iii)): "majority, Llama must agree"
+    gives κ 0.42 [0.24, 0.58], Δ vs majority +0.10 [−0.04, +0.25], 33
+    flagged, 1,828 positives on all posts; Llama alone gives 0.40, 2,010
+    positives. **For next semester:** pre-name a Llama-anchored rule (or a
+    lineup without SEA-LION) and test it on a fresh gold sample.
 - **To leische (2026-11-27): `dataset-v5` sent by Taildrop**
   (`uyam-dataset-v5.zip`, sha256
   86c9f052f9492a39e148516c8e0a6de193746eb64e0cfd64251ad9746c70963a). It is the
@@ -632,6 +669,10 @@ Decisions and requests (Gio's notes, `20261125 - Consultation`):
 
 ## 11. Change log
 
+- **2026-11-27 (night)**: Gio tagged all 57 false positives. About 75% are
+  literal or direct statements, mostly negative (H10 24 + "direct" 19),
+  then H4 5, H5 5, D1 4 and H14 1. Gio agrees most with Llama-SEA-LION
+  (raw agreement 0.89 on the gold), which voted "not" on 38 of the 57.
 - **2026-11-27 (evening)**: answered leische's 2026-11-27 reply.
   Re-aggregated the v5 votes under stricter rules with no LLM run. The
   pre-named unanimous rule doesn't beat majority (+0.06 [−0.12, +0.25]), so
