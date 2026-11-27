@@ -468,6 +468,38 @@ def fork(
         console.print(f"[yellow]Short months (not enough items):[/yellow] {short}")
 
 
+@annotate_app.command(name="compare-rules")
+def compare_rules_cmd(
+    out: Path | None = typer.Option(None, "--out", help="Markdown report (default: data/)"),
+    config_path: Path | None = _CONFIG_OPT,
+) -> None:
+    """Re-aggregate stored votes under stricter rules and score them on the gold (no LLM)."""
+    cfg = load_annotation_config(config_path)
+    from uyam.annotate.rule_compare import (
+        all_rule_labels,
+        load_votes,
+        report_markdown,
+        score_rules,
+    )
+    from uyam.progress_notes import load_gold
+
+    votes = load_votes(cfg.db_path, cfg.prompt_version)
+    gold, _ = load_gold(cfg.db_path)
+    labels, ds = all_rule_labels(votes)
+    positives = {name: sum(lab.values()) for name, lab in labels.items()}
+    report = report_markdown(
+        score_rules(labels, gold),
+        score_rules(labels, gold, blind_only=True),
+        positives,
+        len(votes),
+        ds,
+    )
+    target = out or (cfg.data_dir / f"rule-compare-{cfg.db_path.stem}.md")
+    target.write_text(report + chr(10), encoding="utf-8")
+    console.print(report)
+    console.print(f"[green]Written[/green] {target}")
+
+
 @annotate_app.command(name="fork-extend")
 def fork_extend_cmd(
     to: Path = typer.Option(..., "--to", help="New database file (must not exist)"),
