@@ -400,6 +400,16 @@ reminders:
       suggestions/GATED_FUSION_V2.md) deferred until after finals; could be tested on a
       5,000-post subset. Also next semester: guideline v1.2 / re-annotation if wanted.
 
+  - id: tag-false-positives-2026-11
+    section: Annotation
+    title: Tag the 57 false positives (8502 -> False positives tab)
+    details: >
+      Gold posts the v5 label calls sarcastic but you didn't. Tick why the LLMs
+      over-called each (H10 complaint/hate speech, H14 situational irony, D1
+      over-applied, ...); the models' votes and rationales are shown. Tags go to
+      data/fp_tags.json only. Then an agent adds the counts to UYAM_LATEST and the notes
+      for the false-positive slides.
+
   - id: media-context-v2-to-leische-2026-11
     section: Handoff to leische
     title: Send media_context-v2.jsonl to the leische machine (small file)
